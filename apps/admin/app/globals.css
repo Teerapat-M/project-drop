@@ -1,0 +1,27 @@
+:root {
+  --drop-primary: #ffea33;
+  --drop-on-primary: #141414;
+  --drop-bg: #f6f6f4;
+  --drop-surface: #ffffff;
+  --drop-text: #141414;
+  --drop-muted: #5c5c5c;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--drop-bg);
+  color: var(--drop-text);
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    Segoe UI,
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
