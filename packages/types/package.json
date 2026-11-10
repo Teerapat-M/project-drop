@@ -2,7 +2,7 @@
   "name": "@drop/types",
   "version": "0.0.1",
   "private": true,
-  "description": "Shared Drop API contracts (Role, Profile, /me)",
+  "description": "Shared Drop API contracts (Role, Profile, Ride, /me, estimateFare stub)",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {

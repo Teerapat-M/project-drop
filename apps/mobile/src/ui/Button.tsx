@@ -2,7 +2,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
 import { radius } from '@drop/tokens';
 import type { Theme } from '@drop/tokens';
 
-type Variant = 'primary' | 'secondary' | 'ghost';
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
 export function Button({
   theme,
@@ -23,10 +23,12 @@ export function Button({
   const bg =
     variant === 'primary'
       ? colors.primary
-      : variant === 'secondary'
-        ? colors.surface
-        : 'transparent';
-  const fg = variant === 'primary' ? colors.onPrimary : colors.text;
+      : variant === 'danger'
+        ? colors.danger
+        : variant === 'secondary'
+          ? colors.surface
+          : 'transparent';
+  const fg = variant === 'primary' ? colors.onPrimary : variant === 'danger' ? '#FFFFFF' : colors.text;
   const border =
     variant === 'secondary' ? { borderWidth: 1, borderColor: colors.border } : null;
 
