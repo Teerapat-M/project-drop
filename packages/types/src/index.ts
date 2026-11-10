@@ -10,6 +10,7 @@ export type Profile = {
   role: Role | null;
   full_name: string | null;
   phone: string | null;
+  trip_pin_enabled: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -18,6 +19,7 @@ export type Profile = {
 export type MeResponse = {
   id: string;
   role: Role | null;
+  trip_pin_enabled: boolean;
 };
 
 export function isRole(value: unknown): value is Role {

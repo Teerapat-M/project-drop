@@ -12,12 +12,14 @@ create table public.profiles (
   role text check (role is null or role in ('rider', 'driver', 'admin')),
   full_name text,
   phone text,
+  trip_pin_enabled boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 comment on table public.profiles is 'One profile per auth user. role is null until M04 role select.';
 comment on column public.profiles.role is 'rider | driver | admin. Null until the user picks rider/driver. Admin is never self-assigned.';
+comment on column public.profiles.trip_pin_enabled is 'Admin-only flag. When true, later trip flow issues a 4-digit PIN the driver must enter to start.';
 
 alter table public.profiles enable row level security;
 
@@ -54,11 +56,12 @@ security definer
 set search_path = ''
 as $$
 begin
-  insert into public.profiles (id, full_name, phone)
+  insert into public.profiles (id, full_name, phone, trip_pin_enabled)
   values (
     new.id,
     coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'name'),
-    coalesce(new.phone, new.raw_user_meta_data ->> 'phone')
+    coalesce(new.phone, new.raw_user_meta_data ->> 'phone'),
+    false
   );
   return new;
 end;
@@ -74,6 +77,7 @@ create trigger on_auth_user_created
   execute function public.handle_new_user();
 
 -- Block self-assigning admin. Service-role / SQL (auth.uid() is null) may set admin.
+-- trip_pin_enabled: insert is always false for non-admins; only is_admin() (or SQL) may change it.
 create or replace function public.profiles_guard_role()
 returns trigger
 language plpgsql
@@ -85,6 +89,20 @@ begin
      and (select auth.uid()) is not null then
     raise exception 'role cannot be set to admin';
   end if;
+
+  if tg_op = 'INSERT' then
+    if new.trip_pin_enabled
+       and (select auth.uid()) is not null
+       and not (select private.is_admin()) then
+      raise exception 'trip_pin_enabled cannot be set on insert';
+    end if;
+  elsif old.trip_pin_enabled is distinct from new.trip_pin_enabled then
+    if (select auth.uid()) is not null
+       and not (select private.is_admin()) then
+      raise exception 'only admin can change trip_pin_enabled';
+    end if;
+  end if;
+
   new.updated_at = now();
   return new;
 end;
@@ -106,6 +124,8 @@ create policy "Users can select own profile"
   );
 
 -- Users update their own row. WITH CHECK refuses role = admin (defense in depth with the trigger).
+-- trip_pin_enabled is not restricted here so a rider with the flag already on can still update name/role;
+-- the trigger rejects changing the flag unless private.is_admin().
 create policy "Users can update own profile"
   on public.profiles
   for update
@@ -116,11 +136,20 @@ create policy "Users can update own profile"
     and (role is null or role in ('rider', 'driver'))
   );
 
+-- Admins may update any row (including trip_pin_enabled). Trigger still blocks self-assigning admin.
+create policy "Admins can update profiles"
+  on public.profiles
+  for update
+  to authenticated
+  using ((select private.is_admin()))
+  with check ((select private.is_admin()));
+
 -- rollback:
 -- drop trigger if exists on_auth_user_created on auth.users;
 -- drop trigger if exists profiles_guard_role on public.profiles;
 -- drop policy if exists "Users can select own profile" on public.profiles;
 -- drop policy if exists "Users can update own profile" on public.profiles;
+-- drop policy if exists "Admins can update profiles" on public.profiles;
 -- drop function if exists public.handle_new_user();
 -- drop function if exists public.profiles_guard_role();
 -- drop function if exists private.is_admin();

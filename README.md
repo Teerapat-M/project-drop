@@ -30,7 +30,9 @@ Unauthenticated mobile users see the auth stack (M02 login, M03 sign up, forgot 
 
 Admin (`apps/admin`): A01-style login. Next.js 16 `proxy.ts` refreshes the Supabase session; the dashboard server-checks `role === admin`. Everyone else sees `/not-authorized`.
 
-Express verifies the Supabase JWT (JWKS at `SUPABASE_URL/auth/v1/.well-known/jwks.json` via `jose`, HS256 fallback if `SUPABASE_JWT_SECRET` is set) and serves `GET /me` `{ id, role }` by reading `profiles` with the **user JWT + anon key** (no service role required).
+Express verifies the Supabase JWT (JWKS at `SUPABASE_URL/auth/v1/.well-known/jwks.json` via `jose`, HS256 fallback if `SUPABASE_JWT_SECRET` is set) and serves `GET /me` `{ id, role, trip_pin_enabled }` by reading `profiles` with the **user JWT + anon key** (no service role required).
+
+`profiles.trip_pin_enabled` is `false` by default. Users can read their own value; only `role = admin` may change it (trigger + `private.is_admin()`). Later, the trip flow generates a 4-digit PIN per trip only when the rider has this flag on; the driver must enter it to start. Otherwise the driver just confirms. No trip logic in this PR.
 
 ### Supabase dashboard (Bell)
 
@@ -46,6 +48,8 @@ Express verifies the Supabase JWT (JWKS at `SUPABASE_URL/auth/v1/.well-known/jwk
 ```sql
 update public.profiles set role = 'admin' where id = '<auth user uuid>';
 ```
+
+   Admins can later enable trip PIN for a rider with `update public.profiles set trip_pin_enabled = true where id = '<rider uuid>';` (non-admins cannot).
 
 `SUPABASE_SERVICE_ROLE_KEY` is optional. Bell can set it on Render; this repo’s API does not use it for `/me`.
 

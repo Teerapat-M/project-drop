@@ -5,6 +5,17 @@ import { getSupabaseConfig } from '../config';
 
 export type LoadMe = (userId: string, accessToken: string) => Promise<MeResponse>;
 
+export function toMeResponse(
+  userId: string,
+  row: { role?: unknown; trip_pin_enabled?: unknown } | null,
+): MeResponse {
+  return {
+    id: userId,
+    role: row && isRole(row.role) ? (row.role as Role) : null,
+    trip_pin_enabled: row?.trip_pin_enabled === true,
+  };
+}
+
 export const loadMe: LoadMe = async (userId, accessToken) => {
   const { url, anonKey } = getSupabaseConfig();
   if (!url || !anonKey) {
@@ -16,10 +27,9 @@ export const loadMe: LoadMe = async (userId, accessToken) => {
   });
   const { data, error } = await supabase
     .from('profiles')
-    .select('role')
+    .select('role, trip_pin_enabled')
     .eq('id', userId)
     .maybeSingle();
   if (error) throw error;
-  const role = data && isRole(data.role) ? (data.role as Role) : null;
-  return { id: userId, role };
+  return toMeResponse(userId, data);
 };

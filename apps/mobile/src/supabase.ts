@@ -46,7 +46,7 @@ export async function fetchOwnProfile(
 ): Promise<Profile | null> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, role, full_name, phone, created_at, updated_at')
+    .select('id, role, full_name, phone, trip_pin_enabled, created_at, updated_at')
     .eq('id', userId)
     .maybeSingle();
   if (error) throw error;
