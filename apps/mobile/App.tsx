@@ -1,63 +1,91 @@
-import { useCallback, useEffect, useState } from 'react';
-import {
-  SafeAreaView,
-  StyleSheet,
-  Text,
-  useColorScheme,
-  View,
-} from 'react-native';
+import { useState } from 'react';
+import { SafeAreaView, StyleSheet, View, useColorScheme } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { ModeSwitch } from './src/ModeSwitch';
-import { DEFAULT_MODE, type AppMode } from './src/mode';
-import { loadMode, saveMode } from './src/modeStorage';
+import { AuthProvider, useAuth } from './src/auth/AuthProvider';
+import { nextAuthScreen, type AuthScreen } from './src/auth/gate';
 import { DriverScreen } from './src/screens/DriverScreen';
+import { ForgotPasswordScreen } from './src/screens/ForgotPasswordScreen';
+import { LoginScreen } from './src/screens/LoginScreen';
+import { OtpScreen } from './src/screens/OtpScreen';
 import { RiderScreen } from './src/screens/RiderScreen';
+import { RoleSelectScreen } from './src/screens/RoleSelectScreen';
+import { SignUpScreen } from './src/screens/SignUpScreen';
 import { themeFor } from './src/theme';
+import type { AppMode } from './src/mode';
 
 export default function App() {
+  return (
+    <AuthProvider>
+      <Root />
+    </AuthProvider>
+  );
+}
+
+function Root() {
   const scheme = useColorScheme();
-  const [mode, setMode] = useState<AppMode>(DEFAULT_MODE);
-  const [ready, setReady] = useState(false);
+  const { destination, profile } = useAuth();
+  const mode: AppMode = destination === 'driver' || profile?.role === 'driver' ? 'driver' : 'rider';
   const theme = themeFor(mode, scheme);
-
-  useEffect(() => {
-    loadMode()
-      .then(setMode)
-      .finally(() => setReady(true));
-  }, []);
-
-  const onChangeMode = useCallback((next: AppMode) => {
-    setMode(next);
-    void saveMode(next);
-  }, []);
-
-  if (!ready) {
-    return (
-      <View style={[styles.root, { backgroundColor: theme.colors.primary }]} />
-    );
-  }
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.colors.background }]}>
       <StatusBar style={theme.mode === 'dark' ? 'light' : 'dark'} />
-      <View style={styles.header}>
-        <Text style={[styles.brand, { color: theme.colors.text }]}>Drop</Text>
-        <ModeSwitch mode={mode} theme={theme} onChange={onChangeMode} />
-      </View>
-      <View style={styles.screen}>
-        {mode === 'rider' ? (
-          <RiderScreen theme={theme} />
-        ) : (
+      {destination === 'loading' ? (
+        <View style={[styles.root, { backgroundColor: theme.colors.primary }]} />
+      ) : destination === 'auth' ? (
+        <AuthStack />
+      ) : destination === 'role-select' ? (
+        <RoleSelectScreen theme={theme} />
+      ) : destination === 'driver' ? (
+        <View style={styles.screen}>
           <DriverScreen theme={theme} />
-        )}
-      </View>
+        </View>
+      ) : (
+        <View style={styles.screen}>
+          <RiderScreen theme={theme} />
+        </View>
+      )}
     </SafeAreaView>
+  );
+}
+
+function AuthStack() {
+  const scheme = useColorScheme();
+  const theme = themeFor('rider', scheme);
+  const [screen, setScreen] = useState<AuthScreen>('login');
+  const [otpPhone, setOtpPhone] = useState('');
+
+  if (screen === 'signup') {
+    return <SignUpScreen theme={theme} onBack={() => setScreen(nextAuthScreen(screen, 'back'))} />;
+  }
+  if (screen === 'forgot') {
+    return (
+      <ForgotPasswordScreen theme={theme} onBack={() => setScreen(nextAuthScreen(screen, 'back'))} />
+    );
+  }
+  if (screen === 'otp') {
+    return (
+      <OtpScreen
+        theme={theme}
+        phone={otpPhone}
+        onBack={() => setScreen(nextAuthScreen(screen, 'back'))}
+      />
+    );
+  }
+  return (
+    <LoginScreen
+      theme={theme}
+      onSignUp={() => setScreen('signup')}
+      onForgot={() => setScreen('forgot')}
+      onOtp={(phone) => {
+        setOtpPhone(phone);
+        setScreen('otp');
+      }}
+    />
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: { paddingHorizontal: 20, paddingTop: 12, gap: 12 },
-  brand: { fontSize: 20, fontWeight: '800', letterSpacing: 0.4 },
   screen: { flex: 1, paddingHorizontal: 20 },
 });

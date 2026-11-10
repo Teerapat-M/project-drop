@@ -1,3 +1,3 @@
 # Drop Admin
 
-Placeholder Next.js dashboard. See the root [README](../../README.md) for stack, env vars, and how to run.
+Next.js ops dashboard. Staff sign in with Supabase; only `profiles.role = admin` can open `/`. See the root [README](../../README.md) for env, dashboard setup, and how to run.

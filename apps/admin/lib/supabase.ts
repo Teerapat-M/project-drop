@@ -1,4 +1,3 @@
-/** Auth is Phase 1 task 2 — read env only, do not connect. */
 export type SupabasePublicConfig = {
   url: string;
   anonKey: string;

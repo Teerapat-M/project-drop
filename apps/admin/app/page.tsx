@@ -1,7 +1,17 @@
+import { redirect } from 'next/navigation';
+import { adminRedirectPath, resolveAdminGate } from '@/lib/auth/guard';
 import { isSupabaseConfigured } from '@/lib/supabase';
+import { getAdminContext } from '@/lib/supabase/server';
 
-export default function DashboardPage() {
-  const authReady = isSupabaseConfigured();
+export const dynamic = 'force-dynamic';
+
+export default async function DashboardPage() {
+  const configured = isSupabaseConfigured();
+  if (configured) {
+    const ctx = await getAdminContext();
+    const dest = adminRedirectPath(resolveAdminGate(ctx));
+    if (dest) redirect(dest);
+  }
 
   return (
     <main
@@ -26,7 +36,7 @@ export default function DashboardPage() {
       </p>
       <h1 style={{ fontSize: 36, margin: '16px 0 8px' }}>Admin dashboard</h1>
       <p style={{ color: 'var(--drop-muted)', marginTop: 0 }}>
-        Placeholder for trips, drivers, and QA tools (phase 6). Auth is task 2.
+        Placeholder for trips, drivers, and QA tools (phase 6).
       </p>
       <section
         style={{
@@ -38,7 +48,7 @@ export default function DashboardPage() {
       >
         <h2 style={{ marginTop: 0, fontSize: 18 }}>Status</h2>
         <p style={{ marginBottom: 0, color: 'var(--drop-muted)' }}>
-          Supabase env: {authReady ? 'present' : 'not configured'}
+          Supabase env: {configured ? 'present' : 'not configured'}
         </p>
       </section>
     </main>

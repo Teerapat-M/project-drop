@@ -11,6 +11,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "declaration": false,
+    "ignoreDeprecations": "6.0",
     "types": ["node", "jest"]
   },
   "include": ["src/**/*.ts"]
