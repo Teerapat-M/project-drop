@@ -108,3 +108,14 @@ export async function saveAppRole(role: AppRole): Promise<void> {
   const { error } = await supabase.from('profiles').update({ role }).eq('id', user.id);
   if (error) throw error;
 }
+
+export async function savePreferredLanguage(preferred_language: string): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) throw new Error('Supabase is not configured');
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { error } = await supabase.from('profiles').update({ preferred_language }).eq('id', user.id);
+  if (error) throw error;
+}

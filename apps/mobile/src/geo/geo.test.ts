@@ -3,7 +3,7 @@ import { estimateFare } from '@drop/types';
 import { debounce, GEOCODE_DEBOUNCE_MS, GEOCODE_MIN_LENGTH } from './debounce';
 import { parseGeocodeResponse, geocodeSearchUrl, reverseGeocodeUrl } from './geocode';
 import { haversineMeters, sortByDistance, formatDistanceM, formatDurationS } from './haversine';
-import { parseOsrmRoute, osrmRouteUrl } from './osrm';
+import { formatTurnInstruction, parseOsrmRoute, osrmRouteUrl } from './osrm';
 
 describe('estimateFare stub', () => {
   it('returns null', () => {
@@ -108,7 +108,17 @@ describe('osrm parsing', () => {
         [100.53, 13.74],
         [100.55, 13.8],
       ],
+      turns: [],
     });
+  });
+
+  it('formats a turn banner instruction', () => {
+    expect(
+      formatTurnInstruction({ type: 'turn', modifier: 'right', name: 'Rama I Rd', distanceM: 200 }),
+    ).toBe('Turn right onto Rama I Rd');
+    expect(
+      formatTurnInstruction({ type: 'continue', modifier: '', name: 'Phahonyothin Rd', distanceM: 1400 }),
+    ).toBe('Continue on Phahonyothin Rd');
   });
 
   it('builds the demo router URL', () => {

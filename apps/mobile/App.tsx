@@ -27,24 +27,36 @@ function Root() {
   const mode: AppMode = destination === 'driver' || profile?.role === 'driver' ? 'driver' : 'rider';
   const theme = themeFor(mode, scheme);
 
+  const inner =
+    destination === 'loading' ? (
+      <View style={[styles.root, { backgroundColor: theme.colors.primary }]} />
+    ) : destination === 'auth' ? (
+      <AuthStack />
+    ) : destination === 'role-select' ? (
+      <RoleSelectScreen theme={theme} />
+    ) : destination === 'driver' ? (
+      <View style={styles.screen}>
+        <DriverScreen theme={theme} />
+      </View>
+    ) : (
+      <View style={styles.screen}>
+        <RiderScreen theme={theme} />
+      </View>
+    );
+
+  if (destination === 'driver') {
+    return (
+      <View style={[styles.root, { backgroundColor: theme.colors.background }]}>
+        <StatusBar style="light" />
+        {inner}
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.colors.background }]}>
       <StatusBar style={theme.mode === 'dark' ? 'light' : 'dark'} />
-      {destination === 'loading' ? (
-        <View style={[styles.root, { backgroundColor: theme.colors.primary }]} />
-      ) : destination === 'auth' ? (
-        <AuthStack />
-      ) : destination === 'role-select' ? (
-        <RoleSelectScreen theme={theme} />
-      ) : destination === 'driver' ? (
-        <View style={styles.screen}>
-          <DriverScreen theme={theme} />
-        </View>
-      ) : (
-        <View style={styles.screen}>
-          <RiderScreen theme={theme} />
-        </View>
-      )}
+      {inner}
     </SafeAreaView>
   );
 }

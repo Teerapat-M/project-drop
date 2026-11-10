@@ -1,17 +1,42 @@
-import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
-import type { NearbyRide, RideResponse, VehicleType } from '@drop/types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  BackHandler,
+  Linking,
+  Pressable,
+  StatusBar,
+  StyleSheet,
+  Switch,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import type { NearbyRide, RideResponse, SupportedLang, VehicleType } from '@drop/types';
+import { DRIVER_LANDSCAPE_PRESET_KEYS, DRIVER_PRESET_KEYS, normalizeLang } from '@drop/types';
 import type { Theme } from '@drop/tokens';
 import { api, ApiError } from '../api/client';
-import { useAuth } from '../auth/AuthProvider';
+import { savePreferredLanguage, useAuth } from '../auth/AuthProvider';
+import { useRideMessages } from '../chat/useRideMessages';
+import { ChatPanel } from '../chat/ChatPanel';
 import { formatDistanceM, formatDurationS } from '../geo/haversine';
 import { requestAndGetLocation, watchLocation, type UserFix } from '../geo/location';
+import { deviceLanguage } from '../locale';
 import { MapCanvas } from '../map/MapCanvas';
 import { BANGKOK_CENTER } from '../map/style';
+import { applyFullscreen, showFullscreenPill, showSos, type DriverStep } from '../tracking/fullscreen';
+import { useLiveRoute } from '../tracking/useLiveRoute';
 import { Button } from '../ui/Button';
+import {
+  FullscreenMiniSheet,
+  FullscreenPill,
+  NavFabs,
+  TurnBanner,
+} from '../ui/FullscreenNav';
+import { KeepAwakeOn } from '../ui/KeepAwakeOn';
+import { LanguageChip } from '../ui/LanguageChip';
 import { OtpBoxes } from '../ui/OtpBoxes';
 
-type Step = 'home' | 'incoming' | 'pickup' | 'arrived' | 'pin' | 'confirm' | 'trip';
+type Step = DriverStep;
+type Panel = 'none' | 'chat' | 'call' | 'sos';
 
 const NEARBY_POLL_MS = 3000;
 
@@ -26,10 +51,17 @@ function parseRoute(ride: RideResponse): [number, number][] | undefined {
   return undefined;
 }
 
+function etaClock(durationS: number, now = new Date()): string {
+  const d = new Date(now.getTime() + durationS * 1000);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 export function DriverScreen({ theme }: { theme: Theme }) {
   const { colors } = theme;
-  const { profile, session, signOut } = useAuth();
+  const { profile, session, signOut, refreshProfile } = useAuth();
   const token = session?.access_token ?? '';
+  const { width, height } = useWindowDimensions();
+  const landscape = width > height;
   const [online, setOnline] = useState(false);
   const [fix, setFix] = useState<UserFix | null>(null);
   const [denied, setDenied] = useState(false);
@@ -40,10 +72,35 @@ export function DriverScreen({ theme }: { theme: Theme }) {
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [fs, setFs] = useState(false);
+  const [follow, setFollow] = useState(true);
+  const [panel, setPanel] = useState<Panel>('none');
   const fixRef = useRef(fix);
   useEffect(() => {
     fixRef.current = fix;
   }, [fix]);
+
+  const lang: SupportedLang = normalizeLang(profile?.preferred_language ?? deviceLanguage());
+  const offer = !ride && online ? incoming[0] : null;
+  const phase: Step = ride ? step : offer ? 'incoming' : 'home';
+  const dest = useMemo(() => {
+    if (ride && (step === 'trip')) return { lat: ride.dropoff_lat, lng: ride.dropoff_lng };
+    if (ride) return { lat: ride.pickup_lat, lng: ride.pickup_lng };
+    if (offer) return { lat: offer.pickup_lat, lng: offer.pickup_lng };
+    return null;
+  }, [ride, step, offer]);
+  const live = useLiveRoute(fix, dest);
+  const stored = ride ? parseRoute(ride) : undefined;
+  const route = live?.coordinates ?? stored;
+  const { messages, send } = useRideMessages(ride?.id ?? null, token, lang);
+  const peerName = ride?.peer?.full_name?.split(' ')[0] ?? 'Rider';
+  const navigating =
+    fs ||
+    step === 'pickup' ||
+    step === 'arrived' ||
+    step === 'pin' ||
+    step === 'confirm' ||
+    step === 'trip';
 
   const publish = async (next: UserFix, isOnline: boolean) => {
     if (!token) return;
@@ -96,11 +153,9 @@ export function DriverScreen({ theme }: { theme: Theme }) {
       cancelled = true;
       sub?.remove();
     };
-    // publish closes over token/vehicle; toggling online is the trigger
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [online]);
 
-  // Requested rows are not on Realtime (RLS hides them from drivers). Poll the sanitized RPC.
   useEffect(() => {
     if (!online || !token || ride) return;
     let cancelled = false;
@@ -126,10 +181,17 @@ export function DriverScreen({ theme }: { theme: Theme }) {
     };
   }, [online, token, ride]);
 
-  const offer = !ride && online ? incoming[0] : null;
-  const browsing = !ride;
+  useEffect(() => {
+    if (!fs) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setFs(applyFullscreen(true, 'back'));
+      return true;
+    });
+    return () => sub.remove();
+  }, [fs]);
 
   const origin = fix ?? BANGKOK_CENTER;
+  const browsing = !ride;
 
   const act = async (path: string, body?: unknown) => {
     if (!ride && path.includes('/accept') && offer) {
@@ -176,52 +238,22 @@ export function DriverScreen({ theme }: { theme: Theme }) {
   };
 
   const name = profile?.full_name ?? 'Driver';
+  const etaLine =
+    step === 'trip'
+      ? live
+        ? `ETA ${etaClock(live.durationS)} · ${formatDistanceM(live.distanceM)}`
+        : 'On trip'
+      : live
+        ? `pickup in ${formatDurationS(live.durationS)} · ${formatDistanceM(live.distanceM)}`
+        : 'En route';
+  const turn = live?.turns[0] ?? null;
+  const showPill = showFullscreenPill(phase) && !fs;
+  const sheetHidden = fs;
 
-  return (
-    <View style={styles.root}>
-      <MapCanvas
-        theme={theme}
-        center={
-          ride
-            ? { lat: ride.pickup_lat, lng: ride.pickup_lng }
-            : offer
-              ? { lat: offer.pickup_lat, lng: offer.pickup_lng }
-              : origin
-        }
-        route={ride ? parseRoute(ride) : undefined}
-        pickup={
-          ride
-            ? { lat: ride.pickup_lat, lng: ride.pickup_lng }
-            : offer
-              ? { lat: offer.pickup_lat, lng: offer.pickup_lng }
-              : null
-        }
-        dropoff={ride ? { lat: ride.dropoff_lat, lng: ride.dropoff_lng } : null}
-        showUser={!denied}
-        followUser={online && !ride}
-      />
-
-      <View style={[styles.top, { backgroundColor: colors.surface }]}>
-        <Text style={[styles.name, { color: colors.text }]}>{name}</Text>
-        <View style={styles.row}>
-          <Text style={{ color: online ? colors.success : colors.textMuted }}>
-            {online ? 'Online' : 'Offline'}
-          </Text>
-          <Switch
-            value={online}
-            onValueChange={setOnline}
-            trackColor={{ true: colors.secondary, false: colors.border }}
-            thumbColor={online ? colors.primary : colors.textMuted}
-          />
-        </View>
-      </View>
-
-      {denied ? (
-        <Text style={[styles.banner, { color: colors.danger }]}>Location permission needed to go online</Text>
-      ) : null}
-
+  const sheet = (
+    <>
       {browsing && !offer ? (
-        <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
+        <View style={[styles.sheetInner, { backgroundColor: colors.surface }]}>
           <Text style={[styles.h2, { color: colors.text }]}>
             {online ? 'Waiting for requests' : 'You’re offline'}
           </Text>
@@ -230,6 +262,13 @@ export function DriverScreen({ theme }: { theme: Theme }) {
               ? 'Nearby requests refresh every few seconds.'
               : 'Go online to start receiving trip requests.'}
           </Text>
+          <LanguageChip
+            theme={theme}
+            value={lang}
+            onChange={(next) => {
+              void savePreferredLanguage(next).then(() => refreshProfile());
+            }}
+          />
           <Pressable onPress={() => void signOut()}>
             <Text style={[styles.signOut, { color: colors.textMuted }]}>Sign out</Text>
           </Pressable>
@@ -237,7 +276,7 @@ export function DriverScreen({ theme }: { theme: Theme }) {
       ) : null}
 
       {browsing && offer ? (
-        <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
+        <View style={[styles.sheetInner, { backgroundColor: colors.surface }]}>
           <Text style={[styles.h2, { color: colors.text }]}>New trip request</Text>
           <Text style={[styles.muted, { color: colors.textSecondary }]}>
             {offer.vehicle_type === 'bike' ? 'DropBike' : 'DropCar'} · {formatDistanceM(offer.distance_m)} away
@@ -270,9 +309,17 @@ export function DriverScreen({ theme }: { theme: Theme }) {
       ) : null}
 
       {step === 'pickup' && ride ? (
-        <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
-          <Text style={[styles.h2, { color: colors.text }]}>Picking up rider</Text>
+        <View style={[styles.sheetInner, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.h2, { color: colors.text }]}>Picking up {peerName}</Text>
           <Text style={{ color: colors.text }}>{ride.pickup_label}</Text>
+          <View style={styles.row}>
+            <View style={{ flex: 1 }}>
+              <Button theme={theme} variant="secondary" label="Call" onPress={() => setPanel('call')} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Button theme={theme} variant="secondary" label="Chat" onPress={() => setPanel('chat')} />
+            </View>
+          </View>
           <Button
             theme={theme}
             loading={loading}
@@ -286,7 +333,7 @@ export function DriverScreen({ theme }: { theme: Theme }) {
       ) : null}
 
       {step === 'arrived' && ride ? (
-        <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
+        <View style={[styles.sheetInner, { backgroundColor: colors.surface }]}>
           <Text style={[styles.h2, { color: colors.text }]}>At pickup</Text>
           <Text style={[styles.muted, { color: colors.textSecondary }]}>{ride.pickup_label}</Text>
           {ride.pin_required ? (
@@ -298,7 +345,7 @@ export function DriverScreen({ theme }: { theme: Theme }) {
       ) : null}
 
       {step === 'pin' && ride ? (
-        <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
+        <View style={[styles.sheetInner, { backgroundColor: colors.surface }]}>
           <Text style={[styles.h2, { color: colors.text }]}>Enter rider PIN</Text>
           <OtpBoxes theme={theme} value={pin} onChange={setPin} length={4} />
           {error ? <Text style={{ color: colors.danger }}>{error}</Text> : null}
@@ -317,7 +364,7 @@ export function DriverScreen({ theme }: { theme: Theme }) {
       ) : null}
 
       {step === 'confirm' && ride ? (
-        <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
+        <View style={[styles.sheetInner, { backgroundColor: colors.surface }]}>
           <Text style={[styles.h2, { color: colors.text }]}>Start trip</Text>
           <Text style={[styles.muted, { color: colors.textSecondary }]}>
             Trip PIN is off for this rider — no code needed.
@@ -337,12 +384,174 @@ export function DriverScreen({ theme }: { theme: Theme }) {
       ) : null}
 
       {step === 'trip' && ride ? (
-        <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
+        <View style={[styles.sheetInner, { backgroundColor: colors.surface }]}>
           <Text style={[styles.h2, { color: colors.text }]}>Trip in progress</Text>
           <Text style={{ color: colors.text }}>{ride.dropoff_label}</Text>
-          <Pressable onPress={() => void signOut()}>
-            <Text style={[styles.signOut, { color: colors.textMuted }]}>Sign out</Text>
-          </Pressable>
+          <View style={styles.row}>
+            <View style={{ flex: 1 }}>
+              <Button theme={theme} variant="secondary" label="Call" onPress={() => setPanel('call')} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Button theme={theme} variant="secondary" label="Chat" onPress={() => setPanel('chat')} />
+            </View>
+          </View>
+          <Button theme={theme} variant="danger" label="SOS" onPress={() => setPanel('sos')} />
+        </View>
+      ) : null}
+    </>
+  );
+
+  return (
+    <View style={[styles.root, landscape && !fs ? styles.rowRoot : null]}>
+      <StatusBar hidden={fs} />
+      {navigating ? <KeepAwakeOn /> : null}
+      <View style={styles.mapWrap}>
+        <MapCanvas
+          theme={theme}
+          center={
+            ride
+              ? dest ?? { lat: ride.pickup_lat, lng: ride.pickup_lng }
+              : offer
+                ? { lat: offer.pickup_lat, lng: offer.pickup_lng }
+                : origin
+          }
+          route={route}
+          pickup={
+            ride
+              ? { lat: ride.pickup_lat, lng: ride.pickup_lng }
+              : offer
+                ? { lat: offer.pickup_lat, lng: offer.pickup_lng }
+                : null
+          }
+          dropoff={ride ? { lat: ride.dropoff_lat, lng: ride.dropoff_lng } : null}
+          showUser={!denied && !ride}
+          followUser={follow && online}
+          vehicle={fix && ride ? { lat: fix.lat, lng: fix.lng, heading: fix.heading } : null}
+        />
+        {fs ? <TurnBanner theme={theme} turn={turn} durationS={live?.durationS} /> : null}
+        {fs ? (
+          <NavFabs
+            showSos={showSos(phase)}
+            landscape={landscape}
+            sheetUp
+            onRecenter={() => setFollow(true)}
+            onSos={() => setPanel('sos')}
+          />
+        ) : null}
+        {fs ? (
+          <FullscreenMiniSheet
+            theme={theme}
+            landscape={landscape}
+            name={peerName}
+            etaLine={etaLine}
+            onCall={() => setPanel('call')}
+            onChat={() => setPanel('chat')}
+            onExit={() => setFs(false)}
+          />
+        ) : null}
+        {showPill ? (
+          <View style={[styles.pillWrap, landscape ? styles.pillLand : null]}>
+            <FullscreenPill onPress={() => setFs(true)} />
+          </View>
+        ) : null}
+      </View>
+
+      {!fs ? (
+        <View style={landscape ? styles.side : styles.bottom}>
+          {!landscape ? (
+            <View style={[styles.top, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.name, { color: colors.text }]}>{name}</Text>
+              <View style={styles.row}>
+                <Text style={{ color: online ? colors.success : colors.textMuted }}>
+                  {online ? 'Online' : 'Offline'}
+                </Text>
+                <Switch
+                  value={online}
+                  onValueChange={setOnline}
+                  trackColor={{ true: colors.secondary, false: colors.border }}
+                  thumbColor={online ? colors.primary : colors.textMuted}
+                />
+              </View>
+            </View>
+          ) : (
+            <View style={[styles.sideHead, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.name, { color: colors.text }]}>{name}</Text>
+              <View style={styles.row}>
+                <Text style={{ color: online ? colors.success : colors.textMuted }}>
+                  {online ? 'Online' : 'Offline'}
+                </Text>
+                <Switch
+                  value={online}
+                  onValueChange={setOnline}
+                  trackColor={{ true: colors.secondary, false: colors.border }}
+                  thumbColor={online ? colors.primary : colors.textMuted}
+                />
+              </View>
+            </View>
+          )}
+          {denied ? (
+            <Text style={[styles.banner, { color: colors.danger }]}>Location permission needed to go online</Text>
+          ) : null}
+          {!sheetHidden ? sheet : null}
+        </View>
+      ) : null}
+
+      {panel === 'chat' && ride ? (
+        <View style={landscape ? styles.centerOverlay : styles.pageOverlay} pointerEvents="box-none">
+          {landscape ? <Pressable style={styles.dim} onPress={() => setPanel('none')} /> : null}
+          <ChatPanel
+            theme={theme}
+            title={peerName}
+            subtitle={
+              step === 'trip' ? ride.dropoff_label : `Picking up at ${ride.pickup_label}`
+            }
+            selfId={session?.user.id ?? ''}
+            messages={messages}
+            presets={landscape ? DRIVER_LANDSCAPE_PRESET_KEYS : DRIVER_PRESET_KEYS}
+            placeholder="Message..."
+            overlay={landscape}
+            onClose={() => setPanel('none')}
+            onSend={(input) => void send(input)}
+          />
+        </View>
+      ) : null}
+
+      {panel === 'call' ? (
+        <View style={styles.centerOverlay}>
+          <Pressable style={styles.dim} onPress={() => setPanel('none')} />
+          <View style={[styles.modal, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.h2, { color: colors.text }]}>Calling {peerName}</Text>
+            <Button
+              theme={theme}
+              variant="danger"
+              label="End call"
+              onPress={() => {
+                const phone = ride?.peer?.phone;
+                if (phone) void Linking.openURL(`tel:${phone}`);
+                setPanel('none');
+              }}
+            />
+          </View>
+        </View>
+      ) : null}
+
+      {panel === 'sos' ? (
+        <View style={styles.centerOverlay}>
+          <Pressable style={styles.dim} onPress={() => setPanel('none')} />
+          <View style={[styles.modal, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.h2, { color: colors.text }]}>Emergency SOS</Text>
+            <Text style={[styles.muted, { color: colors.textSecondary }]}>Call 191 (Thailand emergency)</Text>
+            <Button
+              theme={theme}
+              variant="danger"
+              label="Call 191"
+              onPress={() => {
+                void Linking.openURL('tel:191');
+                setPanel('none');
+              }}
+            />
+            <Button theme={theme} variant="ghost" label="Cancel" onPress={() => setPanel('none')} />
+          </View>
         </View>
       ) : null}
     </View>
@@ -351,24 +560,31 @@ export function DriverScreen({ theme }: { theme: Theme }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  rowRoot: { flexDirection: 'row' },
+  mapWrap: { flex: 1 },
   top: {
-    position: 'absolute',
-    top: 12,
-    left: 12,
-    right: 12,
+    marginHorizontal: 12,
+    marginTop: 12,
     borderRadius: 16,
     padding: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  sideHead: { padding: 16, gap: 8 },
   name: { fontSize: 16, fontWeight: '700' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  sheet: {
+  bottom: {
     position: 'absolute',
     left: 0,
     right: 0,
+    top: 0,
     bottom: 0,
+    justifyContent: 'space-between',
+    pointerEvents: 'box-none',
+  },
+  side: { width: 300, justifyContent: 'space-between' },
+  sheetInner: {
     padding: 20,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
@@ -376,6 +592,17 @@ const styles = StyleSheet.create({
   },
   h2: { fontSize: 20, fontWeight: '700' },
   muted: { fontSize: 13 },
-  banner: { position: 'absolute', top: 72, alignSelf: 'center' },
+  banner: { alignSelf: 'center' },
   signOut: { textAlign: 'center', fontSize: 13, textDecorationLine: 'underline' },
+  pillWrap: { position: 'absolute', right: 16, bottom: 280 },
+  pillLand: { bottom: 16, right: 16 },
+  pageOverlay: { ...StyleSheet.absoluteFill, zIndex: 20 },
+  centerOverlay: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dim: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.45)' },
+  modal: { width: 320, borderRadius: 20, padding: 20, gap: 12 },
 });

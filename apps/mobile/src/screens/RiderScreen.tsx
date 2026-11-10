@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -7,20 +8,27 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import type { CreateRideRequest, RideResponse, VehicleType } from '@drop/types';
-import { estimateFare } from '@drop/types';
+import type { CreateRideRequest, RideResponse, SupportedLang, VehicleType } from '@drop/types';
+import { estimateFare, normalizeLang, RIDER_PRESET_KEYS } from '@drop/types';
 import type { Theme } from '@drop/tokens';
 import { api } from '../api/client';
-import { useAuth } from '../auth/AuthProvider';
+import { savePreferredLanguage, useAuth } from '../auth/AuthProvider';
+import { ChatPanel } from '../chat/ChatPanel';
+import { useRideMessages } from '../chat/useRideMessages';
 import { GEOCODE_DEBOUNCE_MS, GEOCODE_MIN_LENGTH } from '../geo/debounce';
 import { reverseGeocode, searchPlaces, type PlaceHit } from '../geo/geocode';
 import { formatDistanceM, formatDurationS } from '../geo/haversine';
 import { requestAndGetLocation } from '../geo/location';
 import { fetchRoute, type RoutePreview } from '../geo/osrm';
+import { deviceLanguage } from '../locale';
 import { MapCanvas } from '../map/MapCanvas';
 import { BANGKOK_CENTER } from '../map/style';
 import { getSupabase } from '../supabase';
+import { useAnimatedPose } from '../tracking/useAnimatedPose';
+import { useLiveRoute } from '../tracking/useLiveRoute';
+import { useReconnect } from '../tracking/useReconnect';
 import { Button } from '../ui/Button';
+import { LanguageChip } from '../ui/LanguageChip';
 
 type Step = 'home' | 'search' | 'pin' | 'confirm' | 'finding' | 'assigned';
 type FocusField = 'pickup' | 'dropoff';
@@ -39,7 +47,7 @@ function fareLabel(distanceM: number, durationS: number, vehicle: VehicleType): 
 
 export function RiderScreen({ theme }: { theme: Theme }) {
   const { colors } = theme;
-  const { profile, session, signOut } = useAuth();
+  const { profile, session, signOut, refreshProfile } = useAuth();
   const token = session?.access_token ?? '';
   const [step, setStep] = useState<Step>('home');
   const [center, setCenter] = useState(BANGKOK_CENTER);
@@ -55,6 +63,18 @@ export function RiderScreen({ theme }: { theme: Theme }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const [driverFix, setDriverFix] = useState<{ lat: number; lng: number; heading: number } | null>(null);
+  const [panel, setPanel] = useState<'none' | 'chat' | 'call'>('none');
+  const lang: SupportedLang = normalizeLang(profile?.preferred_language ?? deviceLanguage());
+  const { messages, send } = useRideMessages(ride?.id ?? null, token, lang);
+  const dest =
+    ride && (ride.status === 'in_progress' || ride.status === 'completed')
+      ? { lat: ride.dropoff_lat, lng: ride.dropoff_lng }
+      : ride
+        ? { lat: ride.pickup_lat, lng: ride.pickup_lng }
+        : null;
+  const live = useLiveRoute(driverFix, dest);
+  const driverPose = useAnimatedPose(driverFix);
 
   useEffect(() => {
     void requestAndGetLocation().then((fix) => {
@@ -117,32 +137,66 @@ export function RiderScreen({ theme }: { theme: Theme }) {
     });
     return () => ac.abort();
   }, [pickup, dropoff]);
-  const shownRoute = pickup && dropoff ? route : null;
+  const shownRoute = live ?? (pickup && dropoff ? route : null);
 
-  useEffect(() => {
-    if (!ride || (step !== 'finding' && step !== 'assigned')) return;
+  useReconnect(
+    ride && (step === 'finding' || step === 'assigned' || panel === 'chat') ? `ride:${ride.id}` : null,
+    () => {
+      const sb = getSupabase();
+      const id = ride?.id;
+      if (!sb || !id) return { unsubscribe: () => undefined };
+      const ch = sb
+        .channel(`ride-${id}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${id}` },
+          () => {
+            if (!token) return;
+            void api<RideResponse>(`/rides/${id}`, { token }).then((next) => {
+              setRide(next);
+              if (next.status !== 'requested' && step === 'finding') setStep('assigned');
+            });
+          },
+        )
+        .subscribe();
+      return { unsubscribe: () => void sb.removeChannel(ch) };
+    },
+  );
+
+  useReconnect(ride?.driver_id && step !== 'finding' ? `drv:${ride.driver_id}` : null, () => {
     const sb = getSupabase();
-    if (!sb) return;
-    const refresh = async () => {
-      if (!token) return;
-      const next = await api<RideResponse>(`/rides/${ride.id}`, { token });
-      setRide(next);
-      if (next.status !== 'requested') setStep('assigned');
-    };
+    const driverId = ride?.driver_id;
+    if (!sb || !driverId) return { unsubscribe: () => undefined };
+    void sb
+      .from('driver_locations')
+      .select('lat,lng,heading')
+      .eq('driver_id', driverId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
+          setDriverFix({ lat: data.lat, lng: data.lng, heading: data.heading ?? 0 });
+        }
+      });
     const ch = sb
-      .channel(`ride-${ride.id}`)
+      .channel(`drv-${driverId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'rides', filter: `id=eq.${ride.id}` },
-        () => {
-          void refresh();
+        {
+          event: '*',
+          schema: 'public',
+          table: 'driver_locations',
+          filter: `driver_id=eq.${driverId}`,
+        },
+        (payload) => {
+          const row = payload.new as { lat?: number; lng?: number; heading?: number | null };
+          if (typeof row.lat === 'number' && typeof row.lng === 'number') {
+            setDriverFix({ lat: row.lat, lng: row.lng, heading: row.heading ?? 0 });
+          }
         },
       )
       .subscribe();
-    return () => {
-      void sb.removeChannel(ch);
-    };
-  }, [ride, step, token]);
+    return { unsubscribe: () => void sb.removeChannel(ch) };
+  });
 
   const onPickHit = (hit: PlaceHit) => {
     if (focus === 'pickup') setPickup(hit);
@@ -219,9 +273,10 @@ export function RiderScreen({ theme }: { theme: Theme }) {
         theme={theme}
         center={step === 'pin' ? center : (pickup ?? center)}
         zoom={14}
-        route={step === 'confirm' || step === 'assigned' ? shownRoute?.coordinates : undefined}
+        route={step === 'confirm' || step === 'assigned' || panel === 'chat' ? shownRoute?.coordinates : undefined}
         pickup={pickup}
         dropoff={dropoff}
+        vehicle={step === 'assigned' || panel === 'chat' ? driverPose : null}
         showUser={!denied}
         onLongPress={(coord) => {
           setCenter(coord);
@@ -263,6 +318,13 @@ export function RiderScreen({ theme }: { theme: Theme }) {
           >
             <Text style={[styles.whereText, { color: colors.text }]}>Where to?</Text>
           </Pressable>
+          <LanguageChip
+            theme={theme}
+            value={lang}
+            onChange={(next) => {
+              void savePreferredLanguage(next).then(() => refreshProfile());
+            }}
+          />
           <Pressable onPress={() => void signOut()}>
             <Text style={[styles.signOut, { color: colors.textMuted }]}>Sign out</Text>
           </Pressable>
@@ -372,7 +434,14 @@ export function RiderScreen({ theme }: { theme: Theme }) {
 
       {step === 'assigned' && ride ? (
         <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
-          <Text style={[styles.h2, { color: colors.text }]}>Your driver is on the way</Text>
+          <Text style={[styles.h2, { color: colors.text }]}>
+            {ride.peer?.full_name ?? 'Your driver'} is on the way
+          </Text>
+          {live ? (
+            <Text style={[styles.muted, { color: colors.textSecondary }]}>
+              {formatDurationS(live.durationS)} · {formatDistanceM(live.distanceM)}
+            </Text>
+          ) : null}
           {ride.pin_required && ride.trip_pin ? (
             <View style={[styles.pinCard, { backgroundColor: colors.primarySoft }]}>
               <Text style={[styles.muted, { color: colors.textMuted }]}>Trip PIN</Text>
@@ -383,8 +452,39 @@ export function RiderScreen({ theme }: { theme: Theme }) {
             {ride.pickup_label} → {ride.dropoff_label}
           </Text>
           <Text style={[styles.muted, { color: colors.textSecondary }]}>ราคาประมาณ {fare}</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ flex: 1 }}>
+              <Button
+                theme={theme}
+                variant="secondary"
+                label="Call"
+                onPress={() => {
+                  const phone = ride.peer?.phone;
+                  if (phone) void Linking.openURL(`tel:${phone}`);
+                  else setPanel('call');
+                }}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Button theme={theme} variant="secondary" label="Chat" onPress={() => setPanel('chat')} />
+            </View>
+          </View>
           <Button theme={theme} variant="ghost" label="Sign out" onPress={() => void signOut()} />
         </View>
+      ) : null}
+
+      {panel === 'chat' && ride ? (
+        <ChatPanel
+          theme={theme}
+          title={ride.peer?.full_name ?? 'Driver'}
+          subtitle={ride.peer ? undefined : ride.pickup_label}
+          selfId={session?.user.id ?? ''}
+          messages={messages}
+          presets={RIDER_PRESET_KEYS}
+          placeholder={`Message ${ride.peer?.full_name?.split(' ')[0] ?? 'driver'}...`}
+          onClose={() => setPanel('none')}
+          onSend={(input) => void send(input)}
+        />
       ) : null}
     </View>
   );

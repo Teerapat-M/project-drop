@@ -28,6 +28,7 @@ type Props = {
   onPickupDrag?: (coord: MapCoord) => void;
   onDropoffDrag?: (coord: MapCoord) => void;
   centerPin?: 'pickup' | 'dropoff' | null;
+  vehicle?: (MapCoord & { heading?: number | null }) | null;
 };
 
 export function MapCanvas({
@@ -44,6 +45,7 @@ export function MapCanvas({
   onPickupDrag,
   onDropoffDrag,
   centerPin,
+  vehicle,
 }: Props) {
   const routeColor = theme.mode === 'dark' ? theme.colors.primary : theme.colors.secondary;
   const routeGeo =
@@ -116,6 +118,18 @@ export function MapCanvas({
             <View style={[styles.dropoff, { backgroundColor: theme.colors.secondary }]} />
           </ViewAnnotation>
         ) : null}
+        {vehicle ? (
+          <ViewAnnotation id="vehicle" lngLat={[vehicle.lng, vehicle.lat]} anchor="center">
+            <View
+              style={[
+                styles.carWrap,
+                { transform: [{ rotate: `${vehicle.heading ?? 0}deg` }] },
+              ]}
+            >
+              <View style={[styles.car, { backgroundColor: theme.colors.primary }]} />
+            </View>
+          </ViewAnnotation>
+        ) : null}
       </Map>
       {centerPin ? (
         <View pointerEvents="none" style={styles.centerPinWrap}>
@@ -143,4 +157,6 @@ const styles = StyleSheet.create({
   },
   pickup: { width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: '#fff' },
   dropoff: { width: 16, height: 16, borderRadius: 3, borderWidth: 2, borderColor: '#fff' },
+  carWrap: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  car: { width: 18, height: 28, borderRadius: 6, borderWidth: 2, borderColor: '#141414' },
 });
