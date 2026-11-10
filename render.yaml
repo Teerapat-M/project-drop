@@ -1,0 +1,17 @@
+# Drop API — Render Blueprint (free web service).
+# Bind address and PORT are handled in apps/server. Do not attach a disk.
+services:
+  - type: web
+    name: drop-server
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build -w @drop/server
+    startCommand: npm run start -w @drop/server
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
