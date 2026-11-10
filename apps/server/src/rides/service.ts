@@ -1,9 +1,27 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { estimateFare, isVehicleType, type Ride, type RideResponse, type Role, type VehicleType } from '@drop/types';
+import {
+  estimateFare,
+  isVehicleType,
+  type NearbyRide,
+  type Ride,
+  type RideResponse,
+  type Role,
+  type VehicleType,
+} from '@drop/types';
 import { getSupabaseConfig } from '../config';
 import { RideError } from './errors';
 import { generateTripPin, PIN_MAX_ATTEMPTS, pinsMatch } from './pin';
-import { canInsertRide, canSelectRide, canSelectRidePin, canWriteDriverLocation, type Actor } from './rls';
+import {
+  canAcceptRide,
+  canInsertRide,
+  canSelectRide,
+  canSelectRidePin,
+  canVerifyTripPin,
+  canWriteDriverLocation,
+  haversineMeters,
+  toNearbyRide,
+  type Actor,
+} from './rls';
 import { canTransition } from './transitions';
 
 export type RideActor = Actor & { token: string };
@@ -33,6 +51,12 @@ export type RideService = {
   create(actor: RideActor, input: CreateRideInput): Promise<RideResponse>;
   get(actor: RideActor, id: string): Promise<RideResponse>;
   list(actor: RideActor, status?: string): Promise<RideResponse[]>;
+  listNearby(
+    actor: RideActor,
+    lat: number,
+    lng: number,
+    radiusM?: number,
+  ): Promise<NearbyRide[]>;
   accept(actor: RideActor, id: string): Promise<RideResponse>;
   decline(actor: RideActor, id: string): Promise<{ declined: true }>;
   arrive(actor: RideActor, id: string): Promise<RideResponse>;
@@ -56,9 +80,15 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function requireDriver(actor: RideActor): void {
-  if (actor.role !== 'driver' && actor.role !== 'admin') {
+function requireDriverRole(actor: RideActor): void {
+  if (actor.role !== 'driver') {
     throw new RideError('forbidden', 'driver role required');
+  }
+}
+
+function requireAssignedDriver(actor: RideActor, ride: Ride): void {
+  if (!canVerifyTripPin(actor, ride)) {
+    throw new RideError('forbidden', 'not assigned driver');
   }
 }
 
@@ -200,13 +230,27 @@ export function createMemoryRideService(
       }
       return out;
     },
+    async listNearby(actor, lat, lng, radiusM = 5000) {
+      requireDriverRole(actor);
+      const origin = { lat, lng };
+      const out: NearbyRide[] = [];
+      for (const ride of state.rides.values()) {
+        if (ride.status !== 'requested' || ride.driver_id !== null) continue;
+        if (ride.rider_id === actor.id) continue;
+        const distanceM = haversineMeters(origin, { lat: ride.pickup_lat, lng: ride.pickup_lng });
+        if (distanceM > radiusM) continue;
+        out.push(toNearbyRide(ride, distanceM));
+      }
+      return out.sort((a, b) => a.distance_m - b.distance_m);
+    },
     async accept(actor, id) {
-      requireDriver(actor);
       const ride = getRide(id);
-      if (ride.status !== 'requested' || ride.driver_id !== null) {
+      if (!canAcceptRide(actor, ride)) {
+        if (actor.role !== 'driver' || actor.id === ride.rider_id) {
+          throw new RideError('forbidden', 'driver role required');
+        }
         throw new RideError('conflict', 'ride already taken');
       }
-      if (!canTransition(ride.status, 'accepted')) throw new RideError('conflict', 'invalid_transition');
       const rider = profileOf(ride.rider_id);
       const pinOn = rider.trip_pin_enabled === true;
       if (pinOn) {
@@ -222,23 +266,24 @@ export function createMemoryRideService(
       return present(actor, next, null);
     },
     async decline(actor, id) {
-      requireDriver(actor);
-      const ride = getRide(id);
-      if (ride.status !== 'requested') throw new RideError('conflict', 'ride already taken');
+      requireDriverRole(actor);
+      const ride = state.rides.get(id);
+      if (!ride) throw new RideError('not_found', 'ride not found');
+      if (ride.driver_id === actor.id || ride.status !== 'requested') {
+        throw new RideError('conflict', 'ride already taken');
+      }
       return { declined: true };
     },
     async arrive(actor, id) {
-      requireDriver(actor);
       const ride = getRide(id);
       if (!canTransition(ride.status, 'arrived')) throw new RideError('conflict', 'invalid_transition');
-      if (ride.driver_id !== actor.id) throw new RideError('forbidden', 'not assigned driver');
+      requireAssignedDriver(actor, ride);
       return present(actor, save({ ...ride, status: 'arrived' }), null);
     },
     async start(actor, id, pin) {
-      requireDriver(actor);
       const ride = getRide(id);
       if (!canTransition(ride.status, 'in_progress')) throw new RideError('conflict', 'invalid_transition');
-      if (ride.driver_id !== actor.id) throw new RideError('forbidden', 'not assigned driver');
+      requireAssignedDriver(actor, ride);
       if (ride.pin_required) {
         const row = state.pins.get(id);
         if (!row) throw new RideError('pin_required', 'trip pin required');
@@ -359,33 +404,32 @@ export function createSupabaseRideService(): RideService {
       const rows = (data ?? []) as Ride[];
       return rows.filter((r) => canSelectRide(actor, asRide(r))).map((r) => present(actor, asRide(r), null));
     },
-    async accept(actor, id) {
-      requireDriver(actor);
+    async listNearby(actor, lat, lng, radiusM = 5000) {
+      requireDriverRole(actor);
       const supabase = userClient(actor.token);
-      const { data, error } = await supabase
-        .from('rides')
-        .update({ status: 'accepted', driver_id: actor.id })
-        .eq('id', id)
-        .eq('status', 'requested')
-        .is('driver_id', null)
-        .select()
-        .maybeSingle();
+      const { data, error } = await supabase.rpc('nearby_requested_rides', {
+        p_lat: lat,
+        p_lng: lng,
+        p_radius_m: radiusM,
+      });
+      if (error) throw new RideError('invalid', error.message);
+      return (data ?? []) as NearbyRide[];
+    },
+    async accept(actor, id) {
+      requireDriverRole(actor);
+      const supabase = userClient(actor.token);
+      const { data, error } = await supabase.rpc('accept_ride', { p_ride_id: id }).maybeSingle();
       if (error) throw new RideError('conflict', error.message);
       if (!data) throw new RideError('conflict', 'ride already taken');
       return present(actor, asRide(data as Ride), null);
     },
     async decline(actor, id) {
-      requireDriver(actor);
-      const supabase = userClient(actor.token);
-      const { data, error } = await supabase.from('rides').select('status').eq('id', id).maybeSingle();
-      if (error || !data) throw new RideError('not_found', 'ride not found');
-      if ((data as { status: string }).status !== 'requested') {
-        throw new RideError('conflict', 'ride already taken');
-      }
+      requireDriverRole(actor);
+      void id;
       return { declined: true };
     },
     async arrive(actor, id) {
-      requireDriver(actor);
+      requireDriverRole(actor);
       const supabase = userClient(actor.token);
       const { data, error } = await supabase
         .from('rides')
@@ -400,7 +444,7 @@ export function createSupabaseRideService(): RideService {
       return present(actor, asRide(data as Ride), null);
     },
     async start(actor, id, pin) {
-      requireDriver(actor);
+      requireDriverRole(actor);
       const supabase = userClient(actor.token);
       const { data: current, error: loadErr } = await supabase
         .from('rides')
@@ -410,7 +454,7 @@ export function createSupabaseRideService(): RideService {
       if (loadErr || !current) throw new RideError('not_found', 'ride not found');
       const ride = asRide(current as Ride);
       if (!canTransition(ride.status, 'in_progress')) throw new RideError('conflict', 'invalid_transition');
-      if (ride.driver_id !== actor.id) throw new RideError('forbidden', 'not assigned driver');
+      requireAssignedDriver(actor, ride);
       if (ride.pin_required) {
         const { data, error } = await supabase.rpc('verify_trip_pin', { p_ride_id: id, p_pin: pin ?? '' });
         if (error) throw new RideError('invalid', error.message);

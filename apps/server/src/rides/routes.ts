@@ -56,6 +56,26 @@ export function mountRideRoutes(
     }
   });
 
+  app.get('/rides/nearby', requireAuth, async (req, res) => {
+    try {
+      const actor = await actorOf(res, loadMe);
+      const lat = Number(req.query.lat);
+      const lng = Number(req.query.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        throw new RideError('invalid', 'lat and lng required');
+      }
+      const radiusRaw = req.query.radius_m;
+      const radiusM =
+        typeof radiusRaw === 'string' && radiusRaw !== '' ? Number(radiusRaw) : undefined;
+      if (radiusM !== undefined && !Number.isFinite(radiusM)) {
+        throw new RideError('invalid', 'radius_m must be a number');
+      }
+      res.status(200).json(await rides.listNearby(actor, lat, lng, radiusM));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
   app.get('/rides/:id', requireAuth, async (req, res) => {
     try {
       const actor = await actorOf(res, loadMe);

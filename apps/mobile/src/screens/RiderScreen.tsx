@@ -138,13 +138,6 @@ export function RiderScreen({ theme }: { theme: Theme }) {
           void refresh();
         },
       )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'ride_pins', filter: `ride_id=eq.${ride.id}` },
-        () => {
-          void refresh();
-        },
-      )
       .subscribe();
     return () => {
       void sb.removeChannel(ch);

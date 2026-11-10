@@ -41,13 +41,13 @@ Admin stays gated when Supabase env vars are missing (redirect to `/login`); it 
 1. Create a free project. Copy the project URL and **anon** key into the env files below. Do not commit real values.
 2. Run the SQL files in `supabase/migrations/` in order (or `supabase db push`). Do **not** apply them from CI.
    - `20261110120000_profiles.sql` — profiles + admin guard (already applied live).
-   - `20261110180000_rides.sql` — `ride_status` / `vehicle_type` enums, `rides`, `ride_pins`, `driver_locations`, RLS, `verify_trip_pin`, Realtime publication. **New in this phase — apply in the SQL editor. Do not apply from this repo’s CI, and do not apply anything to a live DB from an agent.**
+   - `20261110180000_rides.sql` — `ride_status` / `vehicle_type` enums, `rides`, `ride_pins`, `driver_locations`, RLS, `accept_ride`, `nearby_requested_rides`, `verify_trip_pin`, Realtime publication (`rides` + `driver_locations` only). **New in this phase — apply in the SQL editor. Do not apply from this repo’s CI, and do not apply anything to a live DB from an agent.**
 3. **Authentication → Providers → Email**: enable email + password. Decide **Confirm email** (if on, sign-up returns no session until the user clicks the mail).
 4. **Authentication → URL configuration**:
    - Site URL: admin origin (local `http://localhost:3000`, then the Vercel URL).
    - Redirect URLs: `http://localhost:3000/**`, `https://<admin-domain>/**`, `drop://auth/callback`.
 5. **Phone OTP** (optional): add an SMS provider under Auth providers. Then set `EXPO_PUBLIC_ENABLE_PHONE_OTP=true` in `apps/mobile/.env`. Default is **false** because SMS is not free-tier by default.
-6. **Realtime**: the rides migration adds `rides`, `ride_pins`, and `driver_locations` to the `supabase_realtime` publication. In the dashboard, confirm Database → Publications → `supabase_realtime` includes those tables. The rider subscribes to their ride (finding → driver assigned); the driver subscribes to `status=requested` inserts. Nearby filtering is **not** in RLS — drivers can `SELECT` all requested rides; the app sorts nearest-first with haversine (a later RPC can filter by distance).
+6. **Realtime**: the rides migration adds **only** `rides` and `driver_locations` to `supabase_realtime`. **`ride_pins` must not be published** (PIN values would leak). Confirm Database → Publications → `supabase_realtime`. The rider subscribes to their own ride row (finding → assigned); PIN is fetched via `GET /rides/:id`, not Realtime. Drivers **cannot** `SELECT` requested rows (RLS), so they will not receive those Realtime events either. The driver app polls `GET /rides/nearby` (`nearby_requested_rides`: rounded pickup, no `rider_id`, no dropoff) about every 3s while online.
 7. Promote a staff user to admin in SQL (users cannot self-assign admin):
 
 ```sql
@@ -75,15 +75,18 @@ Ride API (JWT middleware, same as `/me`):
 | Method | Path | Who |
 |--------|------|-----|
 | `POST` | `/rides` | rider creates pickup/dropoff + `vehicle_type` `car`\|`bike` |
-| `GET` | `/rides`, `/rides/:id` | rider own; driver assigned + requested; admin all |
-| `POST` | `/rides/:id/accept` | first-accept-wins (`status=requested` and `driver_id is null`) |
+| `GET` | `/rides`, `/rides/:id` | rider own; assigned driver; admin all. Drivers do **not** see requested rows. |
+| `GET` | `/rides/nearby?lat=&lng=&radius_m=` | driver matching queue (`nearby_requested_rides`) |
+| `POST` | `/rides/:id/accept` | `accept_ride` RPC: first-accept-wins, caller `role=driver` and `<> rider_id` |
 | `POST` | `/rides/:id/decline` | driver dismisses a still-requested ride |
 | `POST` | `/rides/:id/arrive` | assigned driver |
 | `POST` | `/rides/:id/start` | PIN via `verify_trip_pin` when required, else confirm |
 | `POST` | `/rides/:id/cancel` | rider or assigned driver |
 | `PUT` | `/driver-location` | driver upserts their `driver_locations` row |
 
-Trip PIN lives in **`ride_pins`**, not on `rides`. The rider (and admin) can `SELECT` it; the driver cannot. On accept, if `profiles.trip_pin_enabled` is true, a crypto-random 4-digit PIN is generated in `rides_guard` and shown only on the rider’s R05 card. The driver enters it (DN03); the server compares through HMAC (attempt limit 5). Otherwise the driver confirms (DN03b). Status transitions are enforced in the trigger and in Express.
+Trip PIN lives in **`ride_pins`**, not on `rides`, and **not** in Realtime. The rider (and admin) can `SELECT` it; the driver cannot. Accept is **only** `accept_ride()` (security definer, atomic `status=requested` and `driver_id is null`). Riders may cancel or edit non-status/non-driver fields; the guard trigger rejects rider writes to `driver_id` or to any status except `cancelled`. `verify_trip_pin` / start require `auth.uid() = driver_id`, `role=driver`, and `driver_id <> rider_id`. On accept, if `profiles.trip_pin_enabled` is true, a crypto-random 4-digit PIN is generated in `rides_guard` and shown only on the rider’s R05 card. The driver enters it (DN03); the server compares through HMAC (attempt limit 5). Otherwise the driver confirms (DN03b).
+
+SQL attack-path assertions: `supabase/tests/rides_security.sql` (throwaway DB). Server Jest mirrors the same rules.
 
 ## How to run
 

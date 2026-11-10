@@ -68,6 +68,17 @@ export type RideResponse = Ride & {
   trip_pin?: string | null;
 };
 
+/** Driver matching queue. No rider_id, no dropoff, pickup rounded to ~3 decimals. */
+export type NearbyRide = {
+  id: string;
+  vehicle_type: VehicleType;
+  pickup_lat: number;
+  pickup_lng: number;
+  route_distance_m: number | null;
+  route_duration_s: number | null;
+  distance_m: number;
+};
+
 export type DriverLocation = {
   driver_id: string;
   lat: number;

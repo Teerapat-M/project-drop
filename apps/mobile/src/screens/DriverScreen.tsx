@@ -1,18 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
-import type { RideResponse, VehicleType } from '@drop/types';
+import type { NearbyRide, RideResponse, VehicleType } from '@drop/types';
 import type { Theme } from '@drop/tokens';
 import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
-import { formatDistanceM, formatDurationS, haversineMeters, sortByDistance } from '../geo/haversine';
+import { formatDistanceM, formatDurationS } from '../geo/haversine';
 import { requestAndGetLocation, watchLocation, type UserFix } from '../geo/location';
 import { MapCanvas } from '../map/MapCanvas';
 import { BANGKOK_CENTER } from '../map/style';
-import { getSupabase } from '../supabase';
 import { Button } from '../ui/Button';
 import { OtpBoxes } from '../ui/OtpBoxes';
 
 type Step = 'home' | 'incoming' | 'pickup' | 'arrived' | 'pin' | 'confirm' | 'trip';
+
+const NEARBY_POLL_MS = 3000;
 
 function parseRoute(ride: RideResponse): [number, number][] | undefined {
   if (!ride.route_polyline) return undefined;
@@ -33,12 +34,16 @@ export function DriverScreen({ theme }: { theme: Theme }) {
   const [fix, setFix] = useState<UserFix | null>(null);
   const [denied, setDenied] = useState(false);
   const [vehicle] = useState<VehicleType>('car');
-  const [incoming, setIncoming] = useState<RideResponse[]>([]);
+  const [incoming, setIncoming] = useState<NearbyRide[]>([]);
   const [ride, setRide] = useState<RideResponse | null>(null);
   const [step, setStep] = useState<Step>('home');
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const fixRef = useRef(fix);
+  useEffect(() => {
+    fixRef.current = fix;
+  }, [fix]);
 
   const publish = async (next: UserFix, isOnline: boolean) => {
     if (!token) return;
@@ -95,41 +100,33 @@ export function DriverScreen({ theme }: { theme: Theme }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [online]);
 
+  // Requested rows are not on Realtime (RLS hides them from drivers). Poll the sanitized RPC.
   useEffect(() => {
-    if (!online || !token) return;
-    const sb = getSupabase();
+    if (!online || !token || ride) return;
+    let cancelled = false;
     const load = async () => {
-      const rows = await api<RideResponse[]>('/rides?status=requested', { token });
-      setIncoming(rows);
+      const origin = fixRef.current ?? BANGKOK_CENTER;
+      const q = new URLSearchParams({
+        lat: String(origin.lat),
+        lng: String(origin.lng),
+        radius_m: '5000',
+      });
+      try {
+        const rows = await api<NearbyRide[]>(`/rides/nearby?${q}`, { token });
+        if (!cancelled) setIncoming(rows);
+      } catch {
+        if (!cancelled) setIncoming([]);
+      }
     };
     void load();
-    if (!sb) return;
-    const ch = sb
-      .channel('requested-rides')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'rides' }, (payload) => {
-        const row = payload.new as RideResponse | undefined;
-        if (!row?.id) return;
-        if (row.status === 'requested') {
-          setIncoming((prev) => {
-            const rest = prev.filter((r) => r.id !== row.id);
-            return [...rest, row];
-          });
-        } else {
-          setIncoming((prev) => prev.filter((r) => r.id !== row.id));
-        }
-      })
-      .subscribe();
+    const timer = setInterval(() => void load(), NEARBY_POLL_MS);
     return () => {
-      void sb.removeChannel(ch);
+      cancelled = true;
+      clearInterval(timer);
     };
-  }, [online, token]);
+  }, [online, token, ride]);
 
-  const nearest = useMemo(() => {
-    const origin = fix ?? BANGKOK_CENTER;
-    return sortByDistance(origin, incoming, (r) => ({ lat: r.pickup_lat, lng: r.pickup_lng }));
-  }, [incoming, fix]);
-
-  const offer = !ride && online ? nearest[0] : null;
+  const offer = !ride && online ? incoming[0] : null;
   const browsing = !ride;
 
   const origin = fix ?? BANGKOK_CENTER;
@@ -191,7 +188,7 @@ export function DriverScreen({ theme }: { theme: Theme }) {
               ? { lat: offer.pickup_lat, lng: offer.pickup_lng }
               : origin
         }
-        route={ride ? parseRoute(ride) : offer ? parseRoute(offer) : undefined}
+        route={ride ? parseRoute(ride) : undefined}
         pickup={
           ride
             ? { lat: ride.pickup_lat, lng: ride.pickup_lng }
@@ -199,13 +196,7 @@ export function DriverScreen({ theme }: { theme: Theme }) {
               ? { lat: offer.pickup_lat, lng: offer.pickup_lng }
               : null
         }
-        dropoff={
-          ride
-            ? { lat: ride.dropoff_lat, lng: ride.dropoff_lng }
-            : offer
-              ? { lat: offer.dropoff_lat, lng: offer.dropoff_lng }
-              : null
-        }
+        dropoff={ride ? { lat: ride.dropoff_lat, lng: ride.dropoff_lng } : null}
         showUser={!denied}
         followUser={online && !ride}
       />
@@ -236,7 +227,7 @@ export function DriverScreen({ theme }: { theme: Theme }) {
           </Text>
           <Text style={[styles.muted, { color: colors.textSecondary }]}>
             {online
-              ? 'Incoming rides are sorted nearest-first.'
+              ? 'Nearby requests refresh every few seconds.'
               : 'Go online to start receiving trip requests.'}
           </Text>
           <Pressable onPress={() => void signOut()}>
@@ -249,11 +240,11 @@ export function DriverScreen({ theme }: { theme: Theme }) {
         <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
           <Text style={[styles.h2, { color: colors.text }]}>New trip request</Text>
           <Text style={[styles.muted, { color: colors.textSecondary }]}>
-            {offer.vehicle_type === 'bike' ? 'DropBike' : 'DropCar'} ·{' '}
-            {formatDistanceM(haversineMeters(origin, { lat: offer.pickup_lat, lng: offer.pickup_lng }))} away
+            {offer.vehicle_type === 'bike' ? 'DropBike' : 'DropCar'} · {formatDistanceM(offer.distance_m)} away
           </Text>
-          <Text style={{ color: colors.text }}>{offer.pickup_label}</Text>
-          <Text style={{ color: colors.text }}>{offer.dropoff_label}</Text>
+          <Text style={{ color: colors.text }}>
+            Pickup near {offer.pickup_lat.toFixed(3)}, {offer.pickup_lng.toFixed(3)}
+          </Text>
           <Text style={[styles.muted, { color: colors.textSecondary }]}>
             {offer.route_distance_m != null ? formatDistanceM(offer.route_distance_m) : '—'} ·{' '}
             {offer.route_duration_s != null ? formatDurationS(offer.route_duration_s) : '—'}

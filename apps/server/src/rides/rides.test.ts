@@ -57,6 +57,7 @@ describe('ride endpoints', () => {
     const { app } = appFor({ tokens });
     expect((await request(app).post('/rides').send(SIAM)).status).toBe(401);
     expect((await request(app).get('/rides/x')).status).toBe(401);
+    expect((await request(app).get('/rides/nearby')).status).toBe(401);
     expect((await request(app).post('/rides/x/accept')).status).toBe(401);
   });
 
@@ -189,6 +190,53 @@ describe('ride endpoints', () => {
     const arrived = await request(app).post(`/rides/${id}/arrive`).set('Authorization', 'Bearer d1');
     expect(arrived.status).toBe(200);
     expect(arrived.body.status).toBe('arrived');
+  });
+
+  it('rejects a rider self-accepting, setting driver_id, and calling start/verify', async () => {
+    const { app } = appFor({ tokens });
+    const created = await request(app).post('/rides').set('Authorization', 'Bearer rider').send(SIAM);
+    const id = created.body.id as string;
+    const selfAccept = await request(app).post(`/rides/${id}/accept`).set('Authorization', 'Bearer rider');
+    expect(selfAccept.status).toBe(403);
+    const listed = await request(app).get(`/rides/${id}`).set('Authorization', 'Bearer rider');
+    expect(listed.body.status).toBe('requested');
+    expect(listed.body.driver_id).toBeNull();
+    const taken = await request(app).post(`/rides/${id}/accept`).set('Authorization', 'Bearer d1');
+    expect(taken.status).toBe(200);
+    expect(taken.body.driver_id).toBe('driver-1');
+    const riderStart = await request(app).post(`/rides/${id}/start`).set('Authorization', 'Bearer rider');
+    expect(riderStart.status).toBe(403);
+    const riderArrive = await request(app).post(`/rides/${id}/arrive`).set('Authorization', 'Bearer rider');
+    expect(riderArrive.status).toBe(403);
+    const otherStart = await request(app).post(`/rides/${id}/start`).set('Authorization', 'Bearer d2');
+    expect(otherStart.status).toBe(403);
+  });
+
+  it('does not list requested rides to drivers; nearby omits rider_id and dropoff', async () => {
+    const { app } = appFor({ tokens });
+    const created = await request(app).post('/rides').set('Authorization', 'Bearer rider').send(SIAM);
+    const id = created.body.id as string;
+    const listed = await request(app).get('/rides?status=requested').set('Authorization', 'Bearer d1');
+    expect(listed.status).toBe(200);
+    expect(listed.body).toEqual([]);
+    const nearby = await request(app)
+      .get('/rides/nearby')
+      .query({ lat: SIAM.pickup_lat, lng: SIAM.pickup_lng, radius_m: 5000 })
+      .set('Authorization', 'Bearer d1');
+    expect(nearby.status).toBe(200);
+    expect(nearby.body).toHaveLength(1);
+    expect(nearby.body[0].id).toBe(id);
+    expect(nearby.body[0].rider_id).toBeUndefined();
+    expect(nearby.body[0].dropoff_lat).toBeUndefined();
+    expect(nearby.body[0].dropoff_label).toBeUndefined();
+    expect(nearby.body[0].pickup_label).toBeUndefined();
+    expect(nearby.body[0].pickup_lat).toBe(Math.round(SIAM.pickup_lat * 1000) / 1000);
+    expect(nearby.body[0].vehicle_type).toBe('car');
+    const riderNearby = await request(app)
+      .get('/rides/nearby')
+      .query({ lat: SIAM.pickup_lat, lng: SIAM.pickup_lng })
+      .set('Authorization', 'Bearer rider');
+    expect(riderNearby.status).toBe(403);
   });
 
   it('upserts driver location for the signed-in driver only', async () => {
