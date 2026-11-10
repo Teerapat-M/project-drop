@@ -1,5 +1,5 @@
--- Attack-path assertions for 20261110180000_rides.sql.
--- Not run in CI (no live DB). Apply profiles + rides migrations on a throwaway
+-- Attack-path assertions for 20261110180000_rides.sql + 20261110200000_nearby_rides_hardening.sql.
+-- Not run in CI (no live DB). Apply profiles + rides + hardening migrations on a throwaway
 -- Postgres, stub auth.uid() / profiles like the PR review harness, then:
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rides_security.sql
 -- Server Jest mirrors the same rules in apps/server/src/rides/{rls,rides}.test.ts.
@@ -61,5 +61,26 @@ begin
   end if;
   if sig !~ 'pickup_lat' or sig !~ 'vehicle_type' or sig !~ 'distance_m' then
     raise exception 'MEDIUM: nearby_requested_rides missing columns: %', sig;
+  end if;
+end $$;
+
+-- LOW: radius cap 10 km; distance from rounded pickup, ceiled to 250 m.
+do $$
+declare
+  def text := pg_get_functiondef(
+    'public.nearby_requested_rides(double precision, double precision, double precision)'::regprocedure
+  );
+begin
+  if def !~ '10000' or def !~ 'least\(' then
+    raise exception 'LOW: nearby_requested_rides must clamp radius to 10 km: %', def;
+  end if;
+  if def ~ 'haversine_m\(p_lat, p_lng, r\.pickup_lat, r\.pickup_lng\)' then
+    raise exception 'LOW: nearby distance must not use exact pickup coords';
+  end if;
+  if def !~ 'round\(r\.pickup_lat' or def !~ 'round\(r\.pickup_lng' then
+    raise exception 'LOW: nearby distance must use rounded pickup coords: %', def;
+  end if;
+  if def !~ 'ceil\(' or def !~ '250' then
+    raise exception 'LOW: nearby distance_m must ceil to 250 m buckets: %', def;
   end if;
 end $$;

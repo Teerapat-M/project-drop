@@ -1,14 +1,22 @@
 import { describe, expect, it } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Ride } from '@drop/types';
 import {
+  NEARBY_DISTANCE_BUCKET_M,
+  NEARBY_RIDES_MAX_RADIUS_M,
+  type Ride,
+} from '@drop/types';
+import {
+  bucketNearbyDistanceM,
   canAcceptRide,
   canRiderMutate,
   canSelectRide,
   canSelectRidePin,
   canVerifyTripPin,
   canWriteDriverLocation,
+  clampNearbyRadiusM,
+  haversineMeters,
+  nearbyDistanceM,
   presentRidePin,
   roundPickup,
   toNearbyRide,
@@ -89,7 +97,9 @@ describe('ride RLS helpers', () => {
   });
 
   it('sanitizes the driver queue: no rider_id/dropoff, pickup rounded to 3 decimals', () => {
-    const nearby = toNearbyRide(ride(), 1234.6);
+    const origin = { lat: 13.75, lng: 100.54 };
+    const r = ride();
+    const nearby = toNearbyRide(r, origin);
     expect(nearby).toEqual({
       id: 'r1',
       vehicle_type: 'car',
@@ -97,13 +107,48 @@ describe('ride RLS helpers', () => {
       pickup_lng: roundPickup(100.5347),
       route_distance_m: 9800,
       route_duration_s: 1440,
-      distance_m: 1235,
+      distance_m: nearbyDistanceM(origin, { lat: r.pickup_lat, lng: r.pickup_lng }),
     });
     expect(nearby.pickup_lat).toBe(13.747);
     expect(nearby).not.toHaveProperty('rider_id');
     expect(nearby).not.toHaveProperty('dropoff_lat');
     expect(nearby).not.toHaveProperty('dropoff_label');
     expect(nearby).not.toHaveProperty('pickup_label');
+  });
+
+  it('clamps nearby radius to 10 km', () => {
+    expect(NEARBY_RIDES_MAX_RADIUS_M).toBe(10_000);
+    expect(clampNearbyRadiusM(50_000)).toBe(NEARBY_RIDES_MAX_RADIUS_M);
+    expect(clampNearbyRadiusM(10_000)).toBe(10_000);
+    expect(clampNearbyRadiusM(5_000)).toBe(5_000);
+    expect(clampNearbyRadiusM(undefined)).toBe(5_000);
+    expect(clampNearbyRadiusM(-1)).toBe(0);
+  });
+
+  it('buckets distance_m up to 250 m', () => {
+    expect(NEARBY_DISTANCE_BUCKET_M).toBe(250);
+    expect(bucketNearbyDistanceM(0)).toBe(0);
+    expect(bucketNearbyDistanceM(1)).toBe(250);
+    expect(bucketNearbyDistanceM(250)).toBe(250);
+    expect(bucketNearbyDistanceM(251)).toBe(500);
+    expect(bucketNearbyDistanceM(1234.6)).toBe(1250);
+  });
+
+  it('computes nearby distance from rounded pickup coords, not the exact ones', () => {
+    const exact = { lat: 13.7466, lng: 100.5347 };
+    const rounded = { lat: roundPickup(exact.lat), lng: roundPickup(exact.lng) };
+    expect(rounded).toEqual({ lat: 13.747, lng: 100.535 });
+    // Standing on the true pickup: exact haversine is 0, rounded-cell distance is not.
+    expect(haversineMeters(exact, exact)).toBe(0);
+    expect(haversineMeters(exact, rounded)).toBeGreaterThan(40);
+    expect(nearbyDistanceM(exact, exact)).toBe(NEARBY_DISTANCE_BUCKET_M);
+    expect(nearbyDistanceM(rounded, exact)).toBe(0);
+    const origin = { lat: 13.75, lng: 100.54 };
+    const fromRounded = haversineMeters(origin, rounded);
+    const fromExact = haversineMeters(origin, exact);
+    expect(fromRounded).not.toBe(fromExact);
+    expect(nearbyDistanceM(origin, exact)).toBe(bucketNearbyDistanceM(fromRounded));
+    expect(nearbyDistanceM(origin, exact)).not.toBe(Math.round(fromExact));
   });
 
   it('never puts the PIN on a driver-facing payload', () => {
@@ -129,6 +174,10 @@ describe('rides migration security text', () => {
     join(__dirname, '../../../../supabase/migrations/20261110180000_rides.sql'),
     'utf8',
   );
+  const hardening = readFileSync(
+    join(__dirname, '../../../../supabase/migrations/20261110200000_nearby_rides_hardening.sql'),
+    'utf8',
+  );
 
   it('does not publish ride_pins or any PIN column', () => {
     expect(sql).not.toMatch(/add table public\.ride_pins/i);
@@ -147,5 +196,20 @@ describe('rides migration security text', () => {
     expect(sql).toMatch(/rider can only cancel/);
     expect(sql).toMatch(/driver_id is distinct from uid/);
     expect(sql).toMatch(/create or replace function public\.nearby_requested_rides/);
+  });
+
+  it('hardens nearby_requested_rides without editing the live rides migration', () => {
+    expect(sql).not.toMatch(/max_radius_m constant double precision := 10000/);
+    expect(hardening).toMatch(/create or replace function public\.nearby_requested_rides/);
+    expect(hardening).toMatch(/least\(greatest\(coalesce\(p_radius_m, 5000\), 0\), max_radius_m\)/);
+    expect(hardening).toMatch(/max_radius_m constant double precision := 10000/);
+    expect(hardening).toMatch(/bucket_m constant double precision := 250/);
+    expect(hardening).toMatch(/ceil\(q\.raw_m \/ bucket_m\)/);
+    expect(hardening).toMatch(
+      /private\.haversine_m\(\s*p_lat,\s*p_lng,\s*round\(r\.pickup_lat::numeric, 3\)::double precision,\s*round\(r\.pickup_lng::numeric, 3\)::double precision\s*\)/,
+    );
+    expect(hardening).not.toMatch(
+      /private\.haversine_m\(p_lat, p_lng, r\.pickup_lat, r\.pickup_lng\)/,
+    );
   });
 });

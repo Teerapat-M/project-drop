@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import request from 'supertest';
-import type { MeResponse, Role } from '@drop/types';
+import { NEARBY_DISTANCE_BUCKET_M, NEARBY_RIDES_MAX_RADIUS_M, type MeResponse, type Role } from '@drop/types';
 
 jest.mock('jose', () => ({
   jwtVerify: jest.fn(),
@@ -10,6 +10,7 @@ jest.mock('jose', () => ({
 
 import { createApp } from '../app';
 import { PIN_MAX_ATTEMPTS } from './pin';
+import { haversineMeters, nearbyDistanceM, roundPickup } from './rls';
 import { createMemoryRideService } from './service';
 
 const SIAM = {
@@ -51,6 +52,7 @@ describe('ride endpoints', () => {
     pinRider: { userId: 'rider-pin', role: 'rider' as const, trip_pin_enabled: true },
     d1: { userId: 'driver-1', role: 'driver' as const },
     d2: { userId: 'driver-2', role: 'driver' as const },
+    admin: { userId: 'admin-1', role: 'admin' as const },
   };
 
   it('requires auth on ride routes', async () => {
@@ -237,6 +239,55 @@ describe('ride endpoints', () => {
       .query({ lat: SIAM.pickup_lat, lng: SIAM.pickup_lng })
       .set('Authorization', 'Bearer rider');
     expect(riderNearby.status).toBe(403);
+    const origin = { lat: SIAM.pickup_lat, lng: SIAM.pickup_lng };
+    expect(nearby.body[0].distance_m).toBe(nearbyDistanceM(origin, origin));
+    expect(nearby.body[0].distance_m).toBe(NEARBY_DISTANCE_BUCKET_M);
+  });
+
+  it('clamps a 50 km nearby radius to 10 km', async () => {
+    const { app } = appFor({ tokens });
+    await request(app).post('/rides').set('Authorization', 'Bearer rider').send(SIAM);
+    const pickup = { lat: SIAM.pickup_lat, lng: SIAM.pickup_lng };
+    const rounded = { lat: roundPickup(pickup.lat), lng: roundPickup(pickup.lng) };
+    const far = { lat: SIAM.pickup_lat + 0.135, lng: SIAM.pickup_lng };
+    const mid = { lat: SIAM.pickup_lat + 0.045, lng: SIAM.pickup_lng };
+    expect(haversineMeters(far, rounded)).toBeGreaterThan(NEARBY_RIDES_MAX_RADIUS_M);
+    expect(haversineMeters(mid, rounded)).toBeLessThan(NEARBY_RIDES_MAX_RADIUS_M);
+
+    const tooFar = await request(app)
+      .get('/rides/nearby')
+      .query({ lat: far.lat, lng: far.lng, radius_m: 50_000 })
+      .set('Authorization', 'Bearer d1');
+    expect(tooFar.status).toBe(200);
+    expect(tooFar.body).toEqual([]);
+
+    const inside = await request(app)
+      .get('/rides/nearby')
+      .query({ lat: mid.lat, lng: mid.lng, radius_m: 50_000 })
+      .set('Authorization', 'Bearer d1');
+    expect(inside.status).toBe(200);
+    expect(inside.body).toHaveLength(1);
+    expect(inside.body[0].distance_m).toBe(nearbyDistanceM(mid, pickup));
+    expect(inside.body[0].distance_m % NEARBY_DISTANCE_BUCKET_M).toBe(0);
+  });
+
+  it('lets the rider and admin read trip_pin on GET /rides/:id; the driver never does', async () => {
+    const { app } = appFor({ tokens });
+    const created = await request(app)
+      .post('/rides')
+      .set('Authorization', 'Bearer pinRider')
+      .send(SIAM);
+    const id = created.body.id as string;
+    await request(app).post(`/rides/${id}/accept`).set('Authorization', 'Bearer d1');
+    const riderView = await request(app).get(`/rides/${id}`).set('Authorization', 'Bearer pinRider');
+    const adminView = await request(app).get(`/rides/${id}`).set('Authorization', 'Bearer admin');
+    const driverView = await request(app).get(`/rides/${id}`).set('Authorization', 'Bearer d1');
+    expect(riderView.status).toBe(200);
+    expect(adminView.status).toBe(200);
+    expect(driverView.status).toBe(200);
+    expect(riderView.body.trip_pin).toMatch(/^\d{4}$/);
+    expect(adminView.body.trip_pin).toBe(riderView.body.trip_pin);
+    expect(driverView.body.trip_pin).toBeUndefined();
   });
 
   it('upserts driver location for the signed-in driver only', async () => {

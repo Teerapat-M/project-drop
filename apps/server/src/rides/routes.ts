@@ -1,5 +1,5 @@
 import type { Express, RequestHandler, Response } from 'express';
-import { isVehicleType } from '@drop/types';
+import { isVehicleType, NEARBY_RIDES_MAX_RADIUS_M } from '@drop/types';
 import type { AuthLocals } from '../auth/middleware';
 import type { LoadMe } from '../auth/me';
 import { httpStatusFor, RideError } from './errors';
@@ -65,10 +65,13 @@ export function mountRideRoutes(
         throw new RideError('invalid', 'lat and lng required');
       }
       const radiusRaw = req.query.radius_m;
-      const radiusM =
+      let radiusM =
         typeof radiusRaw === 'string' && radiusRaw !== '' ? Number(radiusRaw) : undefined;
-      if (radiusM !== undefined && !Number.isFinite(radiusM)) {
+      if (radiusM !== undefined && (!Number.isFinite(radiusM) || radiusM < 0)) {
         throw new RideError('invalid', 'radius_m must be a number');
+      }
+      if (radiusM !== undefined) {
+        radiusM = Math.min(radiusM, NEARBY_RIDES_MAX_RADIUS_M);
       }
       res.status(200).json(await rides.listNearby(actor, lat, lng, radiusM));
     } catch (err) {
