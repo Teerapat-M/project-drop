@@ -7,7 +7,10 @@ export function adminCssVars(): Record<string, string> {
     '--drop-bg': adminTheme.colors.background,
     '--drop-surface': adminTheme.colors.surface,
     '--drop-text': adminTheme.colors.text,
-    '--drop-muted': adminTheme.colors.textMuted,
+    '--drop-muted': adminTheme.colors.textSecondary,
+    '--drop-border': adminTheme.colors.border,
+    '--drop-danger': adminTheme.colors.danger,
+    '--drop-success': adminTheme.colors.success,
   };
 }
 

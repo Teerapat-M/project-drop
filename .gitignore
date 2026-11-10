@@ -9,6 +9,7 @@ node_modules/
 
 # Builds / caches
 dist/
+packages/*/dist/
 build/
 coverage/
 .turbo/

@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "compilerOptions": {
+    "strict": true
+  },
+  "references": [
+    { "path": "./packages/tokens" },
+    { "path": "./packages/types" }
+  ]
+}
