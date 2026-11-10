@@ -18,7 +18,9 @@ import {
   canSelectRidePin,
   canVerifyTripPin,
   canWriteDriverLocation,
+  clampNearbyRadiusM,
   haversineMeters,
+  roundPickup,
   toNearbyRide,
   type Actor,
 } from './rls';
@@ -233,13 +235,15 @@ export function createMemoryRideService(
     async listNearby(actor, lat, lng, radiusM = 5000) {
       requireDriverRole(actor);
       const origin = { lat, lng };
+      const radius = clampNearbyRadiusM(radiusM);
       const out: NearbyRide[] = [];
       for (const ride of state.rides.values()) {
         if (ride.status !== 'requested' || ride.driver_id !== null) continue;
         if (ride.rider_id === actor.id) continue;
-        const distanceM = haversineMeters(origin, { lat: ride.pickup_lat, lng: ride.pickup_lng });
-        if (distanceM > radiusM) continue;
-        out.push(toNearbyRide(ride, distanceM));
+        const rounded = { lat: roundPickup(ride.pickup_lat), lng: roundPickup(ride.pickup_lng) };
+        const rawM = haversineMeters(origin, rounded);
+        if (rawM > radius) continue;
+        out.push(toNearbyRide(ride, origin));
       }
       return out.sort((a, b) => a.distance_m - b.distance_m);
     },
@@ -410,7 +414,7 @@ export function createSupabaseRideService(): RideService {
       const { data, error } = await supabase.rpc('nearby_requested_rides', {
         p_lat: lat,
         p_lng: lng,
-        p_radius_m: radiusM,
+        p_radius_m: clampNearbyRadiusM(radiusM),
       });
       if (error) throw new RideError('invalid', error.message);
       return (data ?? []) as NearbyRide[];

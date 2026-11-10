@@ -1,4 +1,11 @@
-import type { NearbyRide, Ride, RideStatus, Role } from '@drop/types';
+import {
+  NEARBY_DISTANCE_BUCKET_M,
+  NEARBY_RIDES_MAX_RADIUS_M,
+  type NearbyRide,
+  type Ride,
+  type RideStatus,
+  type Role,
+} from '@drop/types';
 
 export type Actor = { id: string; role: Role | null };
 
@@ -68,7 +75,32 @@ export function roundPickup(n: number): number {
   return Math.round(n * 1000) / 1000;
 }
 
-export function toNearbyRide(ride: Ride, distanceM: number): NearbyRide {
+/** Matches `nearby_requested_rides`: default 5 km, never above 10 km. */
+export function clampNearbyRadiusM(radiusM: number | undefined): number {
+  const requested = radiusM === undefined || !Number.isFinite(radiusM) ? 5_000 : radiusM;
+  return Math.min(Math.max(0, requested), NEARBY_RIDES_MAX_RADIUS_M);
+}
+
+/** Round up to NEARBY_DISTANCE_BUCKET_M (250 m). 0 stays 0. */
+export function bucketNearbyDistanceM(distanceM: number): number {
+  if (distanceM <= 0) return 0;
+  return Math.ceil(distanceM / NEARBY_DISTANCE_BUCKET_M) * NEARBY_DISTANCE_BUCKET_M;
+}
+
+/** Haversine to the *rounded* pickup, then bucket. Never range off the exact coords. */
+export function nearbyDistanceM(
+  origin: { lat: number; lng: number },
+  pickup: { lat: number; lng: number },
+): number {
+  return bucketNearbyDistanceM(
+    haversineMeters(origin, { lat: roundPickup(pickup.lat), lng: roundPickup(pickup.lng) }),
+  );
+}
+
+export function toNearbyRide(
+  ride: Ride,
+  origin: { lat: number; lng: number },
+): NearbyRide {
   return {
     id: ride.id,
     vehicle_type: ride.vehicle_type,
@@ -76,7 +108,7 @@ export function toNearbyRide(ride: Ride, distanceM: number): NearbyRide {
     pickup_lng: roundPickup(ride.pickup_lng),
     route_distance_m: ride.route_distance_m,
     route_duration_s: ride.route_duration_s,
-    distance_m: Math.round(distanceM),
+    distance_m: nearbyDistanceM(origin, { lat: ride.pickup_lat, lng: ride.pickup_lng }),
   };
 }
 

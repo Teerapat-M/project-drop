@@ -68,7 +68,16 @@ export type RideResponse = Ride & {
   trip_pin?: string | null;
 };
 
-/** Driver matching queue. No rider_id, no dropoff, pickup rounded to ~3 decimals. */
+/**
+ * GET /rides/nearby and `nearby_requested_rides` clamp `radius_m` to this (10 km).
+ * SQL and Express both enforce it.
+ */
+export const NEARBY_RIDES_MAX_RADIUS_M = 10_000;
+
+/** Driver-queue `distance_m` is ceiled up to this bucket so ranging cannot recover exact pickup. */
+export const NEARBY_DISTANCE_BUCKET_M = 250;
+
+/** Driver matching queue. No rider_id, no dropoff, pickup rounded to ~3 decimals. `distance_m` is from the rounded pickup, then ceiled to `NEARBY_DISTANCE_BUCKET_M`. */
 export type NearbyRide = {
   id: string;
   vehicle_type: VehicleType;
