@@ -96,4 +96,21 @@ describe('trip_chat migration security text', () => {
     expect(sql).not.toMatch(/create or replace function public\.accept_ride/);
     expect(ridesSql).toMatch(/create or replace function public\.accept_ride/);
   });
+
+  it('revokes execute on messages_guard without touching RPC grants', () => {
+    const revoke = readFileSync(
+      join(__dirname, '../../../../supabase/migrations/20261111120000_revoke_trigger_fn_execute.sql'),
+      'utf8',
+    );
+    expect(revoke).toMatch(
+      /revoke execute on function public\.messages_guard\(\) from public, anon, authenticated;/,
+    );
+    expect(revoke).toMatch(
+      /revoke execute on function public\.rides_guard\(\) from public, anon, authenticated;/,
+    );
+    expect(revoke).not.toMatch(
+      /(?:revoke|grant) execute on function public\.(?:accept_ride|nearby_requested_rides|verify_trip_pin|ride_peer)/,
+    );
+    expect(sql).not.toMatch(/revoke execute on function public\.messages_guard\(\)/);
+  });
 });

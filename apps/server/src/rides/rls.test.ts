@@ -198,6 +198,23 @@ describe('rides migration security text', () => {
     expect(sql).toMatch(/create or replace function public\.nearby_requested_rides/);
   });
 
+  it('revokes execute on rides_guard without touching RPC grants', () => {
+    const revoke = readFileSync(
+      join(__dirname, '../../../../supabase/migrations/20261111120000_revoke_trigger_fn_execute.sql'),
+      'utf8',
+    );
+    expect(revoke).toMatch(
+      /revoke execute on function public\.rides_guard\(\) from public, anon, authenticated;/,
+    );
+    expect(revoke).toMatch(
+      /revoke execute on function public\.messages_guard\(\) from public, anon, authenticated;/,
+    );
+    expect(revoke).not.toMatch(
+      /(?:revoke|grant) execute on function public\.(?:accept_ride|nearby_requested_rides|verify_trip_pin|ride_peer)/,
+    );
+    expect(sql).not.toMatch(/revoke execute on function public\.rides_guard\(\)/);
+  });
+
   it('hardens nearby_requested_rides without editing the live rides migration', () => {
     expect(sql).not.toMatch(/max_radius_m constant double precision := 10000/);
     expect(hardening).toMatch(/create or replace function public\.nearby_requested_rides/);
