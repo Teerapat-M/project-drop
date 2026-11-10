@@ -1,0 +1,151 @@
+import { describe, expect, it } from '@jest/globals';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { Ride } from '@drop/types';
+import {
+  canAcceptRide,
+  canRiderMutate,
+  canSelectRide,
+  canSelectRidePin,
+  canVerifyTripPin,
+  canWriteDriverLocation,
+  presentRidePin,
+  roundPickup,
+  toNearbyRide,
+} from './rls';
+
+const ride = (over: Partial<Ride> = {}): Ride => ({
+  id: 'r1',
+  rider_id: 'rider-1',
+  driver_id: null,
+  status: 'requested',
+  vehicle_type: 'car',
+  pickup_lat: 13.7466,
+  pickup_lng: 100.5347,
+  pickup_label: 'Siam',
+  dropoff_lat: 13.8,
+  dropoff_lng: 100.55,
+  dropoff_label: 'Chatuchak',
+  route_distance_m: 9800,
+  route_duration_s: 1440,
+  route_polyline: null,
+  fare_estimate: null,
+  pin_required: false,
+  created_at: 't',
+  updated_at: 't',
+  accepted_at: null,
+  started_at: null,
+  cancelled_at: null,
+  completed_at: null,
+  ...over,
+});
+
+describe('ride RLS helpers', () => {
+  it('lets the rider see their ride and PIN, not another rider', () => {
+    const r = ride({ pin_required: true });
+    expect(canSelectRide({ id: 'rider-1', role: 'rider' }, r)).toBe(true);
+    expect(canSelectRide({ id: 'rider-2', role: 'rider' }, r)).toBe(false);
+    expect(canSelectRidePin({ id: 'rider-1', role: 'rider' }, r)).toBe(true);
+    expect(canSelectRidePin({ id: 'driver-1', role: 'driver' }, r)).toBe(false);
+  });
+
+  it('does not let drivers SELECT requested rides (queue is nearby_requested_rides)', () => {
+    const open = ride();
+    const taken = ride({ status: 'accepted', driver_id: 'driver-1' });
+    expect(canSelectRide({ id: 'driver-1', role: 'driver' }, open)).toBe(false);
+    expect(canSelectRide({ id: 'driver-2', role: 'driver' }, taken)).toBe(false);
+    expect(canSelectRide({ id: 'driver-1', role: 'driver' }, taken)).toBe(true);
+  });
+
+  it('blocks the rider self-accept attack (status=accepted + driver_id=self)', () => {
+    const open = ride();
+    const rider = { id: 'rider-1', role: 'rider' as const };
+    expect(canAcceptRide(rider, open)).toBe(false);
+    expect(canRiderMutate(rider, open, { status: 'accepted', driver_id: 'rider-1' })).toBe(false);
+    expect(canRiderMutate(rider, open, { driver_id: 'driver-1' })).toBe(false);
+    expect(canRiderMutate(rider, open, { status: 'accepted' })).toBe(false);
+    expect(canRiderMutate(rider, open, { status: 'cancelled' })).toBe(true);
+    expect(canRiderMutate(rider, open, { status: 'requested' })).toBe(true);
+  });
+
+  it('accept_ride requires driver role, not the rider, requested + empty driver_id', () => {
+    const open = ride();
+    expect(canAcceptRide({ id: 'driver-1', role: 'driver' }, open)).toBe(true);
+    expect(canAcceptRide({ id: 'rider-1', role: 'driver' }, open)).toBe(false);
+    expect(canAcceptRide({ id: 'driver-1', role: 'rider' }, open)).toBe(false);
+    expect(
+      canAcceptRide({ id: 'driver-1', role: 'driver' }, ride({ status: 'accepted', driver_id: 'driver-2' })),
+    ).toBe(false);
+  });
+
+  it('verify_trip_pin / start require assigned driver, role=driver, driver_id <> rider_id', () => {
+    const assigned = ride({ status: 'accepted', driver_id: 'driver-1', pin_required: true });
+    const forged = ride({ status: 'accepted', driver_id: 'rider-1', pin_required: true });
+    expect(canVerifyTripPin({ id: 'driver-1', role: 'driver' }, assigned)).toBe(true);
+    expect(canVerifyTripPin({ id: 'rider-1', role: 'rider' }, assigned)).toBe(false);
+    expect(canVerifyTripPin({ id: 'rider-1', role: 'rider' }, forged)).toBe(false);
+    expect(canVerifyTripPin({ id: 'rider-1', role: 'driver' }, forged)).toBe(false);
+    expect(canVerifyTripPin({ id: 'driver-2', role: 'driver' }, assigned)).toBe(false);
+  });
+
+  it('sanitizes the driver queue: no rider_id/dropoff, pickup rounded to 3 decimals', () => {
+    const nearby = toNearbyRide(ride(), 1234.6);
+    expect(nearby).toEqual({
+      id: 'r1',
+      vehicle_type: 'car',
+      pickup_lat: roundPickup(13.7466),
+      pickup_lng: roundPickup(100.5347),
+      route_distance_m: 9800,
+      route_duration_s: 1440,
+      distance_m: 1235,
+    });
+    expect(nearby.pickup_lat).toBe(13.747);
+    expect(nearby).not.toHaveProperty('rider_id');
+    expect(nearby).not.toHaveProperty('dropoff_lat');
+    expect(nearby).not.toHaveProperty('dropoff_label');
+    expect(nearby).not.toHaveProperty('pickup_label');
+  });
+
+  it('never puts the PIN on a driver-facing payload', () => {
+    const r = ride({ driver_id: 'driver-1', status: 'accepted', pin_required: true });
+    expect(presentRidePin({ id: 'driver-1', role: 'driver' }, r, '4821')).toBeUndefined();
+    expect(presentRidePin({ id: 'rider-1', role: 'rider' }, r, '4821')).toBe('4821');
+    expect(presentRidePin({ id: 'admin-1', role: 'admin' }, r, '4821')).toBe('4821');
+  });
+
+  it('lets a driver write only their own location row', () => {
+    expect(canWriteDriverLocation({ id: 'd1', role: 'driver' }, 'd1')).toBe(true);
+    expect(canWriteDriverLocation({ id: 'd1', role: 'driver' }, 'd2')).toBe(false);
+    expect(canWriteDriverLocation({ id: 'r1', role: 'rider' }, 'r1')).toBe(false);
+  });
+
+  it('lets admin see everything', () => {
+    expect(canSelectRide({ id: 'a', role: 'admin' }, ride())).toBe(true);
+  });
+});
+
+describe('rides migration security text', () => {
+  const sql = readFileSync(
+    join(__dirname, '../../../../supabase/migrations/20261110180000_rides.sql'),
+    'utf8',
+  );
+
+  it('does not publish ride_pins or any PIN column', () => {
+    expect(sql).not.toMatch(/add table public\.ride_pins/i);
+    expect(sql).toMatch(/drop table public\.ride_pins/);
+    expect(sql).toMatch(/alter publication supabase_realtime add table public\.rides/);
+    expect(sql).toMatch(/alter publication supabase_realtime add table public\.driver_locations/);
+    const ridesCols = sql.match(/create table public\.rides \(([\s\S]*?)\n\);/)?.[1] ?? '';
+    expect(ridesCols).toMatch(/pin_required boolean/);
+    expect(ridesCols).not.toMatch(/^\s*pin\b/m);
+    expect(ridesCols).not.toMatch(/pin_hash|pin_hmac/);
+  });
+
+  it('accepts only through accept_ride and locks rider status/driver_id', () => {
+    expect(sql).toMatch(/create or replace function public\.accept_ride/);
+    expect(sql).toMatch(/rider cannot change driver_id/);
+    expect(sql).toMatch(/rider can only cancel/);
+    expect(sql).toMatch(/driver_id is distinct from uid/);
+    expect(sql).toMatch(/create or replace function public\.nearby_requested_rides/);
+  });
+});

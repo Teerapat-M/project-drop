@@ -2,10 +2,13 @@ import express from 'express';
 import { createAuthMiddleware, type AuthLocals } from './auth/middleware';
 import { loadMe, type LoadMe } from './auth/me';
 import { verifySupabaseJwt, type JwtVerifyFn } from './auth/verifyJwt';
+import { mountRideRoutes } from './rides/routes';
+import { createSupabaseRideService, type RideService } from './rides/service';
 
 export type AppDeps = {
   verify?: JwtVerifyFn;
   loadMe?: LoadMe;
+  rides?: RideService;
 };
 
 export function createApp(deps: AppDeps = {}) {
@@ -18,6 +21,7 @@ export function createApp(deps: AppDeps = {}) {
 
   const requireAuth = createAuthMiddleware(deps.verify ?? verifySupabaseJwt);
   const fetchMe = deps.loadMe ?? loadMe;
+  const rides = deps.rides ?? createSupabaseRideService();
 
   app.get('/me', requireAuth, async (_req, res) => {
     try {
@@ -32,6 +36,8 @@ export function createApp(deps: AppDeps = {}) {
       res.status(503).json({ error: 'profile lookup failed' });
     }
   });
+
+  mountRideRoutes(app, requireAuth, rides, fetchMe);
 
   return app;
 }

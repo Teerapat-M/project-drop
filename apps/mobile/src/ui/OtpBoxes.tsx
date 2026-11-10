@@ -7,29 +7,31 @@ export function OtpBoxes({
   theme,
   value,
   onChange,
+  length = 6,
 }: {
   theme: Theme;
   value: string;
   onChange: (next: string) => void;
+  length?: number;
 }) {
   const ref = useRef<ComponentRef<typeof TextInput>>(null);
-  const digits = value.replace(/\D/g, '').slice(0, 6).split('');
+  const digits = value.replace(/\D/g, '').slice(0, length).split('');
 
   return (
     <Pressable onPress={() => ref.current?.focus()} accessibilityLabel="Verification code">
       <TextInput
         ref={ref}
         value={value}
-        onChangeText={(t) => onChange(t.replace(/\D/g, '').slice(0, 6))}
+        onChangeText={(t) => onChange(t.replace(/\D/g, '').slice(0, length))}
         keyboardType="number-pad"
         textContentType="oneTimeCode"
-        maxLength={6}
+        maxLength={length}
         caretHidden
         style={styles.hidden}
         autoFocus
       />
       <View style={styles.row}>
-        {Array.from({ length: 6 }, (_, i) => {
+        {Array.from({ length }, (_, i) => {
           const filled = digits[i];
           const active = i === digits.length;
           return (
