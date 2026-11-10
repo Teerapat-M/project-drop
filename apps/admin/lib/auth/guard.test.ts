@@ -26,4 +26,14 @@ describe('admin role guard', () => {
     expect(resolveAdminGate({ userId: 'u1', role: 'admin' })).toBe('dashboard');
     expect(adminRedirectPath('dashboard')).toBeNull();
   });
+
+  it('never opens the dashboard when supabase env is missing', () => {
+    expect(resolveAdminGate({ userId: null, role: null, configured: false })).toBe('login');
+    expect(resolveAdminGate({ userId: 'u1', role: 'admin', configured: false })).not.toBe(
+      'dashboard',
+    );
+    expect(
+      adminRedirectPath(resolveAdminGate({ userId: 'u1', role: 'admin', configured: false })),
+    ).toBe('/login');
+  });
 });

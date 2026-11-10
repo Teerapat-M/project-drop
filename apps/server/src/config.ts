@@ -19,6 +19,10 @@ export function isSupabaseConfigured(): boolean {
   return url.length > 0 && anonKey.length > 0;
 }
 
+export function authIssuer(supabaseUrl: string): string {
+  return `${supabaseUrl.replace(/\/$/, '')}/auth/v1`;
+}
+
 export function jwksUrl(supabaseUrl: string): string {
-  return `${supabaseUrl.replace(/\/$/, '')}/auth/v1/.well-known/jwks.json`;
+  return `${authIssuer(supabaseUrl)}/.well-known/jwks.json`;
 }

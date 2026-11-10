@@ -7,11 +7,9 @@ export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
   const configured = isSupabaseConfigured();
-  if (configured) {
-    const ctx = await getAdminContext();
-    const dest = adminRedirectPath(resolveAdminGate(ctx));
-    if (dest) redirect(dest);
-  }
+  const ctx = configured ? await getAdminContext() : { userId: null, role: null };
+  const dest = adminRedirectPath(resolveAdminGate({ ...ctx, configured }));
+  if (dest) redirect(dest);
 
   return (
     <main
