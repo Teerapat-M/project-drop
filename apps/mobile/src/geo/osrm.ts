@@ -1,10 +1,35 @@
 export const DEFAULT_OSRM_URL = 'https://router.project-osrm.org';
 
+export type RouteTurn = {
+  distanceM: number;
+  name: string;
+  type: string;
+  modifier: string;
+  instruction: string;
+};
+
 export type RoutePreview = {
   distanceM: number;
   durationS: number;
   coordinates: [number, number][];
+  turns: RouteTurn[];
 };
+
+export function formatTurnInstruction(turn: Pick<RouteTurn, 'type' | 'modifier' | 'name' | 'distanceM'>): string {
+  const road = turn.name?.trim();
+  const modifier = turn.modifier?.replace(/_/g, ' ');
+  if (turn.type === 'arrive') return road ? `Arrive at ${road}` : 'Arrive';
+  if (turn.type === 'depart' || turn.type === 'continue' || turn.type === 'new name') {
+    return road ? `Continue on ${road}` : 'Continue';
+  }
+  if (turn.type === 'turn' || turn.type === 'end of road' || turn.type === 'fork' || turn.type === 'ramp') {
+    const dir = modifier ? `Turn ${modifier}` : 'Turn';
+    return road ? `${dir} onto ${road}` : dir;
+  }
+  if (modifier && road) return `${modifier} onto ${road}`;
+  if (road) return road;
+  return turn.type || 'Continue';
+}
 
 function osrmBase(): string {
   return (process.env.EXPO_PUBLIC_OSRM_URL ?? DEFAULT_OSRM_URL).replace(/\/$/, '');
@@ -15,7 +40,7 @@ export function osrmRouteUrl(
   to: { lat: number; lng: number },
   base = osrmBase(),
 ): string {
-  return `${base}/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
+  return `${base}/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&steps=true`;
 }
 
 export function parseOsrmRoute(payload: unknown): RoutePreview | null {
@@ -26,6 +51,7 @@ export function parseOsrmRoute(payload: unknown): RoutePreview | null {
     distance?: unknown;
     duration?: unknown;
     geometry?: { coordinates?: unknown };
+    legs?: { steps?: unknown[] }[];
   };
   const distanceM = Number(route.distance);
   const durationS = Number(route.duration);
@@ -40,7 +66,30 @@ export function parseOsrmRoute(payload: unknown): RoutePreview | null {
       if (Number.isFinite(lng) && Number.isFinite(lat)) coordinates.push([lng, lat]);
     }
   }
-  return { distanceM, durationS, coordinates };
+  const turns: RouteTurn[] = [];
+  const steps = route.legs?.[0]?.steps ?? [];
+  for (const raw of steps) {
+    if (!raw || typeof raw !== 'object') continue;
+    const step = raw as {
+      distance?: unknown;
+      name?: unknown;
+      maneuver?: { type?: unknown; modifier?: unknown };
+    };
+    const type = typeof step.maneuver?.type === 'string' ? step.maneuver.type : '';
+    const modifier = typeof step.maneuver?.modifier === 'string' ? step.maneuver.modifier : '';
+    const name = typeof step.name === 'string' ? step.name : '';
+    const d = Number(step.distance);
+    const turn = {
+      distanceM: Number.isFinite(d) ? d : 0,
+      name,
+      type,
+      modifier,
+      instruction: '',
+    };
+    turn.instruction = formatTurnInstruction(turn);
+    if (type && type !== 'depart') turns.push(turn);
+  }
+  return { distanceM, durationS, coordinates, turns };
 }
 
 export async function fetchRoute(

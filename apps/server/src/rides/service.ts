@@ -4,6 +4,7 @@ import {
   isVehicleType,
   type NearbyRide,
   type Ride,
+  type RidePeer,
   type RideResponse,
   type Role,
   type VehicleType,
@@ -76,7 +77,13 @@ export type RideService = {
 };
 
 type PinRow = { pin: string; attempts: number; verified_at: string | null };
-type ProfileRow = { role: Role | null; trip_pin_enabled: boolean };
+type ProfileRow = {
+  role: Role | null;
+  trip_pin_enabled: boolean;
+  full_name?: string | null;
+  phone?: string | null;
+  preferred_language?: string | null;
+};
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -94,9 +101,10 @@ function requireAssignedDriver(actor: RideActor, ride: Ride): void {
   }
 }
 
-function present(actor: Actor, ride: Ride, pin: string | null): RideResponse {
+function present(actor: Actor, ride: Ride, pin: string | null, peer?: RidePeer | null): RideResponse {
   const body: RideResponse = { ...ride };
   if (canSelectRidePin(actor, ride) && pin) body.trip_pin = pin;
+  if (peer) body.peer = peer;
   return body;
 }
 
@@ -171,6 +179,18 @@ export function createMemoryRideService(
   const profileOf = (id: string): ProfileRow =>
     state.profiles.get(id) ?? { role: null, trip_pin_enabled: false };
 
+  const peerOf = (actor: RideActor, ride: Ride): RidePeer | null => {
+    const otherId = actor.id === ride.rider_id ? ride.driver_id : ride.rider_id;
+    if (!otherId) return null;
+    const p = profileOf(otherId);
+    return {
+      id: otherId,
+      full_name: p.full_name ?? null,
+      phone: p.phone ?? null,
+      preferred_language: p.preferred_language ?? null,
+    };
+  };
+
   const getRide = (id: string): Ride => {
     const ride = state.rides.get(id);
     if (!ride) throw new RideError('not_found', 'ride not found');
@@ -214,13 +234,13 @@ export function createMemoryRideService(
         completed_at: null,
       };
       state.rides.set(ride.id, ride);
-      return present(actor, ride, null);
+      return present(actor, ride, null, peerOf(actor, ride));
     },
     async get(actor, id) {
       const ride = getRide(id);
       if (!canSelectRide(actor, ride)) throw new RideError('not_found', 'ride not found');
       const pin = state.pins.get(id)?.pin ?? null;
-      return present(actor, ride, pin);
+      return present(actor, ride, pin, peerOf(actor, ride));
     },
     async list(actor, status) {
       const out: RideResponse[] = [];
@@ -228,7 +248,7 @@ export function createMemoryRideService(
         if (status && ride.status !== status) continue;
         if (!canSelectRide(actor, ride)) continue;
         const pin = state.pins.get(ride.id)?.pin ?? null;
-        out.push(present(actor, ride, pin));
+        out.push(present(actor, ride, pin, peerOf(actor, ride)));
       }
       return out;
     },
@@ -267,7 +287,7 @@ export function createMemoryRideService(
         pin_required: pinOn,
         accepted_at: nowIso(),
       });
-      return present(actor, next, null);
+      return present(actor, next, null, peerOf(actor, next));
     },
     async decline(actor, id) {
       requireDriverRole(actor);
@@ -282,7 +302,8 @@ export function createMemoryRideService(
       const ride = getRide(id);
       if (!canTransition(ride.status, 'arrived')) throw new RideError('conflict', 'invalid_transition');
       requireAssignedDriver(actor, ride);
-      return present(actor, save({ ...ride, status: 'arrived' }), null);
+      const arrived = save({ ...ride, status: 'arrived' });
+      return present(actor, arrived, null, peerOf(actor, arrived));
     },
     async start(actor, id, pin) {
       const ride = getRide(id);
@@ -307,7 +328,8 @@ export function createMemoryRideService(
           row.verified_at = nowIso();
         }
       }
-      return present(actor, save({ ...ride, status: 'in_progress', started_at: nowIso() }), null);
+      const started = save({ ...ride, status: 'in_progress', started_at: nowIso() });
+      return present(actor, started, null, peerOf(actor, started));
     },
     async cancel(actor, id) {
       const ride = getRide(id);
@@ -317,7 +339,8 @@ export function createMemoryRideService(
         throw new RideError('forbidden', 'cannot cancel');
       }
       if (!canTransition(ride.status, 'cancelled')) throw new RideError('conflict', 'invalid_transition');
-      return present(actor, save({ ...ride, status: 'cancelled', cancelled_at: nowIso() }), state.pins.get(id)?.pin ?? null);
+      const cancelled = save({ ...ride, status: 'cancelled', cancelled_at: nowIso() });
+      return present(actor, cancelled, state.pins.get(id)?.pin ?? null, peerOf(actor, cancelled));
     },
     async upsertLocation(actor, input) {
       if (!canWriteDriverLocation(actor, actor.id)) {
@@ -362,6 +385,19 @@ async function loadPin(supabase: SupabaseClient, rideId: string): Promise<string
   return typeof pin === 'string' ? pin : null;
 }
 
+async function loadPeer(supabase: SupabaseClient, rideId: string): Promise<RidePeer | null> {
+  const { data } = await supabase.rpc('ride_peer', { p_ride_id: rideId });
+  if (!data || typeof data !== 'object') return null;
+  const row = data as { id?: unknown; full_name?: unknown; phone?: unknown; preferred_language?: unknown };
+  if (typeof row.id !== 'string') return null;
+  return {
+    id: row.id,
+    full_name: typeof row.full_name === 'string' ? row.full_name : null,
+    phone: typeof row.phone === 'string' ? row.phone : null,
+    preferred_language: typeof row.preferred_language === 'string' ? row.preferred_language : null,
+  };
+}
+
 export function createSupabaseRideService(): RideService {
   return {
     async create(actor, input) {
@@ -397,7 +433,8 @@ export function createSupabaseRideService(): RideService {
       const ride = asRide(data as Ride);
       if (!canSelectRide(actor, ride)) throw new RideError('not_found', 'ride not found');
       const pin = await loadPin(supabase, id);
-      return present(actor, ride, pin);
+      const peer = await loadPeer(supabase, id);
+      return present(actor, ride, pin, peer);
     },
     async list(actor, status) {
       const supabase = userClient(actor.token);
@@ -425,7 +462,9 @@ export function createSupabaseRideService(): RideService {
       const { data, error } = await supabase.rpc('accept_ride', { p_ride_id: id }).maybeSingle();
       if (error) throw new RideError('conflict', error.message);
       if (!data) throw new RideError('conflict', 'ride already taken');
-      return present(actor, asRide(data as Ride), null);
+      const ride = asRide(data as Ride);
+      const peer = await loadPeer(supabase, id);
+      return present(actor, ride, null, peer);
     },
     async decline(actor, id) {
       requireDriverRole(actor);
@@ -445,7 +484,8 @@ export function createSupabaseRideService(): RideService {
         .maybeSingle();
       if (error) throw new RideError('conflict', error.message);
       if (!data) throw new RideError('conflict', 'invalid_transition');
-      return present(actor, asRide(data as Ride), null);
+      const ride = asRide(data as Ride);
+      return present(actor, ride, null, await loadPeer(supabase, id));
     },
     async start(actor, id, pin) {
       requireDriverRole(actor);
@@ -482,7 +522,8 @@ export function createSupabaseRideService(): RideService {
         .maybeSingle();
       if (error) throw new RideError('conflict', error.message);
       if (!data) throw new RideError('conflict', 'invalid_transition');
-      return present(actor, asRide(data as Ride), null);
+      const started = asRide(data as Ride);
+      return present(actor, started, null, await loadPeer(supabase, id));
     },
     async cancel(actor, id) {
       const supabase = userClient(actor.token);
@@ -507,7 +548,8 @@ export function createSupabaseRideService(): RideService {
         .maybeSingle();
       if (error || !data) throw new RideError('conflict', error?.message ?? 'cancel failed');
       const pin = await loadPin(supabase, id);
-      return present(actor, asRide(data as Ride), pin);
+      const peer = await loadPeer(supabase, id);
+      return present(actor, asRide(data as Ride), pin, peer);
     },
     async upsertLocation(actor, input) {
       if (!canWriteDriverLocation(actor, actor.id)) {
