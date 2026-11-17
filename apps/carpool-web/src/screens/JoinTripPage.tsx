@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type { LuggagePiece } from '@drop/carpool-core';
 import { layoutTrunk } from '@drop/carpool-core';
 import { demoPreview } from '../fixtures';
-import { estimateShare } from '../lib/format';
+import { estimateViewerFareFromSeats } from '../lib/estimateFare';
+import { thb } from '../lib/format';
 import { SeatPicker } from '../components/SeatPicker';
 import { LuggageBlock } from '../components/LuggageBlock';
 import { getSupabase } from '../supabase';
@@ -91,11 +92,12 @@ export function JoinTripPage() {
   }
 
   const full = preview.status === 'full' || preview.seats.every((s) => !s.is_open || s.is_booked);
-  const people =
-    preview.kind === 'private'
-      ? preview.seats.filter((s) => s.is_open).length + 1
-      : preview.seats.filter((s) => s.is_open).length;
-  const share = estimateShare(preview.route_km, Math.max(people, 1));
+  const est = estimateViewerFareFromSeats({
+    mainRouteKm: preview.route_km,
+    kind: preview.kind,
+    seats: preview.seats,
+    detourKm: detour,
+  });
 
   const join = async () => {
     setError(null);
@@ -135,15 +137,24 @@ export function JoinTripPage() {
 
   return (
     <main className="page">
-      <p>
-        <Link to="/">← กลับหน้าแรก</Link>
-      </p>
-      <h1 className="page-title">{full ? 'ทริปเต็มแล้ว' : 'ยืนยันร่วมทริป'}</h1>
+      <div className="page-head">
+        <Link to="/" className="nav-link tap-target">
+          ←
+        </Link>
+        <h1 className="page-title">{full ? 'ทริปเต็มแล้ว' : 'ยืนยันร่วมทริป'}</h1>
+        <button
+          type="button"
+          className="nav-link tap-target"
+          onClick={() => window.dispatchEvent(new Event('carpool-open-chat'))}
+        >
+          แชท
+        </button>
+      </div>
       <p>
         {preview.pickup_label} → {preview.dest_label} · {preview.owner_display_name}
       </p>
       <p className="muted">
-        {preview.route_km} กม. · คาดว่า ~{share} ฿ ถ้ามี {people} คน · ตัวอย่าง
+        {preview.route_km} กม. · คาดว่า ~{thb(est.amountThb)} ฿ ถ้ามี {est.payerCount} คน · ตัวอย่าง
       </p>
 
       {error === BOOKING_CONFLICT ? (

@@ -208,7 +208,7 @@ Full formulas and tests: [`packages/carpool-core/README.md`](packages/carpool-co
 
 ## เพื่อนร่วมทาง Phase C2 (`apps/carpool-web`)
 
-Thai Vite/React app, **mobile-first** (breakpoint 768px; B01m bottom nav, 44px tap targets, sticky confirm, scaling SVG seat map, chat as a full-screen sheet on small screens). Same Supabase project `drop`, `carpool_*` tables in `public` (no extra Exposed schema). Shared auth. Migration file only: `supabase/migrations/20261118100000_carpool.sql`. SQL assertions: `supabase/tests/carpool_rls.sql`. Do not apply SQL from CI or touch a live DB.
+Thai Vite/React app, **mobile-first** (breakpoint 768px; M-B01 bottom nav, 44px tap targets, sticky confirm, scaling SVG seat map, chat as a full-screen sheet on small screens). Same Supabase project `drop`, `carpool_*` tables in `public` (no extra Exposed schema). Shared auth. Migration file only: `supabase/migrations/20261118100000_carpool.sql`. SQL assertions: `supabase/tests/carpool_rls.sql` (catalog + behavioral RLS). Do not apply SQL to the live `drop` project from CI. CI runs the migration against an **ephemeral Postgres** (`supabase/tests/shim.sql` + `run-carpool-rls.sh`).
 
 **Deploy (do not deploy from this PR):** Vercel static — see [`apps/carpool-web/README.md`](apps/carpool-web/README.md) and `apps/carpool-web/vercel.json`.
 

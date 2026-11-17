@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
@@ -13,6 +13,12 @@ export function Layout() {
   const navigate = useNavigate();
   const [chat, setChat] = useState(false);
 
+  useEffect(() => {
+    const open = () => setChat(true);
+    window.addEventListener('carpool-open-chat', open);
+    return () => window.removeEventListener('carpool-open-chat', open);
+  }, []);
+
   const signOut = async () => {
     await getSupabase()?.auth.signOut();
     navigate('/login');
@@ -24,20 +30,6 @@ export function Layout() {
         <NavLink to="/" className="brand">
           คาร์พูล
         </NavLink>
-        <NavLink to="/trips/new" className="nav-link tap-target">
-          สร้างทริป
-        </NavLink>
-        <NavLink to="/donate" className="nav-link tap-target" style={stub}>
-          สนับสนุน
-        </NavLink>
-        <button
-          type="button"
-          className="icon-btn tap-target"
-          aria-label="แชท"
-          onClick={() => setChat(true)}
-        >
-          💬
-        </button>
       </header>
 
       <header className="desktop-nav" data-testid="desktop-nav">
@@ -85,8 +77,11 @@ export function Layout() {
         <NavLink to="/" className="nav-link tap-target" end>
           หน้าแรก
         </NavLink>
+        <NavLink to="/trips/new" className="nav-link tap-target">
+          สร้าง
+        </NavLink>
         <NavLink to="/history" className="nav-link tap-target" style={stub}>
-          ประวัติทริป
+          ประวัติ
         </NavLink>
         <NavLink to="/account" className="nav-link tap-target" style={stub}>
           บัญชี

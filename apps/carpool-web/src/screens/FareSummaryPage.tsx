@@ -21,11 +21,11 @@ export function FareSummaryPage() {
         <Link to={`/trips/${id}`}>← ร่วมทริป</Link>
       </p>
       <FareSummary result={result} labels={LABELS} kind={taxi ? 'taxi' : 'private'} />
-      <p>
+      <div className="sticky-bar">
         <Link to={`/trips/${id}/order`} className="btn tap-target">
           {taxi ? 'ดูสรุปทริป' : 'มุมคนขับ'}
         </Link>
-      </p>
+      </div>
     </main>
   );
 }

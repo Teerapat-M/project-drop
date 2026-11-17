@@ -23,6 +23,11 @@ describe('mobile-first layout', () => {
     expect(screen.getByTestId('app-shell')).toHaveAttribute('data-layout', 'mobile');
     expect(screen.getByTestId('bottom-nav')).toBeInTheDocument();
     expect(screen.getByLabelText('นำทางมือถือ')).toBeInTheDocument();
+    const nav = screen.getByTestId('bottom-nav');
+    expect(nav).toHaveTextContent('หน้าแรก');
+    expect(nav).toHaveTextContent('สร้าง');
+    expect(nav).toHaveTextContent('ประวัติ');
+    expect(nav).toHaveTextContent('บัญชี');
     const taps = document.querySelectorAll('.tap-target');
     expect(taps.length).toBeGreaterThan(2);
     expect(css).toMatch(/--tap:\s*44px/);

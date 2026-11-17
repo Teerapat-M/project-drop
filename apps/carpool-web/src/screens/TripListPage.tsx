@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { RATE_THB_PER_KM } from '@drop/carpool-core';
 import { DEMO_TRIPS } from '../fixtures';
-import { estimateShare, formatDepart } from '../lib/format';
+import { estimateViewerFare } from '../lib/estimateFare';
+import { formatDepart, thb } from '../lib/format';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
 import type { TripCard, TripKind } from '../types';
@@ -34,7 +35,7 @@ export function TripListPage() {
 
   return (
     <main className="page">
-      <h1 className="page-title">หารถไปด้วยกัน</h1>
+      <h1 className="page-title">หน้าแรก</h1>
       <p className="lede">แชร์ที่นั่งไปด้วยกัน · {RATE_THB_PER_KM} ฿/กม. หารเท่ากันคนที่นั่ง</p>
 
       <form
@@ -75,14 +76,15 @@ export function TripListPage() {
         </button>
         <Link
           to={kind === 'taxi' ? '/trips/new?kind=taxi' : '/trips/new'}
-          className="btn tap-target"
-          style={{ marginLeft: 'auto' }}
+          className="btn tap-target home-create-inline"
         >
           {kind === 'taxi' ? 'สร้างทริปแท็กซี่' : 'สร้างทริป'}
         </Link>
       </div>
 
-      <p className="muted">พบ {shown.length} ทริป</p>
+      <p className="muted">
+        {kind === 'taxi' ? 'ทริปแท็กซี่ใกล้คุณ' : 'ทริปรถส่วนตัวใกล้คุณ'} · ตัวอย่าง
+      </p>
 
       {shown.length === 0 ? (
         <div className="empty" data-testid="empty-state">
@@ -104,19 +106,32 @@ export function TripListPage() {
           ))}
         </div>
       )}
+
+      <div className="sticky-bar home-create-sticky">
+        <Link
+          to={kind === 'taxi' ? '/trips/new?kind=taxi' : '/trips/new'}
+          className="btn tap-target"
+        >
+          {kind === 'taxi' ? 'สร้างทริปแท็กซี่' : 'สร้างทริป'}
+        </Link>
+      </div>
     </main>
   );
 }
 
 function TripCardView({ trip }: { trip: TripCard }) {
   const full = trip.open_seats === 0 || trip.status === 'full';
-  const people = trip.kind === 'private' ? trip.bookable_seats + 1 : Math.max(trip.bookable_seats, 1);
-  const share = estimateShare(trip.route_km, people);
+  const bookedPassengers = Math.max(0, trip.bookable_seats - trip.open_seats);
+  const est = estimateViewerFare({
+    mainRouteKm: trip.route_km,
+    kind: trip.kind,
+    bookedPassengerCount: bookedPassengers,
+  });
   return (
     <article className={`card trip-card ${full ? 'dimmed' : ''}`} data-testid={`trip-${trip.id}`}>
       <div>
         <h3>
-          {trip.owner_display_name}{' '}
+          {trip.pickup_label} → {trip.dest_label}{' '}
           {full ? (
             <span className="badge full" data-testid="full-badge">
               เต็มแล้ว
@@ -124,24 +139,18 @@ function TripCardView({ trip }: { trip: TripCard }) {
           ) : null}
         </h3>
         <p className="muted" style={{ margin: 0 }}>
+          {trip.owner_display_name} ·{' '}
           {trip.vehicle_type === 'sedan' ? 'เก๋ง 4 ประตู' : trip.vehicle_type === 'hatch' ? 'รถ 5 ประตู' : 'กระบะ'}
-          {trip.kind === 'taxi' ? ' · แท็กซี่' : ''}
+          {trip.kind === 'taxi' ? ' · แท็กซี่' : ''} · {trip.route_km} กม.
         </p>
         <p>
-          <strong>
-            {trip.pickup_label} → {trip.dest_label}
-          </strong>
+          คาดว่า ~{thb(est.amountThb)} ฿ ถ้ามี {est.payerCount} คน · ตัวอย่าง
         </p>
-        <p className="muted">
-          {trip.route_km} กม. · {formatDepart(trip.depart_at)} · ว่าง {trip.open_seats}/{trip.bookable_seats}
-        </p>
-        <p>
-          คาดว่า ~{share} ฿ ถ้ามี {people} คน · ตัวอย่าง
-        </p>
+        <p className="muted">{formatDepart(trip.depart_at)} · ว่าง {trip.open_seats}/{trip.bookable_seats}</p>
       </div>
       <div />
       <Link to={`/trips/${trip.id}`} className="btn tap-target">
-        {full ? 'ดูทริป' : trip.kind === 'taxi' ? 'ดูทริปนี้' : 'ถูกกว่าปกติ'}
+        {full ? 'ดูทริป' : 'ดูทริปนี้'}
       </Link>
     </article>
   );

@@ -1,9 +1,8 @@
--- Attack-path assertions for 20261118100000_carpool.sql.
--- Not run in CI (no live DB). Apply profiles + rides + hardening + trip_chat +
--- revoke_trigger_fn_execute + carpool on a throwaway Postgres, stub auth.uid()
--- / profiles like the PR review harness, then:
+-- Catalog + behavioral RLS for 20261118100000_carpool.sql.
+-- CI: supabase/tests/run-carpool-rls.sh (shim + profiles + carpool on ephemeral Postgres).
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/carpool_rls.sql
--- Server Jest mirrors the migration text in apps/server/src/carpool/migration.test.ts.
+-- Recursion (42P17) or missing EXECUTE on policy helpers fails this file.
+-- Server Jest still mirrors migration text in apps/server/src/carpool/migration.test.ts.
 
 -- Realtime: seats + carpool messages in; ride_pins never.
 do $$
@@ -94,6 +93,33 @@ begin
   end if;
 end $$;
 
+-- Policy helpers: authenticated EXECUTE, anon/public revoked. Two-arg participant stays internal.
+do $$
+begin
+  if not has_function_privilege('authenticated', 'private.carpool_is_trip_owner(uuid)', 'EXECUTE') then
+    raise exception 'authenticated must EXECUTE private.carpool_is_trip_owner';
+  end if;
+  if not has_function_privilege('authenticated', 'private.carpool_is_booked_rider(uuid)', 'EXECUTE') then
+    raise exception 'authenticated must EXECUTE private.carpool_is_booked_rider';
+  end if;
+  if not has_function_privilege('authenticated', 'private.carpool_is_participant(uuid)', 'EXECUTE') then
+    raise exception 'authenticated must EXECUTE private.carpool_is_participant(uuid)';
+  end if;
+  if not has_function_privilege('authenticated', 'private.carpool_can_select_seat(uuid)', 'EXECUTE') then
+    raise exception 'authenticated must EXECUTE private.carpool_can_select_seat';
+  end if;
+  if not has_function_privilege('authenticated', 'private.carpool_trip_chat_open(uuid)', 'EXECUTE') then
+    raise exception 'authenticated must EXECUTE private.carpool_trip_chat_open';
+  end if;
+  if has_function_privilege('authenticated', 'private.carpool_is_participant(uuid, uuid)', 'EXECUTE') then
+    raise exception 'authenticated must not EXECUTE two-arg private.carpool_is_participant';
+  end if;
+  if has_function_privilege('anon', 'private.carpool_is_participant(uuid)', 'EXECUTE')
+     or has_function_privilege('anon', 'private.carpool_is_trip_owner(uuid)', 'EXECUTE') then
+    raise exception 'anon must not EXECUTE carpool policy helpers';
+  end if;
+end $$;
+
 -- Booking RPC: row lock, exact Thai conflict message, own-trip / not-open / closed.
 do $$
 declare
@@ -175,33 +201,355 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- Session attack paths (throwaway DB; uncomment after stubbing auth.uid()).
--- Owner vs rider vs stranger:
---   set request.jwt.claim.sub = '<owner>';  -- or your harness
---   select * from public.carpool_trips where id = :'trip';  -- owner: 1 row
---   set ... = '<rider with booking>';
---   select * from public.carpool_trips where id = :'trip';  -- rider: 1 row
---   set ... = '<stranger>';
---   select * from public.carpool_trips where id = :'trip';  -- 0 rows (use discover RPC)
---   select * from public.carpool_discover_trips();          -- rounded coords, no owner_id
---
--- Atomic booking (second confirm):
---   select public.carpool_book_seat(:'trip', 'front_passenger', 'x', 13.7, 100.5);
---   -- as another user, same seat:
---   select public.carpool_book_seat(:'trip', 'front_passenger', 'y', 13.7, 100.5);
---   expect: ERROR: ที่นั่งนี้เพิ่งถูกจอง
---
--- Closed seat:
---   select public.carpool_set_seat_open(:'trip', 'rear_right', false); -- as owner
---   select public.carpool_book_seat(:'trip', 'rear_right', 'x', 13.7, 100.5);
---   expect: ที่นั่งนี้ปิดอยู่
---
--- Own trip:
---   select public.carpool_book_seat(:'trip', 'rear_left', 'x', 13.7, 100.5); -- as owner
---   expect: ไม่สามารถจองทริปของตนเองได้
---
--- Not open:
---   update public.carpool_trips set status = 'cancelled' where id = :'trip'; -- as owner
---   select public.carpool_book_seat(:'trip', 'rear_left', 'x', 13.7, 100.5);
---   expect: ทริปนี้ไม่ได้เปิดรับจอง
+-- Behavioral RLS (roles + jwt claims). Recursion here must fail CI.
 -- ---------------------------------------------------------------------------
+
+create schema if not exists tests;
+
+create table if not exists tests.ids (
+  k text primary key,
+  id uuid not null
+);
+
+create table if not exists tests.passed (
+  name text primary key
+);
+
+create or replace function tests.login(p_uid uuid)
+returns void
+language plpgsql
+as $$
+begin
+  perform set_config('request.jwt.claim.sub', p_uid::text, false);
+  perform set_config(
+    'request.jwt.claims',
+    json_build_object('sub', p_uid::text, 'role', 'authenticated')::text,
+    false
+  );
+end;
+$$;
+
+create or replace function tests.ok(p_name text)
+returns void
+language sql
+as $$
+  insert into tests.passed (name) values (p_name) on conflict do nothing;
+$$;
+
+create or replace function tests.expect_raise(p_sql text, p_exact text)
+returns void
+language plpgsql
+as $$
+begin
+  execute p_sql;
+  raise exception 'expected error % from %', p_exact, p_sql;
+exception
+  when raise_exception then
+    if sqlerrm = 'expected error ' || p_exact || ' from ' || p_sql then
+      raise;
+    end if;
+    if sqlerrm is distinct from p_exact then
+      raise exception 'expected %, got %', p_exact, sqlerrm;
+    end if;
+end;
+$$;
+
+grant usage on schema tests to authenticated;
+grant select, insert on tests.ids, tests.passed to authenticated;
+grant execute on function tests.login(uuid) to authenticated;
+grant execute on function tests.ok(text) to authenticated;
+grant execute on function tests.expect_raise(text, text) to authenticated;
+
+do $$
+declare
+  owner uuid := '00000000-0000-4000-8000-000000000001';
+  rider uuid := '00000000-0000-4000-8000-000000000002';
+  rider2 uuid := '00000000-0000-4000-8000-000000000003';
+  stranger uuid := '00000000-0000-4000-8000-000000000004';
+  admin_id uuid := '00000000-0000-4000-8000-000000000005';
+begin
+  insert into auth.users (id, email, raw_user_meta_data) values
+    (owner, 'owner@test.local', jsonb_build_object('full_name', 'Owner')),
+    (rider, 'rider@test.local', jsonb_build_object('full_name', 'Rider')),
+    (rider2, 'rider2@test.local', jsonb_build_object('full_name', 'Rider2')),
+    (stranger, 'stranger@test.local', jsonb_build_object('full_name', 'Stranger')),
+    (admin_id, 'admin@test.local', jsonb_build_object('full_name', 'Admin'));
+  update public.profiles set role = 'rider' where id in (owner, rider, rider2, stranger);
+  update public.profiles set role = 'admin' where id = admin_id;
+  insert into tests.ids (k, id) values
+    ('owner', owner),
+    ('rider', rider),
+    ('rider2', rider2),
+    ('stranger', stranger),
+    ('admin', admin_id);
+end $$;
+
+-- Owner INSERT … RETURNING (CreateTripPage insert().select()) + SELECT trip/seats.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+  n int;
+  msg uuid;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 12,
+    'เชียงใหม่', 18.788, 98.985,
+    'ลำพูน', 18.574, 99.009, now() + interval '1 day', 'open'
+  ) returning id into trip;
+  insert into tests.ids (k, id) values ('trip', trip);
+
+  select count(*) into n from public.carpool_trips where id = trip;
+  if n <> 1 then
+    raise exception 'owner SELECT trip after INSERT RETURNING: %', n;
+  end if;
+
+  select count(*) into n from public.carpool_seats where trip_id = trip;
+  if n <> 4 then
+    raise exception 'owner SELECT seats: expected 4 sedan seats, got %', n;
+  end if;
+
+  select count(*) into n from public.carpool_bookings where trip_id = trip;
+  if n <> 0 then
+    raise exception 'owner SELECT bookings on empty trip: %', n;
+  end if;
+
+  update public.carpool_seats
+     set is_open = false
+   where trip_id = trip and position = 'rear_right';
+  if not found then
+    raise exception 'owner UPDATE seat is_open failed';
+  end if;
+
+  insert into public.carpool_messages (trip_id, sender_id, body)
+  values (trip, uid, 'hello from owner')
+  returning id into msg;
+  if msg is null then
+    raise exception 'owner INSERT RETURNING message failed';
+  end if;
+  select count(*) into n from public.carpool_messages where trip_id = trip;
+  if n <> 1 then
+    raise exception 'owner SELECT messages: %', n;
+  end if;
+
+  perform tests.ok('owner insert returning + select + seat update + message');
+end $$;
+commit;
+
+-- Stranger: no trip row; can still see anonymized open seats; no bookings/messages; no message insert.
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  n int;
+  denied boolean := false;
+begin
+  select id into trip from tests.ids where k = 'trip';
+  select count(*) into n from public.carpool_trips where id = trip;
+  if n <> 0 then
+    raise exception 'stranger SELECT trip should be 0, got %', n;
+  end if;
+  select count(*) into n from public.carpool_seats where trip_id = trip;
+  if n <> 4 then
+    raise exception 'stranger should see anonymized open-trip seats, got %', n;
+  end if;
+  select count(*) into n from public.carpool_bookings where trip_id = trip;
+  if n <> 0 then
+    raise exception 'stranger SELECT bookings should be 0, got %', n;
+  end if;
+  select count(*) into n from public.carpool_messages where trip_id = trip;
+  if n <> 0 then
+    raise exception 'stranger SELECT messages should be 0, got %', n;
+  end if;
+  begin
+    insert into public.carpool_messages (trip_id, sender_id, body)
+    values (trip, (select id from tests.ids where k = 'stranger'), 'nope');
+  exception
+    when others then
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'stranger INSERT message should fail';
+  end if;
+  perform tests.ok('stranger cannot read trip/bookings/messages or insert chat');
+end $$;
+commit;
+
+-- Rider books front_passenger; SELECT trip/bookings/messages; INSERT message.
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  uid uuid;
+  rec public.carpool_bookings;
+  n int;
+begin
+  select id into trip from tests.ids where k = 'trip';
+  select id into uid from tests.ids where k = 'rider';
+  rec := public.carpool_book_seat(
+    trip, 'front_passenger', 'ตลาดกลาง', 18.57, 99.01, 0, null, null, null
+  );
+  if rec.rider_id is distinct from uid then
+    raise exception 'book_seat rider_id mismatch';
+  end if;
+  insert into tests.ids (k, id) values ('booking', rec.id);
+
+  select count(*) into n from public.carpool_trips where id = trip;
+  if n <> 1 then
+    raise exception 'rider SELECT trip after booking: %', n;
+  end if;
+  select count(*) into n from public.carpool_bookings where trip_id = trip;
+  if n <> 1 then
+    raise exception 'rider SELECT bookings: %', n;
+  end if;
+  insert into public.carpool_messages (trip_id, sender_id, body)
+  values (trip, uid, 'hello from rider');
+  select count(*) into n from public.carpool_messages where trip_id = trip;
+  if n <> 2 then
+    raise exception 'rider SELECT messages after insert: %', n;
+  end if;
+  perform tests.ok('rider book_seat + select + message insert');
+end $$;
+commit;
+
+-- Second booker, same seat.
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+select tests.expect_raise(
+  format(
+    'select public.carpool_book_seat(%L::uuid, %L::public.carpool_seat_position, %L, 18.57, 99.01, 0, null, null, null)',
+    (select id from tests.ids where k = 'trip'),
+    'front_passenger',
+    'x'
+  ),
+  'ที่นั่งนี้เพิ่งถูกจอง'
+);
+select tests.ok('second booker ที่นั่งนี้เพิ่งถูกจอง');
+commit;
+
+-- Closed seat (owner closed rear_right).
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+select tests.expect_raise(
+  format(
+    'select public.carpool_book_seat(%L::uuid, %L::public.carpool_seat_position, %L, 18.57, 99.01, 0, null, null, null)',
+    (select id from tests.ids where k = 'trip'),
+    'rear_right',
+    'x'
+  ),
+  'ที่นั่งนี้ปิดอยู่'
+);
+select tests.ok('closed seat ที่นั่งนี้ปิดอยู่');
+commit;
+
+-- Own trip.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+select tests.expect_raise(
+  format(
+    'select public.carpool_book_seat(%L::uuid, %L::public.carpool_seat_position, %L, 18.57, 99.01, 0, null, null, null)',
+    (select id from tests.ids where k = 'trip'),
+    'rear_left',
+    'x'
+  ),
+  'ไม่สามารถจองทริปของตนเองได้'
+);
+select tests.ok('own trip ไม่สามารถจองทริปของตนเองได้');
+commit;
+
+-- Non-open trip.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+update public.carpool_trips set status = 'cancelled' where id = (select id from tests.ids where k = 'trip');
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+select tests.expect_raise(
+  format(
+    'select public.carpool_book_seat(%L::uuid, %L::public.carpool_seat_position, %L, 18.57, 99.01, 0, null, null, null)',
+    (select id from tests.ids where k = 'trip'),
+    'rear_left',
+    'x'
+  ),
+  'ทริปนี้ไม่ได้เปิดรับจอง'
+);
+select tests.ok('non-open ทริปนี้ไม่ได้เปิดรับจอง');
+commit;
+
+-- Admin can SELECT the trip (and bookings) despite not participating.
+begin;
+select tests.login(id) from tests.ids where k = 'admin';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  n int;
+begin
+  select id into trip from tests.ids where k = 'trip';
+  select count(*) into n from public.carpool_trips where id = trip;
+  if n <> 1 then
+    raise exception 'admin SELECT trip: %', n;
+  end if;
+  select count(*) into n from public.carpool_bookings where trip_id = trip;
+  if n <> 1 then
+    raise exception 'admin SELECT bookings: %', n;
+  end if;
+  select count(*) into n from public.carpool_messages where trip_id = trip;
+  if n <> 2 then
+    raise exception 'admin SELECT messages: %', n;
+  end if;
+  perform tests.ok('admin select trips/bookings/messages');
+end $$;
+commit;
+
+-- Anon: no table privilege (sees nothing).
+do $$
+declare
+  denied boolean := false;
+begin
+  begin
+    execute 'set local role anon';
+    execute 'select count(*) from public.carpool_trips';
+  exception
+    when insufficient_privilege then
+      denied := true;
+    when others then
+      denied := true;
+  end;
+  execute 'reset role';
+  if not denied then
+    raise exception 'anon SELECT carpool_trips should be denied';
+  end if;
+  perform tests.ok('anon sees nothing');
+end $$;
+
+do $$
+declare
+  n int;
+begin
+  select count(*) into n from tests.passed;
+  if n < 9 then
+    raise exception 'too few behavioral RLS cases: %', n;
+  end if;
+  raise notice 'carpool behavioral RLS cases passed: %', n;
+end $$;

@@ -33,7 +33,7 @@ Static Vite app on **Vercel**:
 - Env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
 - Auth → URL configuration: add the Vercel origin to Redirect URLs
 
-Do **not** apply the SQL from CI. Bell runs `supabase/migrations/20261118100000_carpool.sql` in the SQL editor after the existing Drop migrations.
+Do **not** apply the SQL to the live `drop` project from CI. Bell runs `supabase/migrations/20261118100000_carpool.sql` in the SQL editor after the existing Drop migrations. CI applies it only to an ephemeral Postgres (`supabase/tests/run-carpool-rls.sh`).
 
 ## Supabase dashboard (Bell)
 

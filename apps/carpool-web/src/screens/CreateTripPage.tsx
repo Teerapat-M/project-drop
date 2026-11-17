@@ -133,10 +133,13 @@ export function CreateTripPage() {
 
   return (
     <main className="page">
-      <p>
-        <Link to="/">← กลับหน้าแรก</Link>
-      </p>
-      <h1 className="page-title">{taxi ? 'สร้างทริปแท็กซี่' : 'สร้างทริป'}</h1>
+      <div className="page-head">
+        <Link to="/" className="nav-link tap-target">
+          ←
+        </Link>
+        <h1 className="page-title">{taxi ? 'สร้างทริปแท็กซี่' : 'สร้างทริป'}</h1>
+        <span className="page-head-spacer" />
+      </div>
       <div className="create-grid">
         <div className="stack">
           <label className="field">

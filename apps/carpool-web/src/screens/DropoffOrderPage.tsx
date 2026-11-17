@@ -64,14 +64,14 @@ export function DropoffOrderPage() {
             <p className="muted">เส้นทางหลัก + อ้อมนอกเส้นทาง · ตัวอย่าง</p>
           </>
         )}
-        <p>
+        <div className="sticky-bar">
           <Link
             to={driverView ? `/trips/${id}/order` : `/trips/${id}/order?view=driver`}
-            className="btn ghost tap-target"
+            className="btn tap-target"
           >
             {driverView ? 'มุมผู้โดยสาร' : 'มุมคนขับ'}
           </Link>
-        </p>
+        </div>
       </aside>
     </main>
   );

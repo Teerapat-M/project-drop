@@ -94,13 +94,25 @@ a {
 }
 
 .mobile-top {
-  display: flex;
+  display: none;
+}
+
+.page-head {
+  display: grid;
+  grid-template-columns: var(--tap) 1fr var(--tap);
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  background: var(--drop-surface);
-  border-bottom: 1px solid var(--drop-border);
-  min-height: var(--nav-h);
+  margin: 0 0 12px;
+}
+
+.page-head .page-title {
+  margin: 0;
+  text-align: center;
+  font-size: 18px;
+}
+
+.page-head-spacer {
+  min-height: var(--tap);
 }
 
 .brand {
@@ -140,7 +152,8 @@ a {
 
 .page-title {
   margin: 0 0 4px;
-  font-size: 28px;
+  font-size: 18px;
+  text-align: center;
 }
 
 .lede {
@@ -159,6 +172,15 @@ a {
 .stack {
   display: grid;
   gap: 12px;
+}
+
+.home-create-inline {
+  display: none;
+}
+
+.search-card,
+.ad-slot {
+  display: none;
 }
 
 .search-card,
@@ -297,6 +319,9 @@ a {
 .bottom-nav .nav-link {
   flex: 1;
   border-radius: 0;
+  flex-direction: column;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .sticky-bar {
@@ -361,7 +386,8 @@ a {
 }
 
 .chat-sheet-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--tap) 1fr var(--tap);
   align-items: center;
   min-height: var(--nav-h);
   padding: 8px 12px;
@@ -369,10 +395,30 @@ a {
   font-weight: 700;
 }
 
+.chat-sheet-title {
+  text-align: center;
+}
+
 .chat-sheet-body {
   flex: 1;
   padding: 16px;
   color: var(--drop-muted);
+}
+
+.chat-composer {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--drop-border);
+}
+
+.chat-composer input {
+  flex: 1;
+  min-height: var(--tap);
+  border: 1px solid var(--drop-border);
+  border-radius: 999px;
+  padding: 0 16px;
+  background: var(--drop-bg);
 }
 
 .empty {
@@ -411,8 +457,19 @@ a {
   }
 
   .mobile-top,
-  .bottom-nav {
+  .bottom-nav,
+  .home-create-sticky {
     display: none;
+  }
+
+  .home-create-inline,
+  .search-card,
+  .ad-slot {
+    display: flex;
+  }
+
+  .search-card {
+    display: grid;
   }
 
   .desktop-nav {
@@ -421,6 +478,21 @@ a {
 
   .page {
     padding: 24px 24px 48px;
+  }
+
+  .page-title {
+    font-size: 28px;
+    text-align: left;
+  }
+
+  .page-head {
+    display: flex;
+    margin-bottom: 16px;
+  }
+
+  .page-head .page-title {
+    font-size: 28px;
+    text-align: left;
   }
 
   .sticky-bar {

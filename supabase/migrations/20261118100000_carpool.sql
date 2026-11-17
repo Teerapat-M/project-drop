@@ -1,6 +1,7 @@
 -- เพื่อนร่วมทาง (carpool) Phase C2.
--- Do not apply this file from CI or to a live DB. Bell runs it in the SQL editor
--- (or `supabase db push`) after 20261111120000_revoke_trigger_fn_execute.
+-- Do not apply this file to the live `drop` project from CI. Bell runs it in
+-- the SQL editor (or `supabase db push`) after 20261111120000_revoke_trigger_fn_execute.
+-- CI applies it only to an ephemeral Postgres (supabase/tests/run-carpool-rls.sh).
 --
 -- Design:
 -- * EXISTING Supabase project `drop`. SHARED auth (auth.users / public.profiles).
@@ -237,6 +238,9 @@ $$;
 comment on function private.carpool_positions(public.carpool_vehicle_type) is
   'sedan: 4 passenger seats including rear_middle. hatch/pickup: 3 (no rear_middle).';
 
+-- Two-arg form for trigger/RPC internals (auth.uid() may be passed in).
+-- RLS policies MUST use the one-arg helpers below so they never SELECT
+-- carpool_trips / carpool_bookings under RLS (that cycle 42P17's).
 create or replace function private.carpool_is_participant(p_trip_id uuid, p_uid uuid)
 returns boolean
 language sql
@@ -254,6 +258,100 @@ as $$
        where b.trip_id = p_trip_id and b.rider_id = p_uid
     );
 $$;
+
+create or replace function private.carpool_is_trip_owner(p_trip_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+      from public.carpool_trips t
+     where t.id = p_trip_id
+       and t.owner_id = (select auth.uid())
+  );
+$$;
+
+create or replace function private.carpool_is_booked_rider(p_trip_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+      from public.carpool_bookings b
+     where b.trip_id = p_trip_id
+       and b.rider_id = (select auth.uid())
+  );
+$$;
+
+create or replace function private.carpool_is_participant(p_trip_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    exists (
+      select 1 from public.carpool_trips t
+       where t.id = p_trip_id and t.owner_id = (select auth.uid())
+    )
+    or exists (
+      select 1 from public.carpool_bookings b
+       where b.trip_id = p_trip_id and b.rider_id = (select auth.uid())
+    );
+$$;
+
+create or replace function private.carpool_can_select_seat(p_trip_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    exists (
+      select 1 from public.carpool_trips t
+       where t.id = p_trip_id
+         and (
+           t.owner_id = (select auth.uid())
+           or t.status in ('open', 'full')
+         )
+    )
+    or exists (
+      select 1 from public.carpool_bookings b
+       where b.trip_id = p_trip_id and b.rider_id = (select auth.uid())
+    )
+    or (select private.is_admin());
+$$;
+
+create or replace function private.carpool_trip_chat_open(p_trip_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.carpool_trips t
+     where t.id = p_trip_id
+       and t.status in ('open', 'full', 'in_progress')
+  );
+$$;
+
+comment on function private.carpool_is_trip_owner(uuid) is
+  'SECURITY DEFINER. True when auth.uid() owns the trip. Safe in RLS (no trips↔bookings cycle).';
+comment on function private.carpool_is_booked_rider(uuid) is
+  'SECURITY DEFINER. True when auth.uid() has a carpool_bookings row. Safe in RLS.';
+comment on function private.carpool_is_participant(uuid) is
+  'SECURITY DEFINER. Owner or booked rider for auth.uid(). Used by message policies.';
+comment on function private.carpool_can_select_seat(uuid) is
+  'SECURITY DEFINER. Owner, booked rider, admin, or open/full trip (anonymized seats).';
 
 create or replace function private.carpool_refresh_status(p_trip_id uuid)
 returns void
@@ -289,6 +387,19 @@ $$;
 revoke all on function private.carpool_positions(public.carpool_vehicle_type) from public, anon, authenticated;
 revoke all on function private.carpool_is_participant(uuid, uuid) from public, anon, authenticated;
 revoke all on function private.carpool_refresh_status(uuid) from public, anon, authenticated;
+
+-- Policy helpers: authenticated may EXECUTE (RLS expressions run as the invoker).
+-- Triggers/RPCs are SECURITY DEFINER so they do not need these grants.
+revoke all on function private.carpool_is_trip_owner(uuid) from public, anon;
+grant execute on function private.carpool_is_trip_owner(uuid) to authenticated;
+revoke all on function private.carpool_is_booked_rider(uuid) from public, anon;
+grant execute on function private.carpool_is_booked_rider(uuid) to authenticated;
+revoke all on function private.carpool_is_participant(uuid) from public, anon;
+grant execute on function private.carpool_is_participant(uuid) to authenticated;
+revoke all on function private.carpool_can_select_seat(uuid) from public, anon;
+grant execute on function private.carpool_can_select_seat(uuid) to authenticated;
+revoke all on function private.carpool_trip_chat_open(uuid) from public, anon;
+grant execute on function private.carpool_trip_chat_open(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- guards (trigger-only; no EXECUTE for anon/authenticated)
@@ -960,10 +1071,7 @@ create policy "carpool_trips_select_participants"
   to authenticated
   using (
     owner_id = (select auth.uid())
-    or exists (
-      select 1 from public.carpool_bookings b
-       where b.trip_id = id and b.rider_id = (select auth.uid())
-    )
+    or (select private.carpool_is_booked_rider(id))
     or (select private.is_admin())
   );
 
@@ -984,42 +1092,19 @@ create policy "carpool_trips_update_owner"
   with check (owner_id = (select auth.uid()));
 
 -- Open/full seats are visible so joiners can Realtime-subscribe without identities.
+-- Uses DEFINER helper so this never re-enters carpool_trips / carpool_bookings RLS.
 create policy "carpool_seats_select"
   on public.carpool_seats
   for select
   to authenticated
-  using (
-    exists (
-      select 1 from public.carpool_trips t
-       where t.id = trip_id
-         and (
-           t.owner_id = (select auth.uid())
-           or t.status in ('open', 'full')
-           or exists (
-             select 1 from public.carpool_bookings b
-              where b.trip_id = t.id and b.rider_id = (select auth.uid())
-           )
-           or (select private.is_admin())
-         )
-    )
-  );
+  using ((select private.carpool_can_select_seat(trip_id)));
 
 create policy "carpool_seats_update_owner"
   on public.carpool_seats
   for update
   to authenticated
-  using (
-    exists (
-      select 1 from public.carpool_trips t
-       where t.id = trip_id and t.owner_id = (select auth.uid())
-    )
-  )
-  with check (
-    exists (
-      select 1 from public.carpool_trips t
-       where t.id = trip_id and t.owner_id = (select auth.uid())
-    )
-  );
+  using ((select private.carpool_is_trip_owner(trip_id)))
+  with check ((select private.carpool_is_trip_owner(trip_id)));
 
 create policy "carpool_bookings_select"
   on public.carpool_bookings
@@ -1027,10 +1112,7 @@ create policy "carpool_bookings_select"
   to authenticated
   using (
     rider_id = (select auth.uid())
-    or exists (
-      select 1 from public.carpool_trips t
-       where t.id = trip_id and t.owner_id = (select auth.uid())
-    )
+    or (select private.carpool_is_trip_owner(trip_id))
     or (select private.is_admin())
   );
 
@@ -1053,7 +1135,7 @@ create policy "carpool_messages_select_participants"
   for select
   to authenticated
   using (
-    private.carpool_is_participant(trip_id, (select auth.uid()))
+    (select private.carpool_is_participant(trip_id))
     or (select private.is_admin())
   );
 
@@ -1063,12 +1145,8 @@ create policy "carpool_messages_insert_participants"
   to authenticated
   with check (
     sender_id = (select auth.uid())
-    and private.carpool_is_participant(trip_id, (select auth.uid()))
-    and exists (
-      select 1 from public.carpool_trips t
-       where t.id = trip_id
-         and t.status in ('open', 'full', 'in_progress')
-    )
+    and (select private.carpool_is_participant(trip_id))
+    and (select private.carpool_trip_chat_open(trip_id))
   );
 
 -- Realtime: carpool seats + chat. Never ride_pins.
@@ -1132,6 +1210,11 @@ end $$;
 -- drop function if exists public.carpool_trips_seed_seats();
 -- drop function if exists public.carpool_trips_guard();
 -- drop function if exists private.carpool_refresh_status(uuid);
+-- drop function if exists private.carpool_trip_chat_open(uuid);
+-- drop function if exists private.carpool_can_select_seat(uuid);
+-- drop function if exists private.carpool_is_participant(uuid);
+-- drop function if exists private.carpool_is_booked_rider(uuid);
+-- drop function if exists private.carpool_is_trip_owner(uuid);
 -- drop function if exists private.carpool_is_participant(uuid, uuid);
 -- drop function if exists private.carpool_positions(public.carpool_vehicle_type);
 -- drop table if exists public.carpool_messages;

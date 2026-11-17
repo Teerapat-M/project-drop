@@ -95,6 +95,32 @@ describe('carpool migration security text', () => {
     );
     expect(sql).toMatch(/revoke all on function public\.carpool_book_seat\([\s\S]*?\) from public, anon;/);
     expect(sql).not.toMatch(/grant execute on function public\.carpool_trips_guard/);
+    expect(sql).toMatch(
+      /grant execute on function private\.carpool_is_trip_owner\(uuid\) to authenticated;/,
+    );
+    expect(sql).toMatch(
+      /grant execute on function private\.carpool_is_booked_rider\(uuid\) to authenticated;/,
+    );
+    expect(sql).toMatch(
+      /grant execute on function private\.carpool_is_participant\(uuid\) to authenticated;/,
+    );
+    expect(sql).toMatch(
+      /revoke all on function private\.carpool_is_participant\(uuid, uuid\) from public, anon, authenticated;/,
+    );
+  });
+
+  it('breaks trips↔bookings RLS recursion with DEFINER helpers', () => {
+    const tripsSelect =
+      sql.match(/create policy "carpool_trips_select_participants"[\s\S]*?;/)?.[0] ?? '';
+    expect(tripsSelect).toMatch(/private\.carpool_is_booked_rider/);
+    expect(tripsSelect).not.toMatch(/from public\.carpool_bookings/);
+    const bookingsSelect = sql.match(/create policy "carpool_bookings_select"[\s\S]*?;/)?.[0] ?? '';
+    expect(bookingsSelect).toMatch(/private\.carpool_is_trip_owner/);
+    expect(bookingsSelect).not.toMatch(/from public\.carpool_trips/);
+    const seatsSelect = sql.match(/create policy "carpool_seats_select"[\s\S]*?;/)?.[0] ?? '';
+    expect(seatsSelect).toMatch(/private\.carpool_can_select_seat/);
+    expect(seatsSelect).not.toMatch(/from public\.carpool_trips/);
+    expect(sql).toMatch(/set search_path = ''/);
   });
 
   it('publishes carpool_seats and carpool_messages and never ride_pins', () => {
@@ -130,9 +156,13 @@ describe('carpool SQL test file', () => {
     expect(testSql).toMatch(/authenticated must EXECUTE public\.carpool_book_seat/);
     expect(testSql).toMatch(/ที่นั่งนี้เพิ่งถูกจอง/);
     expect(testSql).toMatch(/FOR UPDATE/);
-    expect(testSql).toMatch(/Owner vs rider vs stranger/);
+    expect(testSql).toMatch(/set local role authenticated/);
+    expect(testSql).toMatch(/request\.jwt\.claims/);
+    expect(testSql).toMatch(/INSERT RETURNING/);
     expect(testSql).toMatch(/ไม่สามารถจองทริปของตนเองได้/);
     expect(testSql).toMatch(/ทริปนี้ไม่ได้เปิดรับจอง/);
     expect(testSql).toMatch(/ที่นั่งนี้ปิดอยู่/);
+    expect(testSql).toMatch(/anon sees nothing/);
+    expect(testSql).toMatch(/admin SELECT trip/);
   });
 });
