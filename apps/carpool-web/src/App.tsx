@@ -1,0 +1,46 @@
+import type { ReactNode } from 'react';
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { useAuth } from './auth/AuthProvider';
+import { LoginPage } from './auth/LoginPage';
+import { Layout } from './components/Layout';
+import { CreateTripPage } from './screens/CreateTripPage';
+import { DropoffOrderPage } from './screens/DropoffOrderPage';
+import { FareSummaryPage } from './screens/FareSummaryPage';
+import { JoinTripPage } from './screens/JoinTripPage';
+import { StubPage } from './screens/StubPage';
+import { TripListPage } from './screens/TripListPage';
+
+function Gate({ children }: { children: ReactNode }) {
+  const { loading, user, demo, configured } = useAuth();
+  if (loading) return <p className="page">กำลังโหลด…</p>;
+  if (configured && !user && !demo) return <Navigate to="/login" replace />;
+  return children;
+}
+
+export function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        element={
+          <Gate>
+            <Layout />
+          </Gate>
+        }
+      >
+        <Route path="/" element={<TripListPage />} />
+        <Route path="/trips/new" element={<CreateTripPage />} />
+        <Route path="/trips/:id" element={<JoinTripPage />} />
+        <Route path="/trips/:id/fare" element={<FareSummaryPage />} />
+        <Route path="/trips/:id/order" element={<DropoffOrderPage />} />
+        <Route path="/map" element={<StubPage name="map" />} />
+        <Route path="/chat" element={<StubPage name="chat" />} />
+        <Route path="/history" element={<StubPage name="history" />} />
+        <Route path="/account" element={<StubPage name="account" />} />
+        <Route path="/parcels" element={<StubPage name="parcels" />} />
+        <Route path="/donate" element={<StubPage name="donate" />} />
+        <Route path="/features" element={<StubPage name="features" />} />
+      </Route>
+    </Routes>
+  );
+}

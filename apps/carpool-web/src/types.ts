@@ -1,0 +1,48 @@
+export type TripKind = 'taxi' | 'private';
+export type VehicleType = 'sedan' | 'hatch' | 'pickup';
+export type TripStatus = 'open' | 'full' | 'in_progress' | 'completed' | 'cancelled';
+export type SeatPosition = 'front_passenger' | 'rear_left' | 'rear_middle' | 'rear_right';
+
+export type SeatState = {
+  id: string;
+  position: SeatPosition;
+  is_open: boolean;
+  is_booked: boolean;
+  label?: string;
+};
+
+export type TripCard = {
+  id: string;
+  kind: TripKind;
+  vehicle_type: VehicleType;
+  car_icon: string;
+  route_km: number;
+  depart_at: string;
+  status: TripStatus;
+  pickup_label: string;
+  dest_label: string;
+  pickup_lat: number;
+  pickup_lng: number;
+  dest_lat: number;
+  dest_lng: number;
+  trunk_w_cm: number;
+  trunk_h_cm: number;
+  trunk_l_cm: number;
+  open_seats: number;
+  bookable_seats: number;
+  owner_display_name: string;
+};
+
+export type TripPreview = Omit<TripCard, 'open_seats' | 'bookable_seats'> & {
+  seats: SeatState[];
+};
+
+export type BookingInput = {
+  dest_label: string;
+  dest_lat: number;
+  dest_lng: number;
+  detour_km: number;
+  luggage_h_cm: number | null;
+  luggage_w_cm: number | null;
+  luggage_d_cm: number | null;
+};
