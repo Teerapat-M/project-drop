@@ -19,10 +19,11 @@ npm install
 | `apps/admin` | Ops dashboard | Next.js + TypeScript, Vercel-ready |
 | `packages/tokens` | Design tokens | Primary yellow `#FFEA33`, on-primary black `#141414` |
 | `packages/types` | Shared API contracts | `Role`, `Profile`, `Ride`, `RideStatus`, `VehicleType`, `DriverLocation`, `NEARBY_RIDES_MAX_RADIUS_M`, `estimateFare` stub |
+| `packages/carpool-core` | เพื่อนร่วมทาง Phase C1 (pure TS, no DB/UI) | Fare split, drop-off order (≤4), trunk overlay. See [formulas](#เพื่อนร่วมทาง-carpool-core-phase-c1) and [`packages/carpool-core/README.md`](packages/carpool-core/README.md) |
 
 Themes: rider light + dark (follows system), driver dark only, admin light only. Driver supports landscape and full-screen navigation (one `MapView`, `fullscreen` state — not a new route).
 
-**TypeScript** is **~6.0.3** in every workspace. Expo SDK 58 recommends 6.0.3 (`expo install --fix`); Next.js 16.4 supports TypeScript 6. Root `tsconfig.json` project-references `packages/tokens` and `packages/types` (composite, declaration emit).
+**TypeScript** is **~6.0.3** in every workspace. Expo SDK 58 recommends 6.0.3 (`expo install --fix`); Next.js 16.4 supports TypeScript 6. Root `tsconfig.json` project-references `packages/tokens`, `packages/types`, and `packages/carpool-core` (composite, declaration emit).
 
 ## Auth
 
@@ -171,6 +172,36 @@ npm run lint
 npm run typecheck
 npm test
 ```
+
+## เพื่อนร่วมทาง carpool-core Phase C1
+
+Pure TypeScript in `packages/carpool-core`. **Not wired into Drop UI or the database.** Drop’s `estimateFare` stub is unchanged. Run `npm test -w @drop/carpool-core` (picked up by root `npm test` / CI `lint-typecheck-test`).
+
+### Fare / ค่าโดยสาร
+
+`RATE_THB_PER_KM = 7` (overridable). **EN:** `mainFare = mainRouteKm × rate`, split equally among seats that are **open AND booked** (closed/unbooked pay 0). Taxi and private car use the same math; on a private car the **owner-driver is one payer** (cost-sharing, **no wage**). A passenger-requested off-route stop adds `detourKm × 2 × rate` **to that passenger only**. Detour km are not part of `mainRouteKm`. Luggage does not affect fare. Amounts are 2-decimal THB via integer satang; leftover satang go to payers in ascending id order so the sum matches the total.
+
+**TH:** ค่าหลัก = กม. หลัก × อัตรา หารเท่ากันเฉพาะที่นั่งเปิดและจองแล้ว (ปิด/ยังไม่จองจ่าย 0). แท็กซี่กับรถส่วนตัวใช้สูตรเดียวกัน รถส่วนตัวเจ้าของรถที่ขับนับเป็นผู้จ่าย (แชร์ค่าใช้จ่าย ไม่มีค่าจ้าง). จุดแวะนอกเส้นทาง: `กม.อ้อม × 2 × อัตรา` เฉพาะคนนั้น. สัมภาระไม่กระทบค่าโดยสาร. คิดเป็นสตางค์จำนวนเต็ม.
+
+Worked examples (`rate = 7`):
+
+- **Taxi** A/B/C, 12 km, B detour 1.5 km: main `84` ÷ 3 = 28; B +`21` → **A 28, B 49, C 28** (total **105**).
+- **Private car + driver**, same trip: main `84` ÷ 4 = 21; B +`21` → **A 21, B 42, C 21, driver 21** (total **105**).
+- **Rounding:** 10 km / 3 payers = 70 THB = 7000 satang → **23.34 + 23.33 + 23.33**.
+
+### Drop-off order / ลำดับลงรถ
+
+Shortest `pickup → d1 → d2 → …`. Brute-force all permutations for **n ≤ 4** (24). **n > 4 throws** (`TOO_MANY_RIDERS`; OSRM later — no silent fallback). Pluggable async distance; default haversine (meters). Tie-break: lexicographically smaller id sequence.
+
+ลองทุก permutation เมื่อไม่เกิน 4 คน; เกิน 4 โยน error. ฟังก์ชันระยะทางเปลี่ยนได้ ค่าเริ่มต้น haversine.
+
+### Trunk / ท้ายรถ
+
+Uniform `s = min(frameW/W, frameH/H)`, rect centered in the frame. Short side is at least **40%** of the matching frame side (scale is raised if needed; the long side may overflow). Corner radius **8%** of the rect’s shorter side. Luggage `H×W×D` cm: `usedVol = Σ`, `fillHeight = H·s·usedVol/(W·H·L)` capped at rect height, `overflow = usedVol > W·H·L`, plus `fillRatio`.
+
+สเกลเท่ากัน จัดกลางเฟรม ด้านสั้นอย่างน้อย 40% ของด้านเฟรมที่คู่กัน มุมโค้ง 8% ของด้านที่สั้นกว่า.
+
+Full formulas and tests: [`packages/carpool-core/README.md`](packages/carpool-core/README.md).
 
 ## Roadmap
 
