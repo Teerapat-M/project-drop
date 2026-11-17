@@ -1,0 +1,37 @@
+{
+  "name": "@drop/carpool-web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "เพื่อนร่วมทาง carpool web (Vite + React). Static deploy, no Expo.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@drop/carpool-core": "*",
+    "@drop/tokens": "*",
+    "@supabase/supabase-js": "^2.86.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-router-dom": "^7.9.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^5.1.1",
+    "eslint": "^9.39.1",
+    "jsdom": "^26.1.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.46.4",
+    "vite": "^7.1.12",
+    "vitest": "^3.2.4"
+  }
+}
