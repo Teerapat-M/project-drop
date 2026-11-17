@@ -5,6 +5,7 @@
   },
   "references": [
     { "path": "./packages/tokens" },
-    { "path": "./packages/types" }
+    { "path": "./packages/types" },
+    { "path": "./packages/carpool-core" }
   ]
 }
