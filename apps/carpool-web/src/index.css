@@ -169,6 +169,20 @@ a {
   align-items: center;
 }
 
+.check-row {
+  min-height: var(--tap);
+  cursor: pointer;
+}
+
+.check-row input[type='checkbox'] {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  flex-shrink: 0;
+  accent-color: #222;
+}
+
 .stack {
   display: grid;
   gap: 12px;

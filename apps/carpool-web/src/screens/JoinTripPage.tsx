@@ -10,6 +10,7 @@ import { VEHICLE_LABEL } from '../lib/carIcons';
 import { estimateViewerFareFromSeats } from '../lib/estimateFare';
 import { liters, thb } from '../lib/format';
 import { SEAT_LABELS } from '../lib/seats';
+import { thaiRpcError, withSeatOpen } from '../lib/seatRpc';
 import { SeatPicker } from '../components/SeatPicker';
 import { LuggageBlock } from '../components/LuggageBlock';
 import { getSupabase } from '../supabase';
@@ -101,20 +102,24 @@ export function JoinTripPage() {
   }, [preview, h, w, d, noBags, luggage]);
 
   const toggleOpen = async (position: SeatPosition, isOpen: boolean) => {
-    setPreview((prev) =>
-      prev
-        ? { ...prev, seats: prev.seats.map((s) => (s.position === position ? { ...s, is_open: isOpen } : s)) }
-        : prev,
-    );
+    const snapshot = preview?.seats ?? [];
+    setPreview((prev) => (prev ? { ...prev, seats: withSeatOpen(prev.seats, position, isOpen) } : prev));
     if (demo) return;
     const supabase = getSupabase();
-    if (!supabase) return;
+    if (!supabase) {
+      setPreview((prev) => (prev ? { ...prev, seats: snapshot } : prev));
+      setError(thaiRpcError('not authenticated'));
+      return;
+    }
     const { error: rpcError } = await supabase.rpc('carpool_set_seat_open', {
       p_trip_id: id,
       p_position: position,
       p_is_open: isOpen,
     });
-    if (rpcError) setError(rpcError.message);
+    if (rpcError) {
+      setPreview((prev) => (prev ? { ...prev, seats: snapshot } : prev));
+      setError(thaiRpcError(rpcError.message, 'ปิดที่นั่งไม่สำเร็จ'));
+    }
   };
 
   if (!preview) {
@@ -243,7 +248,7 @@ export function JoinTripPage() {
         luggage={noBags ? [] : luggage}
       />
 
-      <label className="row">
+      <label className="row check-row tap-target" data-testid="no-bags">
         <input type="checkbox" checked={noBags} onChange={(e) => setNoBags(e.target.checked)} />
         ไม่มีสัมภาระ
       </label>
@@ -264,7 +269,7 @@ export function JoinTripPage() {
         </div>
       ) : null}
 
-      <label className="row">
+      <label className="row check-row tap-target">
         <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
         ใช้รถด้วยความเสี่ยงของตนเอง ระบบไม่มีการคุ้มครอง
       </label>

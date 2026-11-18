@@ -7,6 +7,7 @@ import { TaxiBadge } from '../components/TaxiBadge';
 import { liters } from '../lib/format';
 import { ICON_CHOICES, VEHICLE_LABEL } from '../lib/carIcons';
 import { positionsFor, SEAT_LABELS } from '../lib/seats';
+import { thaiRpcError } from '../lib/seatRpc';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
 import type { SeatPosition, SeatState, VehicleType } from '../types';
@@ -110,11 +111,16 @@ export function CreateTripPage() {
     const id = data.id as string;
     for (const p of positions) {
       if (!open[p]) {
-        await supabase.rpc('carpool_set_seat_open', {
+        const { error: seatError } = await supabase.rpc('carpool_set_seat_open', {
           p_trip_id: id,
           p_position: p,
           p_is_open: false,
         });
+        if (seatError) {
+          setBusy(false);
+          setError(thaiRpcError(seatError.message, 'ปิดที่นั่งไม่สำเร็จ'));
+          return;
+        }
       }
     }
     if (taxi) {
@@ -124,7 +130,7 @@ export function CreateTripPage() {
       });
       if (claimError) {
         setBusy(false);
-        setError(claimError.message);
+        setError(thaiRpcError(claimError.message, 'จองที่นั่งเจ้าของไม่สำเร็จ'));
         return;
       }
     }

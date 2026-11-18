@@ -31,4 +31,9 @@ describe('waiting-state badge', () => {
     renderFare('/trips/demo-taxi-12km/fare?confirmed=1');
     expect(screen.queryByTestId('waiting-badge')).toBeNull();
   });
+
+  it('hides the badge when the trip is not open', () => {
+    renderFare('/trips/demo-history-mint/fare');
+    expect(screen.queryByTestId('waiting-badge')).toBeNull();
+  });
 });
