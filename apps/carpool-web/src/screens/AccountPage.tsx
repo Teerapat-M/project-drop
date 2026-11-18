@@ -124,7 +124,7 @@ export function AccountPage() {
           <strong>ภาษา</strong>
         </p>
         <p className="muted" style={{ margin: 0 }}>
-          ไทย · แปลตามที่ตั้งในโปรไฟล์
+          ไทย · ใช้ภาษาตามโปรไฟล์
         </p>
       </section>
 
@@ -233,7 +233,7 @@ function AddressEditor({
           บันทึก
         </button>
         <button className="btn ghost tap-target" type="button" onClick={onCancel}>
-          กลับไปหน้าบัญชียังไม่บันทึก
+          ยกเลิก
         </button>
       </div>
     </form>

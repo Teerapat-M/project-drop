@@ -105,7 +105,7 @@ export function DropoffOrderPage() {
         <Link to={id.startsWith('demo-history') || params.get('from') === 'history' ? '/history' : `/trips/${id}/fare`} className="nav-link tap-target">
           ←
         </Link>
-        <h1 className="page-title visually-hidden">ลำดับส่ง</h1>
+        <h1 className="page-title visually-hidden">ลำดับลงรถ</h1>
         <span className="page-head-spacer" />
       </div>
       <div>
@@ -118,7 +118,7 @@ export function DropoffOrderPage() {
             youId={canonicalDemo || demo ? 'B' : null}
           />
         ) : (
-          <p>กำลังคำนวณลำดับส่ง…</p>
+          <p>กำลังจัดลำดับลงรถ…</p>
         )}
       </div>
       <aside className="card">
@@ -128,14 +128,14 @@ export function DropoffOrderPage() {
             <p style={{ fontSize: 32, margin: 0 }}>
               <strong>{thb(fare.totalThb)} ฿</strong>
             </p>
-            <p className="muted">ตัวอย่าง · ไม่แยกรายคน</p>
+            <p className="muted">ตัวอย่าง · ยังไม่แยกยอดรายคน</p>
           </>
         ) : (
           <>
             <p>
               ส่วนของคุณ (บี) <strong>{thb(fare.persons.find((p) => p.id === 'B')?.amountThb ?? 0)} ฿</strong>
             </p>
-            <p className="muted">เส้นทางหลัก + อ้อมนอกเส้นทาง · ตัวอย่าง</p>
+            <p className="muted">เส้นทางหลักรวมระยะอ้อม · ตัวอย่าง</p>
           </>
         )}
         <div className="sticky-bar">
@@ -143,7 +143,7 @@ export function DropoffOrderPage() {
             to={driverView ? `/trips/${id}/order` : `/trips/${id}/order?view=driver`}
             className="btn tap-target"
           >
-            {driverView ? 'มุมผู้โดยสาร' : 'มุมคนขับ'}
+            {driverView ? 'ดูแบบผู้โดยสาร' : 'ดูแบบคนขับ'}
           </Link>
         </div>
       </aside>

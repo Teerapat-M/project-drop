@@ -72,21 +72,21 @@ export function Layout() {
           💬
         </button>
         <NavLink to="/donate" className="nav-link tap-target">
-          สนับสนุนแพลตฟอร์ม
+          สนับสนุนแอป
         </NavLink>
         <NavLink to="/account" className="nav-link tap-target">
           บัญชี
         </NavLink>
         {user && !demo ? (
           <button type="button" className="nav-link tap-target" onClick={() => void signOut()}>
-            ออก
+            ออกจากระบบ
           </button>
         ) : null}
       </header>
 
       {demo ? (
         <p className="muted" style={{ margin: 0, padding: '8px 16px', background: '#fff8c2' }}>
-          โหมดตัวอย่าง — ตั้ง VITE_SUPABASE_URL และ VITE_SUPABASE_ANON_KEY เพื่อต่อโปรเจกต์ drop
+          โหมดตัวอย่าง — ตั้งค่า VITE_SUPABASE_URL และ VITE_SUPABASE_ANON_KEY เพื่อเชื่อมกับโปรเจกต์ drop
         </p>
       ) : null}
 

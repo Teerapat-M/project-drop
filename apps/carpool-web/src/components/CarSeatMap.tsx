@@ -54,7 +54,7 @@ export function CarSeatMap({
         {tile(byPos.front_passenger, selected, onSelect, onToggleOpen, ownPosition)}
         <div className="seat-btn seat-driver" data-testid="seat-driver" data-state="locked">
           <span>1B</span>
-          <span>ล็อก</span>
+          <span>ล็อกไว้</span>
           <span>{driverLabel}</span>
         </div>
         {tile(byPos.rear_left, selected, onSelect, onToggleOpen, ownPosition)}

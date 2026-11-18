@@ -88,7 +88,7 @@ export function FareSummaryPage() {
       <FareSummary result={result} labels={LABELS} kind={taxi ? 'taxi' : 'private'} />
       <div className="sticky-bar">
         <Link to={`/trips/${id}/order`} className="btn tap-target">
-          {taxi ? 'ดูสรุปทริป' : 'มุมคนขับ'}
+          {taxi ? 'ดูสรุปทริป' : 'ดูแบบคนขับ'}
         </Link>
       </div>
     </main>

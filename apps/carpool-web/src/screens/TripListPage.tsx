@@ -39,7 +39,7 @@ export function TripListPage() {
   return (
     <main className="page">
       <h1 className="page-title">หน้าแรก</h1>
-      <p className="lede">แชร์ที่นั่งไปด้วยกัน · {RATE_THB_PER_KM} ฿/กม. หารเท่ากันคนที่นั่ง</p>
+      <p className="lede">แชร์ที่นั่งไปด้วยกัน · {RATE_THB_PER_KM} ฿/กม. หารเท่ากันตามจำนวนคนที่นั่ง</p>
 
       <form
         className="search-card stack"
@@ -147,7 +147,7 @@ function TripCardView({ trip }: { trip: TripCard }) {
           {trip.owner_display_name} · {VEHICLE_LABEL[trip.vehicle_type]} · {trip.route_km} กม.
         </p>
         <p>
-          คาดว่า ~{thb(est.amountThb)} ฿ ถ้ามี {est.payerCount} คน · ตัวอย่าง
+          ประมาณ {thb(est.amountThb)} ฿ เมื่อมี {est.payerCount} คน · ตัวอย่าง
         </p>
         <p className="muted">{formatDepart(trip.depart_at)} · ว่าง {trip.open_seats}/{trip.bookable_seats}</p>
       </div>

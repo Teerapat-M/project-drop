@@ -20,11 +20,11 @@ export function DropoffOrder({ result, pickupLabel, stops, driverView = false, y
   return (
     <section data-testid="dropoff-order" className="stack">
       <h1 className="page-title" style={{ fontSize: 22 }}>
-        {driverView ? 'มุมคนขับแท็กซี่' : 'สรุปทริปผู้โดยสาร'}
+        {driverView ? 'แบบคนขับแท็กซี่' : 'สรุปทริปผู้โดยสาร'}
       </h1>
-      <p className="lede">ลำดับส่งที่ระยะรวมสั้นที่สุด · ตัวอย่าง</p>
+      <p className="lede">ลำดับลงที่ระยะทางรวมสั้นที่สุด · ตัวอย่าง</p>
       <div className="card map-placeholder" data-testid="map-placeholder">
-        แผนที่ลำดับส่ง (มองจากเส้นทางหลัก)
+        แผนที่ลำดับลงรถ (ตามเส้นทางหลัก)
         <p className="order-chain" data-testid="order-chain">
           {chain}
         </p>

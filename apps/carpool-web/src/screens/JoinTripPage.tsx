@@ -200,7 +200,7 @@ export function JoinTripPage() {
             คนขับ {preview.owner_display_name} · {VEHICLE_LABEL[preview.vehicle_type]}
           </p>
           <p className="muted" style={{ margin: 0 }}>
-            {preview.route_km} กม. · คาดว่า ~{thb(est.amountThb)} ฿ ถ้ามี {est.payerCount} คน · ตัวอย่าง
+            {preview.route_km} กม. · ประมาณ {thb(est.amountThb)} ฿ เมื่อมี {est.payerCount} คน · ตัวอย่าง
           </p>
         </div>
       </article>
@@ -235,7 +235,7 @@ export function JoinTripPage() {
           <input value={dest} onChange={(e) => setDest(e.target.value)} />
         </label>
         <label className="field">
-          กม. อ้อมนอกเส้นทาง
+          ระยะทางที่อ้อม (กม.)
           <input type="number" min={0} step="0.1" value={detour} onChange={(e) => setDetour(Number(e.target.value))} />
         </label>
         <p className="muted">สัมภาระของคุณ {noBags ? 'ไม่มี' : `${w} × ${h} × ${d} ซม. = ${bagL.toFixed(0)} ลิตร`}</p>
@@ -271,7 +271,7 @@ export function JoinTripPage() {
 
       <label className="row check-row tap-target">
         <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
-        ใช้รถด้วยความเสี่ยงของตนเอง ระบบไม่มีการคุ้มครอง
+        ร่วมทริปด้วยความเสี่ยงของตนเอง ไม่มีการประกันหรือคุ้มครอง
       </label>
 
       <div className="sticky-bar">

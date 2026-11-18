@@ -96,7 +96,7 @@ export function HistoryPage() {
         <h1 className="page-title">ประวัติทริป</h1>
         <span className="page-head-spacer" />
       </div>
-      <p className="lede">ทริปที่คุณเคยร่วม · จ่ายผ่านพร้อมเพย์ · แพลตฟอร์มไม่ถือเงิน</p>
+      <p className="lede">ทริปที่คุณเคยร่วม · จ่ายผ่านพร้อมเพย์ · โอนกันเอง ไม่ผ่านแอป</p>
       {trips.length === 0 ? (
         <p className="empty muted">ยังไม่มีประวัติทริป</p>
       ) : (
@@ -123,7 +123,7 @@ export function HistoryPage() {
                     {trip.kind === 'taxi' ? <TaxiBadge /> : null}
                   </h3>
                   <p className="muted" style={{ margin: 0 }}>
-                    {VEHICLE_LABEL[trip.vehicle_type]} · จ่าย ฿{thb(amount)} (ค่าน้ำมัน/คน)
+                    {VEHICLE_LABEL[trip.vehicle_type]} · จ่าย ฿{thb(amount)} (ค่าน้ำมันต่อคน)
                   </p>
                 </div>
               </Link>

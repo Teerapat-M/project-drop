@@ -43,6 +43,6 @@ describe('CarSeatMap owner toggle', () => {
     expect(screen.getByTestId('seat-rear_left')).toBeInTheDocument();
     expect(screen.getByTestId('seat-rear_middle')).toBeInTheDocument();
     expect(screen.getByTestId('seat-rear_right')).toBeInTheDocument();
-    expect(screen.getByTestId('seat-driver')).toHaveTextContent('ล็อก');
+    expect(screen.getByTestId('seat-driver')).toHaveTextContent('ล็อกไว้');
   });
 });

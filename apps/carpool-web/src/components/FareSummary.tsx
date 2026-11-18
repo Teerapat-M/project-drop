@@ -20,7 +20,7 @@ export function FareSummary({ result, labels = {}, kind }: Props) {
         </p>
       ) : (
         <p className="lede">
-          เส้นทางหลัก {thb(result.mainFareThb)} ฿ หารเท่ากันที่นั่งที่เปิดและจอง
+          เส้นทางหลัก {thb(result.mainFareThb)} ฿ หารเท่ากันเฉพาะที่นั่งที่เปิดและมีคนจอง
         </p>
       )}
       {result.persons
@@ -41,7 +41,7 @@ export function FareSummary({ result, labels = {}, kind }: Props) {
               </div>
               {p.breakdown.detourThb > 0 ? (
                 <p className="muted" data-testid={`detour-${p.id}`} style={{ margin: 0 }}>
-                  อ้อมนอกเส้นทาง +{thb(p.breakdown.detourThb)} ฿ (จ่ายเฉพาะคนนี้)
+                  ค่าอ้อม +{thb(p.breakdown.detourThb)} ฿ (เฉพาะคนนี้)
                 </p>
               ) : null}
               {p.ownerDriverCostSharing ? (

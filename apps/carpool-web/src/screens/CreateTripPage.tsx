@@ -130,7 +130,7 @@ export function CreateTripPage() {
       });
       if (claimError) {
         setBusy(false);
-        setError(thaiRpcError(claimError.message, 'จองที่นั่งเจ้าของไม่สำเร็จ'));
+        setError(thaiRpcError(claimError.message, 'จองที่นั่งคนขับไม่สำเร็จ'));
         return;
       }
     }
@@ -154,10 +154,10 @@ export function CreateTripPage() {
               <CarPhoto car_icon="taxi" vehicle_type="sedan" kind="taxi" />
               <div>
                 <p style={{ margin: 0 }}>
-                  รถแท็กซี่เก๋ง · ที่นั่งคนขับล็อก <TaxiBadge />
+                  รถแท็กซี่เก๋ง · ที่นั่งคนขับล็อกไว้ <TaxiBadge />
                 </p>
                 <p className="muted" style={{ margin: 0 }}>
-                  คนขับแท็กซี่ไม่ใช่ผู้หาร · หารในที่นั่งที่เปิดและจอง
+                  คนขับแท็กซี่ไม่ร่วมหารค่าโดยสาร · หารเฉพาะที่นั่งที่เปิดและมีคนจอง
                 </p>
               </div>
             </div>
@@ -175,7 +175,7 @@ export function CreateTripPage() {
             วันออกเดินทาง
             <input type="datetime-local" value={depart} onChange={(e) => setDepart(e.target.value)} />
           </label>
-          <p className="muted">ที่นั่งที่เปิดให้จอง {openCount} / {positions.length} เปิด</p>
+          <p className="muted">ที่นั่งที่เปิดให้จอง {openCount}/{positions.length} ที่</p>
           <label className="field">
             ระยะทางโดยประมาณ (กม.)
             <input type="number" min={0} value={km} onChange={(e) => setKm(Number(e.target.value))} />
@@ -193,9 +193,9 @@ export function CreateTripPage() {
           />
 
           {taxi ? (
-            <p className="muted">ค่าโดยสาร {RATE_THB_PER_KM} ฿/กม. หารเท่ากันที่นั่งที่เปิดและจอง · ตัวอย่าง</p>
+            <p className="muted">ค่าโดยสาร {RATE_THB_PER_KM} ฿/กม. หารเท่ากันเฉพาะที่นั่งที่เปิดและมีคนจอง · ตัวอย่าง</p>
           ) : (
-            <p className="muted">ใช้อัตราคงที่ {RATE_THB_PER_KM} ฿/กม. (ช่องบาท/กม. ถูกซ่อน ไม่ลบ)</p>
+            <p className="muted">ใช้อัตราคงที่ {RATE_THB_PER_KM} ฿/กม.</p>
           )}
 
           {!taxi ? (
@@ -280,7 +280,7 @@ export function CreateTripPage() {
                 ท้ายกลาง
               </button>
               <button type="button" className="chip tap-target" onClick={() => setTrunk(TRUNK.taxiOver)}>
-                ท้ายใหญ่ (ตัวอย่างล้น)
+                ท้ายใหญ่ (ตัวอย่างสัมภาระล้น)
               </button>
             </div>
           ) : null}
@@ -301,7 +301,7 @@ export function CreateTripPage() {
 
       <div className="sticky-bar">
         <button className="btn tap-target" type="button" disabled={busy} onClick={() => void publish()}>
-          เผยแพร่ทริป
+          เปิดทริป
         </button>
       </div>
     </main>
