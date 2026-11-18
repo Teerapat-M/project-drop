@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="hcBody" x1="0.12" y1="0.05" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#FFF8EE"/>
+      <stop offset="0.4" stop-color="#E6D3B4"/>
+      <stop offset="1" stop-color="#B08960"/>
+    </linearGradient>
+    <linearGradient id="hcGlass" x1="0.2" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#E4F6FF"/>
+      <stop offset="0.35" stop-color="#8ED0F2"/>
+      <stop offset="1" stop-color="#3A88C4"/>
+    </linearGradient>
+    <linearGradient id="hcUnder" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#A392A8"/>
+      <stop offset="1" stop-color="#6E5E74"/>
+    </linearGradient>
+    <linearGradient id="hcLight" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFF6C4"/>
+      <stop offset="0.55" stop-color="#F2C94C"/>
+      <stop offset="1" stop-color="#E0A020"/>
+    </linearGradient>
+    <radialGradient id="hcTire" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#5A5160"/>
+      <stop offset="0.55" stop-color="#2B2432"/>
+      <stop offset="1" stop-color="#161218"/>
+    </radialGradient>
+    <radialGradient id="hcHub" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#F0E6EE"/>
+      <stop offset="1" stop-color="#B79AAC"/>
+    </radialGradient>
+    <linearGradient id="hcBumper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#D8D0D6"/>
+      <stop offset="1" stop-color="#8E8490"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="128" cy="226" rx="90" ry="11" fill="#1A1220" opacity="0.16"/>
+  <ellipse cx="186" cy="188" rx="30" ry="31" fill="url(#hcTire)"/>
+  <ellipse cx="186" cy="188" rx="14" ry="14.5" fill="url(#hcHub)"/>
+  <ellipse cx="182" cy="184" rx="5" ry="5" fill="#FFFFFF" opacity="0.35"/>
+  <ellipse cx="76" cy="188" rx="30" ry="31" fill="url(#hcTire)"/>
+  <ellipse cx="76" cy="188" rx="14" ry="14.5" fill="url(#hcHub)"/>
+  <ellipse cx="72" cy="184" rx="5" ry="5" fill="#FFFFFF" opacity="0.35"/>
+  <path d="M52 176 C50 184 54 190 66 192 L196 192 C210 191 218 184 216 176 Z" fill="url(#hcUnder)"/>
+  <!-- chubby retro hatch: continuous arched roof down to the rear bumper, no boot step -->
+  <path d="M50 160
+    C46 148 50 134 66 124
+    C80 88 110 68 140 66
+    C170 64 196 78 210 104
+    C220 122 224 140 220 156
+    C218 168 210 176 198 178
+    L66 178
+    C54 176 50 170 50 160 Z" fill="url(#hcBody)"/>
+  <!-- rounded front fender bulge -->
+  <ellipse cx="70" cy="156" rx="22" ry="16" fill="#FFFBF5" opacity="0.28"/>
+  <!-- rounded rear haunch -->
+  <ellipse cx="200" cy="150" rx="20" ry="18" fill="#B08960" opacity="0.22"/>
+  <!-- front bumper, smiling curve -->
+  <path d="M48 154 C42 150 40 162 48 172 C54 176 64 176 70 174 L62 156 C58 150 52 150 48 154 Z" fill="url(#hcBumper)"/>
+  <!-- rear bumper tucked under the curve -->
+  <path d="M210 166 C220 164 228 168 226 176 C222 182 210 182 200 178 L210 166 Z" fill="url(#hcBumper)"/>
+  <!-- panoramic rounded glass, follows the roof curve -->
+  <path d="M92 116
+    C104 88 122 76 142 76
+    C164 76 184 90 196 112
+    C200 122 198 130 188 134
+    L98 134
+    C90 132 88 124 92 116 Z" fill="url(#hcGlass)"/>
+  <path d="M140 78 L142 132" stroke="#B08960" stroke-width="3" opacity="0.16" stroke-linecap="round"/>
+  <!-- large round headlight (Good Cat spirit) -->
+  <circle cx="58" cy="142" r="16" fill="url(#hcLight)"/>
+  <circle cx="54" cy="137" r="6" fill="#FFFFFF" opacity="0.75"/>
+  <circle cx="62" cy="146" r="3.5" fill="#E0A020" opacity="0.45"/>
+  <!-- small round taillight on the curved rear -->
+  <circle cx="218" cy="148" r="7" fill="#E55A62"/>
+  <circle cx="216" cy="146" r="2.5" fill="#FFC4C8" opacity="0.7"/>
+  <!-- highlights along the curvy roof and nose -->
+  <ellipse cx="128" cy="86" rx="34" ry="8" fill="#FFFFFF" opacity="0.28"/>
+  <ellipse cx="78" cy="126" rx="16" ry="7" fill="#FFFFFF" opacity="0.22" transform="rotate(-24 78 126)"/>
+</svg>

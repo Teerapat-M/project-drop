@@ -1,18 +1,15 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { RATE_THB_PER_KM } from '@drop/carpool-core';
-import { liters } from '../lib/format';
-import { positionsFor, SEAT_LABELS } from '../lib/seats';
+import { CarPhoto } from '../components/CarPhoto';
 import { CarSeatMap } from '../components/CarSeatMap';
+import { TaxiBadge } from '../components/TaxiBadge';
+import { liters } from '../lib/format';
+import { ICON_CHOICES, VEHICLE_LABEL } from '../lib/carIcons';
+import { positionsFor, SEAT_LABELS } from '../lib/seats';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
 import type { SeatPosition, SeatState, VehicleType } from '../types';
-
-const ICONS: Record<VehicleType, string[]> = {
-  sedan: ['sedan', 'sedan_opt1', 'sedan_opt2'],
-  hatch: ['hatch', 'hatch_yellow', 'hatch_cream'],
-  pickup: ['pickup', 'pickup_white', 'pickup_navy'],
-};
 
 const TRUNK = {
   sedan: { w: 100, h: 50, l: 50 },
@@ -59,8 +56,12 @@ export function CreateTripPage() {
 
   const onVehicle = (v: VehicleType) => {
     setVehicle(v);
-    setIcon(ICONS[v][0]);
+    setIcon(ICON_CHOICES[v][0].id);
     setTrunk(TRUNK[v]);
+  };
+
+  const toggleSeat = (p: SeatPosition, isOpen: boolean) => {
+    setOpen((s) => ({ ...s, [p]: isOpen }));
   };
 
   const publish = async () => {
@@ -142,6 +143,20 @@ export function CreateTripPage() {
       </div>
       <div className="create-grid">
         <div className="stack">
+          {taxi ? (
+            <div className="row">
+              <CarPhoto car_icon="taxi" vehicle_type="sedan" kind="taxi" />
+              <div>
+                <p style={{ margin: 0 }}>
+                  รถแท็กซี่เก๋ง · ที่นั่งคนขับล็อก <TaxiBadge />
+                </p>
+                <p className="muted" style={{ margin: 0 }}>
+                  คนขับแท็กซี่ไม่ใช่ผู้หาร · หารในที่นั่งที่เปิดและจอง
+                </p>
+              </div>
+            </div>
+          ) : null}
+
           <label className="field">
             ต้นทาง
             <input value={pickup} onChange={(e) => setPickup(e.target.value)} />
@@ -186,24 +201,23 @@ export function CreateTripPage() {
                   className={`chip tap-target ${vehicle === v ? 'on' : ''}`}
                   onClick={() => onVehicle(v)}
                 >
-                  {v === 'sedan' ? 'เก๋ง 4 ประตู' : v === 'hatch' ? 'รถ 5 ประตู' : 'กระบะ'}
+                  {VEHICLE_LABEL[v]}
                 </button>
               ))}
             </div>
-          ) : (
-            <p>รถแท็กซี่เก๋ง · ที่นั่งคนขับล็อก</p>
-          )}
+          ) : null}
 
           {!taxi ? (
-            <div className="row">
-              {ICONS[vehicle].map((c) => (
+            <div className="row icon-picker">
+              {ICON_CHOICES[vehicle].map((c) => (
                 <button
-                  key={c}
+                  key={c.id}
                   type="button"
-                  className={`chip tap-target ${icon === c ? 'on' : ''}`}
-                  onClick={() => setIcon(c)}
+                  className={`chip tap-target icon-choice ${icon === c.id ? 'on' : ''}`}
+                  onClick={() => setIcon(c.id)}
+                  aria-label={c.label}
                 >
-                  {c}
+                  <CarPhoto car_icon={c.id} vehicle_type={vehicle} alt={c.label} />
                 </button>
               ))}
             </div>
@@ -215,7 +229,7 @@ export function CreateTripPage() {
                 key={p}
                 type="button"
                 className={`chip tap-target ${open[p] ? 'on' : ''}`}
-                onClick={() => setOpen((s) => ({ ...s, [p]: !s[p] }))}
+                onClick={() => toggleSeat(p, !open[p])}
               >
                 {SEAT_LABELS[p]} · {open[p] ? 'เปิด' : 'ปิด'}
               </button>
@@ -270,6 +284,8 @@ export function CreateTripPage() {
             vehicle={taxi ? 'sedan' : vehicle}
             seats={seats}
             selected={taxi ? ownerSeat : null}
+            onToggleOpen={toggleSeat}
+            ownPosition={taxi ? ownerSeat : null}
             driverLabel={taxi ? 'คนขับแท็กซี่' : 'คุณ'}
           />
         </div>

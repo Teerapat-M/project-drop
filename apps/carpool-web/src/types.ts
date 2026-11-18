@@ -2,6 +2,7 @@ export type TripKind = 'taxi' | 'private';
 export type VehicleType = 'sedan' | 'hatch' | 'pickup';
 export type TripStatus = 'open' | 'full' | 'in_progress' | 'completed' | 'cancelled';
 export type SeatPosition = 'front_passenger' | 'rear_left' | 'rear_middle' | 'rear_right';
+export type AddressKind = 'home' | 'work' | 'custom';
 
 export type SeatState = {
   id: string;
@@ -31,13 +32,18 @@ export type TripCard = {
   open_seats: number;
   bookable_seats: number;
   owner_display_name: string;
+  owner_id?: string;
 };
 
 export type TripPreview = Omit<TripCard, 'open_seats' | 'bookable_seats'> & {
   seats: SeatState[];
 };
 
-export type BookingInput = {
+export type BookingRow = {
+  id: string;
+  trip_id: string;
+  rider_id: string;
+  seat_id: string;
   dest_label: string;
   dest_lat: number;
   dest_lng: number;
@@ -45,4 +51,24 @@ export type BookingInput = {
   luggage_h_cm: number | null;
   luggage_w_cm: number | null;
   luggage_d_cm: number | null;
+};
+
+export type ChatMessage = {
+  id: string;
+  trip_id: string;
+  sender_id: string;
+  sender_name: string;
+  body: string;
+  created_at: string;
+  mine?: boolean;
+};
+
+export type SavedAddress = {
+  id: string;
+  owner_id?: string;
+  kind: AddressKind;
+  label: string;
+  address_text: string;
+  lat: number;
+  lng: number;
 };

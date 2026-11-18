@@ -474,6 +474,56 @@ select tests.expect_raise(
 select tests.ok('own trip ไม่สามารถจองทริปของตนเองได้');
 commit;
 
+-- Owner RPC carpool_set_seat_open: toggle unbooked, cannot close booked, stranger denied.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_seats;
+begin
+  select id into trip from tests.ids where k = 'trip';
+  rec := public.carpool_set_seat_open(trip, 'rear_left', false);
+  if rec.is_open then
+    raise exception 'owner should close rear_left via RPC';
+  end if;
+  rec := public.carpool_set_seat_open(trip, 'rear_left', true);
+  if not rec.is_open then
+    raise exception 'owner should reopen rear_left via RPC';
+  end if;
+  perform tests.ok('owner carpool_set_seat_open toggle');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+select tests.expect_raise(
+  format(
+    'select public.carpool_set_seat_open(%L::uuid, %L::public.carpool_seat_position, false)',
+    (select id from tests.ids where k = 'trip'),
+    'front_passenger'
+  ),
+  'cannot open/close a booked seat'
+);
+select tests.ok('cannot close booked seat via carpool_set_seat_open');
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+select tests.expect_raise(
+  format(
+    'select public.carpool_set_seat_open(%L::uuid, %L::public.carpool_seat_position, false)',
+    (select id from tests.ids where k = 'trip'),
+    'rear_left'
+  ),
+  'only the trip owner'
+);
+select tests.ok('stranger carpool_set_seat_open denied');
+commit;
+
 -- Non-open trip.
 begin;
 select tests.login(id) from tests.ids where k = 'owner';
@@ -548,7 +598,7 @@ declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 9 then
+  if n < 12 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

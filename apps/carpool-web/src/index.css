@@ -174,7 +174,7 @@ a {
   gap: 12px;
 }
 
-.home-create-inline {
+.btn.home-create-inline {
   display: none;
 }
 
@@ -287,7 +287,6 @@ a {
   text-align: center;
   border-radius: 12px;
   min-height: var(--tap);
-  display: flex;
   align-items: center;
   justify-content: center;
   font-size: 13px;
@@ -334,12 +333,6 @@ a {
 
 .sticky-bar .btn {
   width: 100%;
-}
-
-.seat-map {
-  width: 100%;
-  max-width: 280px;
-  margin: 0 auto;
 }
 
 .seat-map svg {
@@ -397,6 +390,7 @@ a {
 
 .chat-sheet-title {
   text-align: center;
+  font-weight: 700;
 }
 
 .chat-sheet-body {
@@ -435,9 +429,259 @@ a {
   border-radius: 12px;
 }
 
+.trip-card {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 12px 12px;
+  align-items: start;
+}
+
+.trip-card .btn {
+  grid-column: 2;
+  justify-self: end;
+}
+
 .trip-card h3 {
   margin: 0 0 4px;
   font-size: 16px;
+}
+
+.car-photo {
+  width: 56px;
+  height: 40px;
+  object-fit: contain;
+  display: block;
+}
+
+.car-photo-sm {
+  width: 28px;
+  height: 20px;
+}
+
+.icon-choice .car-photo {
+  width: 48px;
+  height: 32px;
+}
+
+.badge.taxi {
+  background: #222;
+  color: #fff;
+  margin-left: 6px;
+}
+
+.badge.waiting {
+  background: var(--drop-primary);
+  color: var(--drop-on-primary);
+}
+
+.badge.completed,
+.badge.cancelled,
+.badge.in_progress {
+  justify-self: end;
+}
+
+.trip-head {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.history-card {
+  text-decoration: none;
+  color: inherit;
+  grid-template-columns: 56px 1fr auto;
+}
+
+.history-card .muted:first-child {
+  grid-column: 1 / 3;
+}
+
+.seat-map {
+  position: relative;
+  width: 100%;
+  max-width: 280px;
+  margin: 0 auto;
+  aspect-ratio: 220 / 420;
+}
+
+.seat-map-body {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.seat-layer {
+  position: absolute;
+  left: 16%;
+  right: 16%;
+  top: 24%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto;
+  gap: 8px;
+}
+
+.seat-layer.has-middle {
+  grid-template-columns: 1fr 0.75fr 1fr;
+}
+
+.seat-layer.has-middle .seat-btn:nth-child(1) {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.seat-layer.has-middle .seat-driver {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: stretch;
+  width: 100%;
+}
+
+.seat-layer.has-middle .seat-btn:nth-child(3) {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.seat-layer.has-middle .seat-btn:nth-child(4) {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.seat-layer.has-middle .seat-btn:nth-child(5) {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.seat-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  min-width: var(--tap);
+  padding: 4px 2px;
+  border: 1px solid #222;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.seat-btn:disabled {
+  cursor: default;
+}
+
+.seat-btn[data-state='selected'] {
+  background: #222;
+  color: #fff;
+}
+
+.seat-btn[data-state='booked'],
+.seat-btn[data-state='closed'] {
+  background: #d8d8d8;
+  color: #222;
+}
+
+.seat-btn.seat-own {
+  outline: 2px solid #222;
+}
+
+.seat-driver {
+  background: #e8e8e8;
+  cursor: default;
+}
+
+.chat-bubble {
+  position: fixed;
+  right: 8px;
+  bottom: calc(var(--nav-h) + 10px);
+  z-index: 35;
+  width: var(--tap);
+  height: var(--tap);
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.chat-bubble img {
+  width: 40px;
+  height: 40px;
+}
+
+.chat-sheet-title {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.chat-sheet-body {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-msg {
+  max-width: 82%;
+  padding: 10px 12px;
+  border-radius: 14px;
+}
+
+.chat-msg.mine {
+  align-self: flex-end;
+  background: #222;
+  color: #fff;
+}
+
+.chat-msg.mine .muted {
+  color: #ccc;
+}
+
+.chat-msg.theirs {
+  align-self: flex-start;
+  background: #f3f3f3;
+  border: 1px solid var(--drop-border);
+}
+
+.map-placeholder {
+  min-height: 140px;
+  background: #f3f3f3;
+  border: 1px dashed var(--drop-border);
+  border-radius: 12px;
+  padding: 16px;
+  color: var(--drop-muted);
+}
+
+.order-chain {
+  font-weight: 700;
+  color: var(--drop-text);
+}
+
+.avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #222;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 22px;
+}
+
+.address-row {
+  text-align: left;
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
 }
 
 .muted {
@@ -462,7 +706,7 @@ a {
     display: none;
   }
 
-  .home-create-inline,
+  .btn.home-create-inline,
   .search-card,
   .ad-slot {
     display: flex;
@@ -527,8 +771,17 @@ a {
 
   .trip-card {
     display: grid;
-    grid-template-columns: 180px 1fr auto;
+    grid-template-columns: 72px 1fr auto;
     gap: 16px;
     align-items: center;
+  }
+
+  .trip-card .btn {
+    grid-column: auto;
+  }
+
+  .chat-bubble {
+    right: 24px;
+    bottom: 24px;
   }
 }

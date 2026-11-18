@@ -2,9 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { LuggagePiece } from '@drop/carpool-core';
 import { layoutTrunk } from '@drop/carpool-core';
+import { CarPhoto } from '../components/CarPhoto';
+import { TaxiBadge } from '../components/TaxiBadge';
 import { demoPreview } from '../fixtures';
+import { bindChat, openChat } from '../lib/chatEvents';
+import { VEHICLE_LABEL } from '../lib/carIcons';
 import { estimateViewerFareFromSeats } from '../lib/estimateFare';
-import { thb } from '../lib/format';
+import { liters, thb } from '../lib/format';
+import { SEAT_LABELS } from '../lib/seats';
 import { SeatPicker } from '../components/SeatPicker';
 import { LuggageBlock } from '../components/LuggageBlock';
 import { getSupabase } from '../supabase';
@@ -17,7 +22,7 @@ export function JoinTripPage() {
   const { id = '' } = useParams();
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const { demo } = useAuth();
+  const { demo, user } = useAuth();
   const [preview, setPreview] = useState<TripPreview | null>(demo ? demoPreview(id) : null);
   const [selected, setSelected] = useState<SeatPosition | null>(null);
   const [dest, setDest] = useState('ตลาดกลาง');
@@ -29,6 +34,11 @@ export function JoinTripPage() {
   const [agree, setAgree] = useState(false);
   const [error, setError] = useState<string | null>(params.get('conflict') === '1' ? BOOKING_CONFLICT : null);
   const [busy, setBusy] = useState(false);
+  const [ownerMode, setOwnerMode] = useState(params.get('owner') === '1');
+
+  useEffect(() => {
+    bindChat(id);
+  }, [id]);
 
   useEffect(() => {
     if (demo) {
@@ -40,6 +50,14 @@ export function JoinTripPage() {
     void supabase.rpc('carpool_trip_preview', { p_trip_id: id }).then(({ data }) => {
       setPreview(data as TripPreview);
     });
+    void supabase
+      .from('carpool_trips')
+      .select('owner_id')
+      .eq('id', id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data?.owner_id && user?.id && data.owner_id === user.id) setOwnerMode(true);
+      });
     const channel = supabase
       .channel(`seats:${id}`)
       .on(
@@ -65,7 +83,7 @@ export function JoinTripPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [demo, id]);
+  }, [demo, id, user?.id]);
 
   const luggage: LuggagePiece[] = noBags
     ? []
@@ -82,6 +100,23 @@ export function JoinTripPage() {
     }).overflow;
   }, [preview, h, w, d, noBags, luggage]);
 
+  const toggleOpen = async (position: SeatPosition, isOpen: boolean) => {
+    setPreview((prev) =>
+      prev
+        ? { ...prev, seats: prev.seats.map((s) => (s.position === position ? { ...s, is_open: isOpen } : s)) }
+        : prev,
+    );
+    if (demo) return;
+    const supabase = getSupabase();
+    if (!supabase) return;
+    const { error: rpcError } = await supabase.rpc('carpool_set_seat_open', {
+      p_trip_id: id,
+      p_position: position,
+      p_is_open: isOpen,
+    });
+    if (rpcError) setError(rpcError.message);
+  };
+
   if (!preview) {
     return (
       <main className="page">
@@ -91,6 +126,7 @@ export function JoinTripPage() {
     );
   }
 
+  const taxi = preview.kind === 'taxi';
   const full = preview.status === 'full' || preview.seats.every((s) => !s.is_open || s.is_booked);
   const est = estimateViewerFareFromSeats({
     mainRouteKm: preview.route_km,
@@ -98,6 +134,8 @@ export function JoinTripPage() {
     seats: preview.seats,
     detourKm: detour,
   });
+  const ownSeatLabel = selected ? SEAT_LABELS[selected] : 'ยังไม่เลือก';
+  const bagL = noBags ? 0 : liters(w, h, d);
 
   const join = async () => {
     setError(null);
@@ -141,21 +179,26 @@ export function JoinTripPage() {
         <Link to="/" className="nav-link tap-target">
           ←
         </Link>
-        <h1 className="page-title">{full ? 'ทริปเต็มแล้ว' : 'ยืนยันร่วมทริป'}</h1>
-        <button
-          type="button"
-          className="nav-link tap-target"
-          onClick={() => window.dispatchEvent(new Event('carpool-open-chat'))}
-        >
+        <h1 className="page-title">{full ? 'ทริปเต็มแล้ว' : taxi ? 'ยืนยันร่วมทริปแท็กซี่' : 'ยืนยันร่วมทริป'}</h1>
+        <button type="button" className="nav-link tap-target" onClick={() => openChat(id)}>
           แชท
         </button>
       </div>
-      <p>
-        {preview.pickup_label} → {preview.dest_label} · {preview.owner_display_name}
-      </p>
-      <p className="muted">
-        {preview.route_km} กม. · คาดว่า ~{thb(est.amountThb)} ฿ ถ้ามี {est.payerCount} คน · ตัวอย่าง
-      </p>
+
+      <article className="card trip-head">
+        <CarPhoto car_icon={preview.car_icon} vehicle_type={preview.vehicle_type} kind={preview.kind} />
+        <div>
+          <h2 style={{ margin: 0, fontSize: 16 }}>
+            {preview.pickup_label} → {preview.dest_label} {taxi ? <TaxiBadge /> : null}
+          </h2>
+          <p className="muted" style={{ margin: 0 }}>
+            คนขับ {preview.owner_display_name} · {VEHICLE_LABEL[preview.vehicle_type]}
+          </p>
+          <p className="muted" style={{ margin: 0 }}>
+            {preview.route_km} กม. · คาดว่า ~{thb(est.amountThb)} ฿ ถ้ามี {est.payerCount} คน · ตัวอย่าง
+          </p>
+        </div>
+      </article>
 
       {error === BOOKING_CONFLICT ? (
         <div className="conflict-banner" data-testid="seat-conflict" role="alert">
@@ -173,28 +216,33 @@ export function JoinTripPage() {
           setSelected(p);
           setError(null);
         }}
-        driverLabel={preview.kind === 'taxi' ? 'คนขับแท็กซี่' : preview.owner_display_name}
+        onToggleOpen={ownerMode ? toggleOpen : undefined}
+        ownPosition={selected}
+        driverLabel={taxi ? 'คนขับแท็กซี่' : preview.owner_display_name}
       />
+
+      <section className="stack" data-testid="own-booking">
+        <p>
+          <strong>ที่นั่งของคุณ</strong> · {ownSeatLabel}
+        </p>
+        <label className="field">
+          จุดลงของคุณ
+          <input value={dest} onChange={(e) => setDest(e.target.value)} />
+        </label>
+        <label className="field">
+          กม. อ้อมนอกเส้นทาง
+          <input type="number" min={0} step="0.1" value={detour} onChange={(e) => setDetour(Number(e.target.value))} />
+        </label>
+        <p className="muted">สัมภาระของคุณ {noBags ? 'ไม่มี' : `${w} × ${h} × ${d} ซม. = ${bagL.toFixed(0)} ลิตร`}</p>
+      </section>
 
       <LuggageBlock
         widthCm={preview.trunk_w_cm}
         heightCm={preview.trunk_h_cm}
         lengthCm={preview.trunk_l_cm}
-        luggage={
-          noBags
-            ? []
-            : luggage
-        }
+        luggage={noBags ? [] : luggage}
       />
 
-      <label className="field">
-        จุดลงของคุณ
-        <input value={dest} onChange={(e) => setDest(e.target.value)} />
-      </label>
-      <label className="field">
-        กม. อ้อมนอกเส้นทาง
-        <input type="number" min={0} step="0.1" value={detour} onChange={(e) => setDetour(Number(e.target.value))} />
-      </label>
       <label className="row">
         <input type="checkbox" checked={noBags} onChange={(e) => setNoBags(e.target.checked)} />
         ไม่มีสัมภาระ
@@ -226,7 +274,7 @@ export function JoinTripPage() {
           className="btn tap-target"
           type="button"
           data-testid="join-submit"
-          disabled={busy || !agree || !selected || overflow || full}
+          disabled={busy || ownerMode || !agree || !selected || overflow || full}
           onClick={() => void join()}
         >
           {full ? 'ร่วมทริปไม่ได้ · ที่นั่งเต็มแล้ว' : 'ร่วมทริป'}

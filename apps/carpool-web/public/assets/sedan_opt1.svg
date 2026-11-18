@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="240" viewBox="0 0 360 240">
+  <defs>
+    <linearGradient id="o1Body" x1="0.12" y1="0.05" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#EEF3F7"/>
+      <stop offset="0.42" stop-color="#B7C2CC"/>
+      <stop offset="1" stop-color="#6E7A86"/>
+    </linearGradient>
+    <linearGradient id="o1Glass" x1="0.2" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#E4F6FF"/>
+      <stop offset="0.35" stop-color="#8ED0F2"/>
+      <stop offset="1" stop-color="#3A88C4"/>
+    </linearGradient>
+    <linearGradient id="o1Under" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#A392A8"/>
+      <stop offset="1" stop-color="#6E5E74"/>
+    </linearGradient>
+    <linearGradient id="o1Light" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFF6C4"/>
+      <stop offset="0.55" stop-color="#F2C94C"/>
+      <stop offset="1" stop-color="#E0A020"/>
+    </linearGradient>
+    <radialGradient id="o1Tire" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#5A5160"/>
+      <stop offset="0.55" stop-color="#2B2432"/>
+      <stop offset="1" stop-color="#161218"/>
+    </radialGradient>
+    <radialGradient id="o1Hub" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#F0E6EE"/>
+      <stop offset="1" stop-color="#B79AAC"/>
+    </radialGradient>
+    <linearGradient id="o1Bumper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#D8D0D6"/>
+      <stop offset="1" stop-color="#8E8490"/>
+    </linearGradient>
+    <clipPath id="o1Clip"><path d="M34 152 C30 142 36 134 54 128 C96 118 128 112 154 110 C164 90 178 70 206 64 C236 60 260 64 270 76 C278 88 284 104 290 114 L340 116 C348 117 352 124 352 136 L352 160 C352 168 346 174 334 176 L50 176 C38 174 34 164 34 152 Z"/></clipPath>
+  </defs>
+  <ellipse cx="182" cy="218" rx="136" ry="10" fill="#1A1220" opacity="0.16"/>
+  <ellipse cx="278" cy="188" rx="30" ry="31" fill="url(#o1Tire)"/>
+  <ellipse cx="278" cy="188" rx="14" ry="14.5" fill="url(#o1Hub)"/>
+  <ellipse cx="274" cy="184" rx="5" ry="5" fill="#FFFFFF" opacity="0.35"/>
+  <ellipse cx="88" cy="188" rx="30" ry="31" fill="url(#o1Tire)"/>
+  <ellipse cx="88" cy="188" rx="14" ry="14.5" fill="url(#o1Hub)"/>
+  <ellipse cx="84" cy="184" rx="5" ry="5" fill="#FFFFFF" opacity="0.35"/>
+  <path d="M42 174 C40 180 46 186 58 187 L316 187 C330 186 336 180 334 174 Z" fill="url(#o1Under)"/>
+  <!-- formal three-box: flatter, taller roof, upright C-pillar, short straight notchback deck -->
+  <path d="M34 152
+    C30 142 36 134 54 128
+    C96 118 128 112 154 110
+    C164 90 178 70 206 64
+    C236 60 260 64 270 76
+    C278 88 284 104 290 114
+    L340 116
+    C348 117 352 124 352 136
+    L352 160
+    C352 168 346 174 334 176
+    L50 176
+    C38 174 34 164 34 152 Z" fill="url(#o1Body)"/>
+  <path d="M290 114 L340 116 C348 117 350 124 350 130 L290 130 Z" fill="#FFFFFF" opacity="0.40"/>
+  <path d="M32 148 C26 146 26 158 34 166 L54 170 L48 154 C46 148 38 148 32 148 Z" fill="url(#o1Bumper)"/>
+  <path d="M336 160 C346 158 354 162 352 170 C350 176 340 176 328 174 L336 160 Z" fill="url(#o1Bumper)"/>
+  <g clip-path="url(#o1Clip)">
+    <ellipse cx="118" cy="116" rx="42" ry="6" fill="#FFFFFF" opacity="0.36" transform="rotate(-6 118 116)"/>
+    <ellipse cx="226" cy="70" rx="28" ry="5" fill="#FFFFFF" opacity="0.40"/>
+  </g>
+  <!-- upright greenhouse; rear glass nearly vertical, stops at the deck -->
+  <path d="M158 110
+    C168 86 186 68 212 66
+    C238 64 256 70 264 86
+    C268 98 270 108 272 114
+    L164 122
+    C154 122 152 116 158 110 Z" fill="url(#o1Glass)"/>
+  <path d="M262 82 C268 96 278 108 290 114 L290 128 L272 122 C266 108 262 92 262 82 Z" fill="#6E7A86" opacity="0.36"/>
+  <path d="M216 68 L218 120" stroke="#6E7A86" stroke-width="2.5" opacity="0.18" stroke-linecap="round"/>
+  <rect x="38" y="132" width="26" height="10" rx="4" fill="url(#o1Light)" transform="rotate(-4 51 137)"/>
+  <rect x="40" y="134" width="10" height="4" rx="1.6" fill="#FFFFFF" opacity="0.75" transform="rotate(-4 51 137)"/>
+  <rect x="344" y="132" width="8" height="16" rx="3" fill="#E55A62"/>
+  <rect x="345" y="134" width="3.5" height="6" rx="1.4" fill="#FFC4C8" opacity="0.75"/>
+</svg>
