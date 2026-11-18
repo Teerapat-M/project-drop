@@ -173,6 +173,11 @@ describe('carpool SQL test file', () => {
     expect(testSql).toMatch(/stranger cannot write stops/);
     expect(testSql).toMatch(/discover\/preview stay rounded with no owner id/);
     expect(testSql).toMatch(/anon is denied stops/);
+    expect(testSql).toMatch(/underreported p_detour_km raised to floor/);
+    expect(testSql).toMatch(/honest detour kept; charge only the requester/);
+    expect(testSql).toMatch(/no-detour rider gets 0/);
+    expect(testSql).toMatch(/direct UPDATE detour_km is permission denied/);
+    expect(testSql).toMatch(/dest change recomputes floor; charge only the requester/);
     expect(testSql).toMatch(/taxi trunk insert\/update forced to preset/);
     expect(testSql).toMatch(/preview taxi luggage volume-desc no rider ids/);
     expect(testSql).toMatch(/private trunk insert\/update unchanged/);
@@ -197,6 +202,34 @@ describe('carpool trip stops migration', () => {
     expect(stopsSql).toMatch(/set search_path = ''/);
     expect(stopsSql).not.toMatch(/add table public\.carpool_trip_stops/);
   });
+
+  it('makes carpool_book_seat store greatest(haversine floor, client detour)', () => {
+    expect(stopsSql).toMatch(/create or replace function private\.carpool_haversine_km/);
+    expect(stopsSql).toMatch(/road_factor constant numeric := 1\.0/);
+    expect(stopsSql).toMatch(/straight-line/);
+    expect(stopsSql).toMatch(/revoke update \(detour_km\) on table public\.carpool_bookings/);
+    expect(stopsSql).toMatch(/create or replace function public\.carpool_bookings_guard/);
+    expect(stopsSql).toMatch(/new\.detour_km := old\.detour_km/);
+    expect(stopsSql).toMatch(
+      /revoke execute on function public\.carpool_bookings_guard\(\) from public, anon, authenticated;/,
+    );
+    expect(stopsSql).toMatch(/create or replace function private\.carpool_detour_floor_km/);
+    expect(stopsSql).toMatch(
+      /revoke all on function private\.carpool_haversine_km\([\s\S]*?\) from public, anon, authenticated;/,
+    );
+    expect(stopsSql).toMatch(
+      /revoke all on function private\.carpool_detour_floor_km\([\s\S]*?\) from public, anon, authenticated;/,
+    );
+    const book =
+      stopsSql.match(
+        /create or replace function public\.carpool_book_seat[\s\S]*?end;\n\$\$;/,
+      )?.[0] ?? '';
+    expect(book).toMatch(/private\.carpool_detour_floor_km/);
+    expect(book).toMatch(/greatest\(/);
+    expect(book).toMatch(/coalesce\(p_detour_km, 0\)/);
+    expect(book).toMatch(/set search_path = ''/);
+  });
+
 
   it('replaces preview with rounded stop coords and no owner_id', () => {
     const preview =

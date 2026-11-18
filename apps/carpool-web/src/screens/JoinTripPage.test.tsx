@@ -138,6 +138,12 @@ describe('JoinTripPage', () => {
 
     fireEvent.change(detour, { target: { value: '9' } });
     expect(detour).toHaveValue(9);
+    fireEvent.change(detour, { target: { value: '-2' } });
+    expect(detour).toHaveValue(9);
+    fireEvent.change(detour, { target: { value: '' } });
+    expect(detour).toHaveValue(0);
+    fireEvent.change(detour, { target: { value: '9' } });
+    expect(detour).toHaveValue(9);
     const calls = provider.route.mock.calls.length;
     fireEvent.click(screen.getByTestId('place-rider-stop'));
     fireEvent.click(screen.getByTestId('place-confirm'));
