@@ -15,6 +15,11 @@ vi.mock('../supabase', () => ({
   isSupabaseConfigured: () => true,
   getSupabase: () => ({
     rpc,
+    from: () => ({
+      update: () => ({
+        eq: async () => ({ error: null }),
+      }),
+    }),
     channel: () => ({
       on() {
         return this;
@@ -62,6 +67,8 @@ describe('ManageTripPage', () => {
     expect(screen.getByTestId('owner-badge')).toHaveTextContent('ทริปของคุณ');
     expect(screen.getByText('จัดการทริป')).toBeInTheDocument();
     expect(screen.queryByTestId('join-submit')).toBeNull();
+    expect(screen.getByTestId('hide-dest')).not.toBeChecked();
+    expect(screen.getByText('ซ่อนตำแหน่งปลายทางจริง')).toBeInTheDocument();
   });
 
   it('reverts the optimistic owner seat toggle when the RPC errors', async () => {

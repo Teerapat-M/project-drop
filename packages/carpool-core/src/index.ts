@@ -42,13 +42,7 @@ export {
   type TrunkLayout,
 } from './trunk';
 
-export {
-  BANGKOK_PROVINCE_CODE,
-  BANGKOK_CENTER,
-  THAI_PROVINCES,
-  provinceByCode,
-  type ThaiProvince,
-} from './thaiAdmin';
+export { BANGKOK_CENTER } from './geo';
 
 export {
   MAX_DETOUR_KM_MIN,
@@ -62,3 +56,38 @@ export {
   maxDetourExceeded,
   maxDetourWarning,
 } from './detour';
+
+export {
+  PRIVACY_OFFSET_KM_MIN,
+  PRIVACY_OFFSET_KM_MAX,
+  PRIVACY_OFFSET_KM,
+  PICKUP_REVEAL_BEFORE_MS,
+  OFFSET_REGEN_KM,
+  offsetPoint,
+  stableOffset,
+  NEARBY_AREA_LABEL,
+  coarseAddress,
+  offsetKmFromTrue,
+  shouldRevealPickup,
+  shouldRegenOffset,
+  textHasNumber,
+} from './privacy';
+
+export {
+  THAI_PROVINCE_ALIASES,
+  lookupCanonicalProvince,
+  normProvinceKey,
+} from './thaiProvinces';
+
+export {
+  SEARCH_RADIUS_KM_MIN,
+  SEARCH_RADIUS_KM_DEFAULT,
+  SEARCH_RADIUS_KM_MAX,
+  clampSearchRadiusKm,
+  roundCoord,
+  roundKmHalf,
+  nearestRouteVertex,
+  matchSearchRoute,
+  type NearestVertex,
+  type SearchMatch,
+} from './search';

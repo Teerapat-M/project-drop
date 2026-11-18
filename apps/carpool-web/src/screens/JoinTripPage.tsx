@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react';
-import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { LuggagePiece } from '@drop/carpool-core';
 import {
   detourFloorKm,
@@ -25,22 +25,42 @@ import { RouteMiniMap } from '../maps/RouteMiniMap';
 import { parseDetourKm } from '../lib/detourInput';
 import { pointSetKey, readRouteCache } from '../maps/routeCache';
 import { detourFromViaKm } from '../maps/routePoints';
+import { maskTripForViewer } from '../lib/privacyMask';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
 import type { SeatPosition, SeatState, TripPreview } from '../types';
 
 const BOOKING_CONFLICT = 'ที่นั่งนี้เพิ่งถูกจอง';
 
+function dropoffFromNav(
+  params: URLSearchParams,
+  state: unknown,
+): PickedPlace | null {
+  const fromState = (state as { dropoff?: PickedPlace } | null)?.dropoff;
+  if (fromState && Number.isFinite(fromState.lat) && Number.isFinite(fromState.lng)) {
+    return fromState;
+  }
+  const latRaw = params.get('drop_lat');
+  const lngRaw = params.get('drop_lng');
+  if (latRaw == null || lngRaw == null) return null;
+  const lat = Number(latRaw);
+  const lng = Number(lngRaw);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng, address: params.get('drop_label') ?? '' };
+}
+
 export function JoinTripPage() {
   const { id = '' } = useParams();
   const [params] = useSearchParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const { demo, user, configured } = useAuth();
   const joinHintId = useId();
+  const prefill = dropoffFromNav(params, location.state);
   const [preview, setPreview] = useState<TripPreview | null>(demo ? demoPreview(id) : null);
   const [selected, setSelected] = useState<SeatPosition | null>(null);
-  const [dest, setDest] = useState('');
-  const [destPlace, setDestPlace] = useState<PickedPlace | null>(null);
+  const [dest, setDest] = useState(prefill?.address ?? '');
+  const [destPlace, setDestPlace] = useState<PickedPlace | null>(prefill);
   const [detour, setDetour] = useState(0);
   const [detourEdited, setDetourEdited] = useState(false);
   const [viaKm, setViaKm] = useState<number | null>(null);
@@ -60,7 +80,12 @@ export function JoinTripPage() {
 
   useEffect(() => {
     if (demo) {
-      setPreview(demoPreview(id));
+      const raw = demoPreview(id);
+      setPreview(
+        raw
+          ? maskTripForViewer(raw, { isOwner: raw.is_mine === true, isBookedRider: false })
+          : raw,
+      );
       return;
     }
     const supabase = getSupabase();
@@ -255,6 +280,11 @@ export function JoinTripPage() {
           <h2 style={{ margin: 0, fontSize: 16 }}>
             {preview.pickup_label} → {preview.dest_label} {taxi ? <TaxiBadge /> : null}
           </h2>
+          {preview.pickup_approx ? (
+            <p className="muted" style={{ margin: 0 }} data-testid="pickup-approx">
+              จุดขึ้นโดยประมาณ · จะแสดงจุดนัดจริงก่อนออกเดินทาง 30 นาที
+            </p>
+          ) : null}
           <p className="muted" style={{ margin: 0 }}>
             คนขับ {preview.owner_display_name} · {VEHICLE_LABEL[preview.vehicle_type]}
           </p>

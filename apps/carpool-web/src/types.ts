@@ -41,6 +41,13 @@ export type TripCard = {
   dest_district_code?: string | null;
   /** Taxi cap from discover/preview; null on private. List cards show this. */
   max_detour_km?: number | null;
+  pickup_distance_km?: number | null;
+  dest_distance_km?: number | null;
+  extra_km?: number | null;
+  /** Creator opted to offset dest for non-owners. */
+  hide_dest?: boolean;
+  /** True when this viewer sees the ~1 km pickup offset, not the house pin. */
+  pickup_approx?: boolean;
 };
 
 export type TripRole = 'created' | 'booked';

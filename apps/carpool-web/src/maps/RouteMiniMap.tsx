@@ -11,11 +11,19 @@ import { orderedRoute, type NamedStop } from './routePoints';
 
 export type RouteKmMeta = { fallback?: boolean };
 
+export type HighlightPin = {
+  id: string;
+  position: LatLng;
+  label: string;
+  kind?: 'dropoff';
+};
+
 type Props = {
   origin: PickedPlace | null;
   waypoints?: readonly (PickedPlace & { id: string })[];
   stops?: readonly (PickedPlace & { id: string })[];
   destination: PickedPlace | null;
+  highlights?: readonly HighlightPin[];
   onKm?: (km: number, meta?: RouteKmMeta) => void;
 };
 
@@ -35,7 +43,14 @@ function focusables(root: HTMLElement): HTMLElement[] {
   )];
 }
 
-export function RouteMiniMap({ origin, waypoints = [], stops = [], destination, onKm }: Props) {
+export function RouteMiniMap({
+  origin,
+  waypoints = [],
+  stops = [],
+  destination,
+  highlights = [],
+  onKm,
+}: Props) {
   const provider = useMapProvider();
   const desktop = useIsDesktop();
   const titleId = useId();
@@ -134,12 +149,20 @@ export function RouteMiniMap({ origin, waypoints = [], stops = [], destination, 
   const chain = labels.length ? labels.join(' → ') : 'เลือกต้นทางและปลายทางเพื่อดูเส้นทาง';
   const showMap = provider.available && (points?.length ?? 0) >= 2;
   const km = route?.distanceKm;
-  const markers =
-    points?.map((p, i) => ({
+  const markers = [
+    ...(points?.map((p, i) => ({
       id: `p${i}`,
       position: p,
       label: `${i + 1}. ${labels[i] ?? ''}`,
-    })) ?? [];
+      kind: 'route' as const,
+    })) ?? []),
+    ...highlights.map((h) => ({
+      id: h.id,
+      position: h.position,
+      label: h.label,
+      kind: h.kind ?? ('dropoff' as const),
+    })),
+  ];
 
   const mapBlock = (className: string, interactive: boolean) =>
     showMap && points ? (

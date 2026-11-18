@@ -429,6 +429,14 @@ describe('JoinTripPage', () => {
     expect(screen.getByTestId('join-submit')).toBeDisabled();
   });
 
+  it('prefills the drop-off pin from search query params', async () => {
+    mockMatchMedia(390);
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
+    renderJoin('/trips/demo-taxi-12km?drop_lat=13.76&drop_lng=100.51&drop_label=ตลาดกลาง');
+    const field = await screen.findByTestId('place-rider-stop');
+    expect(field).toHaveValue('ตลาดกลาง');
+  });
+
   it('shows ทริปนี้ปิดรับแล้ว when the trip is not open', async () => {
     mockMatchMedia(390);
     maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });

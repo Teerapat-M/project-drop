@@ -7,8 +7,17 @@ type MarkerSpec = {
   position: LatLng;
   draggable?: boolean;
   label?: string;
+  kind?: 'route' | 'dropoff';
   onDragEnd?: (coord: LatLng) => void;
 };
+
+function fitPoints(
+  path: readonly LatLng[] | undefined,
+  markers: readonly MarkerSpec[],
+): LatLng[] {
+  const extra = markers.filter((m) => m.kind === 'dropoff').map((m) => m.position);
+  return [...(path ?? []), ...extra];
+}
 
 type Props = {
   center: LatLng;
@@ -67,6 +76,7 @@ export function MapView({
             position: spec.position,
             draggable: spec.draggable,
             label: spec.label,
+            kind: spec.kind,
             onDragEnd: spec.onDragEnd,
           }),
         );
@@ -89,8 +99,9 @@ export function MapView({
       });
       mapRef.current = map;
       const initialPath = pathRef.current;
-      if (fitToPath && initialPath && initialPath.length >= 2) {
-        map.fitBounds(initialPath);
+      const fitPts = fitPoints(initialPath, markersRef.current);
+      if (fitToPath && fitPts.length >= 2) {
+        map.fitBounds(fitPts);
       }
       syncMarkers(map);
     });
@@ -104,16 +115,18 @@ export function MapView({
   }, [provider]);
 
   useEffect(() => {
-    if (fitToPath && path && path.length >= 2) return;
+    const fitPts = fitPoints(path, markers);
+    if (fitToPath && fitPts.length >= 2) return;
     mapRef.current?.setCenter(center);
-  }, [center, fitToPath, path]);
+  }, [center, fitToPath, path, markers]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     map.setPath(path ?? [], encodedPolyline);
-    if (fitToPath && path && path.length >= 2) map.fitBounds(path);
-  }, [path, encodedPolyline, fitToPath]);
+    const fitPts = fitPoints(path, markers);
+    if (fitToPath && fitPts.length >= 2) map.fitBounds(fitPts);
+  }, [path, encodedPolyline, fitToPath, markers]);
 
   useEffect(() => {
     const map = mapRef.current;

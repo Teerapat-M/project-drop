@@ -448,11 +448,24 @@ export class GoogleMapProvider implements MapProvider {
   renderMarker(map: MapInstance, options: MarkerRenderOptions): MarkerInstance {
     const maps = gmaps();
     const native = (map as NativeMap).native;
+    const dropoff = options.kind === 'dropoff';
     const marker = new maps.Marker({
       map: native,
       position: options.position,
       draggable: options.draggable === true,
       title: options.label,
+      zIndex: dropoff ? 1000 : undefined,
+      icon: dropoff
+        ? {
+            path: 0,
+            scale: 10,
+            fillColor: '#e85d04',
+            fillOpacity: 1,
+            strokeColor: '#fff',
+            strokeWeight: 2,
+          }
+        : undefined,
+      label: dropoff ? { text: 'ลง', color: '#fff', fontSize: '11px', fontWeight: '700' } : undefined,
     });
     let drag: Listener | null = null;
     if (options.onDragEnd) {

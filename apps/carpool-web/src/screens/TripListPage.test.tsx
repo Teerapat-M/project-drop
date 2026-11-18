@@ -1,8 +1,10 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import { AuthProvider } from '../auth/AuthProvider';
+import { MapsProvider } from '../maps/MapsProvider';
 import { mockMatchMedia } from '../test/matchMedia';
+import { createMockMapProvider } from '../test/mockMapProvider';
 import { TripListPage } from './TripListPage';
 
 function renderList(path = '/') {
@@ -53,5 +55,50 @@ describe('trip cards at 390px', () => {
     renderList('/');
     expect(screen.queryByTestId('max-detour-cap')).toBeNull();
     expect(screen.getByTestId('trip-demo-mint')).not.toHaveTextContent('ออกนอกเส้นทางได้สูงสุด');
+  });
+
+  it('searches by optional map points and radius, with no province/district filters', () => {
+    renderList('/');
+    expect(screen.queryByTestId('search-origin-province')).toBeNull();
+    expect(screen.queryByTestId('search-origin-district')).toBeNull();
+    expect(screen.queryByTestId('search-dest-province')).toBeNull();
+    expect(screen.getByTestId('place-search-pickup')).toBeInTheDocument();
+    expect(screen.getByTestId('place-search-dest')).toBeInTheDocument();
+    const radius = screen.getByTestId('search-radius') as HTMLInputElement;
+    expect(radius).toHaveAttribute('min', '1');
+    expect(radius).toHaveAttribute('max', '30');
+    expect(radius).toHaveValue('5');
+    expect(radius).toHaveClass('tap-target');
+    expect(screen.getByTestId('search-radius-label')).toHaveTextContent('5 กม.');
+    expect(screen.getByTestId('search-radius-hint')).toHaveTextContent('จำกัด 1–30 กม.');
+    fireEvent.change(radius, { target: { value: '0' } });
+    expect(screen.getByTestId('search-radius-label')).toHaveTextContent('1 กม.');
+    fireEvent.change(radius, { target: { value: '40' } });
+    expect(screen.getByTestId('search-radius-label')).toHaveTextContent('30 กม.');
+  });
+
+  it('shows pickup and dest distances on cards after a nearby search', async () => {
+    mockMatchMedia(390);
+    const provider = createMockMapProvider();
+    render(
+      <AuthProvider>
+        <MapsProvider provider={provider}>
+          <MemoryRouter initialEntries={['/']}>
+            <TripListPage />
+          </MemoryRouter>
+        </MapsProvider>
+      </AuthProvider>,
+    );
+    fireEvent.click(screen.getByTestId('place-search-pickup'));
+    fireEvent.click(await screen.findByTestId('mock-map'));
+    fireEvent.click(screen.getByTestId('place-confirm'));
+    fireEvent.click(screen.getByTestId('place-search-dest'));
+    fireEvent.click(await screen.findByTestId('mock-map'));
+    fireEvent.click(screen.getByTestId('place-confirm'));
+    fireEvent.click(screen.getByRole('button', { name: 'ค้นหา' }));
+    const mint = screen.getByTestId('trip-demo-mint');
+    expect(mint.querySelector('[data-testid="search-distance"]')).toHaveTextContent('จุดขึ้นห่างเส้นทาง');
+    expect(mint.querySelector('[data-testid="search-distance"]')).toHaveTextContent('จุดลงห่าง');
+    expect(screen.queryByTestId('trip-demo-sam')).toBeNull();
   });
 });

@@ -10,10 +10,9 @@ function finite(points: readonly LatLng[] | null | undefined): LatLng[] {
   return (points ?? []).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
 }
 
-/** Route bounds centroid when a path exists, else district/province centroid, else Bangkok. */
+/** Route bounds centroid when a path exists, else Bangkok. */
 export function defaultMapCenter(input: {
   routePoints?: readonly LatLng[] | null;
-  centroid?: LatLng | null;
 }): LatLng {
   const route = finite(input.routePoints);
   if (route.length >= 2) {
@@ -25,7 +24,5 @@ export function defaultMapCenter(input: {
     };
   }
   if (route.length === 1) return route[0]!;
-  const c = input.centroid;
-  if (c && Number.isFinite(c.lat) && Number.isFinite(c.lng)) return c;
   return BANGKOK_MAP_CENTER;
 }

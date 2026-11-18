@@ -55,14 +55,11 @@ export function HistoryPage() {
     const supabase = getSupabase();
     if (!supabase) return;
     void supabase
-      .from('carpool_trips')
-      .select(
-        'id, kind, vehicle_type, car_icon, route_km, depart_at, status, pickup_label, dest_label, pickup_lat, pickup_lng, dest_lat, dest_lng, trunk_w_cm, trunk_h_cm, trunk_l_cm, owner_id',
-      )
-      .in('status', ['completed', 'cancelled'])
-      .order('depart_at', { ascending: false })
+      .rpc('carpool_visible_trips')
       .then(async ({ data }) => {
-        const rows = (data ?? []) as Array<TripCard & { owner_id?: string }>;
+        const rows = ((data ?? []) as TripCard[])
+          .filter((t) => t.status === 'completed' || t.status === 'cancelled')
+          .sort((a, b) => new Date(b.depart_at).getTime() - new Date(a.depart_at).getTime());
         setTrips(
           rows.map((t) => ({
             ...t,

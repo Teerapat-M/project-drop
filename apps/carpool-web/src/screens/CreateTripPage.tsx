@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BANGKOK_CENTER,
-  BANGKOK_PROVINCE_CODE,
   MAX_DETOUR_KM_DEFAULT,
   MAX_DETOUR_KM_MAX,
   MAX_DETOUR_KM_MIN,
@@ -14,7 +13,6 @@ import {
 } from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { CarSeatMap } from '../components/CarSeatMap';
-import { GeoPlaceFields, type GeoPlaceValue } from '../components/GeoPlaceFields';
 import { LuggageBlock } from '../components/LuggageBlock';
 import { TaxiBadge } from '../components/TaxiBadge';
 import { previewMainFare } from '../lib/estimateFare';
@@ -58,18 +56,8 @@ export function CreateTripPage() {
   const { demo } = useAuth();
   const [vehicle, setVehicle] = useState<VehicleType>('sedan');
   const [icon, setIcon] = useState('sedan');
-  const [originGeo, setOriginGeo] = useState<GeoPlaceValue>({
-    provinceCode: BANGKOK_PROVINCE_CODE,
-    districtCode: '',
-    place: BANGKOK_ORIGIN,
-  });
-  const [destGeo, setDestGeo] = useState<GeoPlaceValue>({
-    provinceCode: '',
-    districtCode: '',
-    place: null,
-  });
-  const pickup = originGeo.place;
-  const dest = destGeo.place;
+  const [pickup, setPickup] = useState<PickedPlace | null>(BANGKOK_ORIGIN);
+  const [dest, setDest] = useState<PickedPlace | null>(null);
   const [stops, setStops] = useState<StopPlace[]>([]);
   const [km, setKm] = useState(taxi ? 12 : 80);
   const [maxDetour, setMaxDetour] = useState(MAX_DETOUR_KM_DEFAULT);
@@ -89,6 +77,7 @@ export function CreateTripPage() {
   const [noBags, setNoBags] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [hideDest, setHideDest] = useState(false);
   const shownTrunk = taxi ? TAXI_TRUNK : trunk;
 
   const positions = positionsFor(taxi ? 'sedan' : vehicle);
@@ -122,15 +111,12 @@ export function CreateTripPage() {
   };
 
   const canPublish =
-    Boolean(originGeo.provinceCode && originGeo.districtCode && pickup?.address?.trim()) &&
-    Boolean(destGeo.provinceCode && destGeo.districtCode && dest?.address?.trim()) &&
-    !overflow &&
-    !busy;
+    Boolean(pickup?.address?.trim()) && Boolean(dest?.address?.trim()) && !overflow && !busy;
 
   const publish = async () => {
     setError(null);
     if (!canPublish) {
-      setError('เลือกจังหวัด อำเภอ/เขต และหมุดต้นทาง–ปลายทางก่อนเปิดทริป');
+      setError('ปักหมุดต้นทางและปลายทางก่อนเปิดทริป');
       return;
     }
     if (demo) {
@@ -171,11 +157,8 @@ export function CreateTripPage() {
         dest_label: destination.address,
         dest_lat: destination.lat,
         dest_lng: destination.lng,
-        origin_province_code: originGeo.provinceCode,
-        dest_province_code: destGeo.provinceCode,
-        origin_district_code: originGeo.districtCode,
-        dest_district_code: destGeo.districtCode,
         max_detour_km: taxi ? maxDetour : null,
+        hide_dest: hideDest,
         depart_at: new Date(depart).toISOString(),
         status: 'open',
       })
@@ -275,23 +258,34 @@ export function CreateTripPage() {
             </div>
           ) : null}
 
-          <GeoPlaceFields
-            placeLabel="ต้นทาง"
-            testIdPrefix="origin"
-            requireDistrict
-            allowEmptyProvince={false}
-            placeFallback={BANGKOK_ORIGIN}
-            value={originGeo}
-            onChange={setOriginGeo}
+          <PlaceField
+            label="ต้นทาง"
+            testId="place-origin"
+            value={pickup}
+            fallback={BANGKOK_ORIGIN}
+            onChange={setPickup}
           />
-          <GeoPlaceFields
-            placeLabel="ปลายทาง"
-            testIdPrefix="dest"
-            requireDistrict
-            placePlaceholder="เลือกปลายทาง"
-            value={destGeo}
-            onChange={setDestGeo}
+          <PlaceField
+            label="ปลายทาง"
+            testId="place-dest"
+            value={dest}
+            placeholder="เลือกปลายทาง"
+            onChange={setDest}
           />
+          <label className="field">
+            <span className="row" style={{ alignItems: 'center', gap: 8 }}>
+              <input
+                data-testid="hide-dest"
+                type="checkbox"
+                checked={hideDest}
+                onChange={(e) => setHideDest(e.target.checked)}
+              />
+              ซ่อนตำแหน่งปลายทางจริง
+            </span>
+            <span className="muted">
+              จุดขึ้นเลื่อน ~1 กม. ให้คนอื่นเสมอ · เปิดช่องนี้ถ้าจะเลื่อนจุดลงด้วย
+            </span>
+          </label>
           {stops.map((stop, i) => (
             <PlaceField
               key={stop.id}

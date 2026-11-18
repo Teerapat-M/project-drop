@@ -13,11 +13,7 @@ describe('defaultMapCenter', () => {
     expect(center.lat).not.toBeCloseTo(18.788, 1);
   });
 
-  it('falls back to district/province centroid, then Bangkok', () => {
-    expect(defaultMapCenter({ centroid: { lat: 14.35, lng: 100.57 } })).toEqual({
-      lat: 14.35,
-      lng: 100.57,
-    });
+  it('falls back to Bangkok when there is no route', () => {
     expect(defaultMapCenter({})).toEqual(BANGKOK_MAP_CENTER);
     expect(BANGKOK_MAP_CENTER).toEqual({ lat: BANGKOK_CENTER.lat, lng: BANGKOK_CENTER.lng });
   });

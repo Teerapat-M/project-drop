@@ -11,21 +11,9 @@ import { mockMatchMedia } from '../test/matchMedia';
 import { createMockMapProvider, MOCK_PLACE } from '../test/mockMapProvider';
 import { CreateTripPage } from './CreateTripPage';
 
-async function fillRequiredGeo() {
-  fireEvent.change(screen.getByTestId('origin-province'), { target: { value: '10' } });
-  await waitFor(() => {
-    const el = screen.getByTestId('origin-district') as HTMLSelectElement;
-    expect(el.options.length).toBeGreaterThan(1);
-  });
-  const originDistrict = screen.getByTestId('origin-district') as HTMLSelectElement;
-  fireEvent.change(originDistrict, { target: { value: originDistrict.options[1]?.value ?? '' } });
-  fireEvent.change(screen.getByTestId('dest-province'), { target: { value: '14' } });
-  await waitFor(() => {
-    const el = screen.getByTestId('dest-district') as HTMLSelectElement;
-    expect(el.options.length).toBeGreaterThan(1);
-  });
-  const destDistrict = screen.getByTestId('dest-district') as HTMLSelectElement;
-  fireEvent.change(destDistrict, { target: { value: destDistrict.options[1]?.value ?? '' } });
+function pinDest() {
+  fireEvent.click(screen.getByTestId('place-dest'));
+  fireEvent.click(screen.getByTestId('place-confirm'));
 }
 
 function renderCreate(ui?: { provider?: ReturnType<typeof createMockMapProvider> | FallbackMapProvider; path?: string }) {
@@ -94,13 +82,18 @@ describe('CreateTripPage maps', () => {
     expect(screen.getByTestId('fare-preview')).toHaveTextContent('70');
   });
 
-  it('defaults origin to Bangkok and keeps dest empty until districts and a pin exist', () => {
+  it('defaults origin to Bangkok and keeps dest empty until a pin exists', () => {
     mockMatchMedia(390);
     renderCreate();
-    expect(screen.getByTestId('origin-province')).toHaveValue('10');
+    expect(screen.queryByTestId('origin-province')).toBeNull();
+    expect(screen.queryByTestId('origin-district')).toBeNull();
+    expect(screen.queryByTestId('dest-province')).toBeNull();
+    expect(screen.queryByTestId('dest-district')).toBeNull();
     expect(screen.getByTestId('place-origin')).toHaveTextContent('กรุงเทพมหานคร');
     expect(screen.getByTestId('place-dest')).toHaveTextContent('เลือกปลายทาง');
     expect(screen.getByTestId('create-submit')).toBeDisabled();
+    expect(screen.getByTestId('hide-dest')).not.toBeChecked();
+    expect(screen.getByText('ซ่อนตำแหน่งปลายทางจริง')).toBeInTheDocument();
   });
 
   it('keeps 44px taps and the 390px stacked mini-map layout, including taxi create', () => {
@@ -151,12 +144,12 @@ describe('CreateTripPage maps', () => {
     expect(screen.getByTestId('create-submit')).toBeDisabled();
   });
 
-  it('enables publish after provinces, districts, and a destination pin', async () => {
+  it('enables publish after origin and destination pins, with no province/district controls', async () => {
     mockMatchMedia(390);
     renderCreate({ path: '/trips/new?kind=taxi' });
-    await fillRequiredGeo();
-    fireEvent.click(screen.getByTestId('place-dest'));
-    fireEvent.click(screen.getByTestId('place-confirm'));
+    expect(screen.queryByTestId('origin-province')).toBeNull();
+    expect(screen.queryByTestId('dest-district')).toBeNull();
+    pinDest();
     expect(screen.getByTestId('create-submit')).not.toBeDisabled();
   });
 

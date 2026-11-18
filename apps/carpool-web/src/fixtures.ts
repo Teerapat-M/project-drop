@@ -1,5 +1,13 @@
 import { TAXI_TRUNK_PRESET } from '@drop/carpool-core';
-import type { ChatMessage, SavedAddress, SeatState, TripCard, TripPreview, TripRole } from './types';
+import type {
+  BookingRow,
+  ChatMessage,
+  SavedAddress,
+  SeatState,
+  TripCard,
+  TripPreview,
+  TripRole,
+} from './types';
 
 const TAXI_ID = 'demo-taxi-12km';
 const PRIVATE_ID = 'demo-private-12km';
@@ -136,6 +144,22 @@ export const DEMO_TRIPS: TripCard[] = [
     owner_display_name: 'คุณเอ',
   },
 ];
+
+export const DEMO_MY_BOOKING: Record<string, BookingRow> = {
+  'demo-mine-booked': {
+    id: 'demo-booking-mine',
+    trip_id: 'demo-mine-booked',
+    rider_id: 'demo-me',
+    seat_id: 's-rl',
+    dest_label: 'ตลาดวโรรส',
+    dest_lat: 18.796,
+    dest_lng: 98.993,
+    detour_km: 1.2,
+    luggage_h_cm: null,
+    luggage_w_cm: null,
+    luggage_d_cm: null,
+  },
+};
 
 export type MyTripDemo = TripCard & { role: TripRole; my_share_thb?: number };
 
