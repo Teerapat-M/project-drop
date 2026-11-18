@@ -42,7 +42,7 @@ describe('maskTripForViewer', () => {
     expect(km).toBeGreaterThanOrEqual(0.8);
     expect(km).toBeLessThanOrEqual(1.2);
     expect(shown.pickup_approx).toBe(true);
-    expect(shown.pickup_label).toBe('คลองเตย');
+    expect(shown.pickup_label).toBe('กรุงเทพมหานคร');
     expect(shown.dest_lat).toBe(trip.dest_lat);
   });
 

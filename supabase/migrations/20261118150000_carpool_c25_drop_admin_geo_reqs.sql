@@ -47,15 +47,18 @@
 -- Reveal: in_progress exists in the enum/guards but carpool-web never
 -- sets it. Booked riders get the true pickup 30 min before depart_at or
 -- once status is in_progress/completed.
--- Coarse labels (non-owners): one safe area part — a แขวง/เขต/อำเภอ/
--- ตำบล/จังหวัด/district token or the city. Drop any part with digits,
--- บ้านเลขที่, ซอย, หมู่, ถนน, soi, or a house-number pattern. Fallback
--- พื้นที่ใกล้เคียง. No thai-admin dataset, no extra reverse-geocode.
+-- Coarse labels (non-owners): ALLOWLIST — only the last comma-separated
+-- part (province/city), after stripping Unicode Cf (U+200B–U+200D, U+2060,
+-- U+FEFF). If that part has any \p{N} digit or is empty, or the label has
+-- no comma, return พื้นที่ใกล้เคียง. Same function for discover/preview/
+-- visible_trips/booked-before-reveal. No thai-admin dataset.
 --
 -- M3 dest change: riders call public.carpool_set_booking_dest (helper in
 -- private). Lock trip FOR UPDATE, then the booking. Direct UPDATE of
 -- dest_* is revoked so PostgREST cannot lock booking then trip (that
 -- deadlocked with cancel_booking: trip → seat → DELETE booking).
+-- M6: also revoke luggage/updated_at UPDATE. Luggage is only set in
+-- book_seat; carpool-web has no post-booking luggage editor.
 -- Lock order for trip+seat+booking: trip, then seat, then booking.
 
 -- ---------------------------------------------------------------------------
@@ -180,54 +183,24 @@ revoke all on function private.carpool_offset_point(
   double precision, double precision, double precision, numeric
 ) from public, anon, authenticated;
 
--- One comma-part → area/city, or null if it still has house-level text.
-create or replace function private.carpool_coarse_area_part(p_part text)
-returns text
-language plpgsql
+drop function if exists private.carpool_coarse_area_part(text);
+
+-- Postgres ARE has no \p{N}/\p{Cf}. Strip Cf (ZWSP/ZWNJ/ZWJ/word-joiner/BOM
+-- and related format chars) and treat ASCII/Thai/fullwidth/other BMP decimal
+-- digits as \p{N}.
+create or replace function private.carpool_text_has_number(p_text text)
+returns boolean
+language sql
 immutable
 set search_path = ''
 as $$
-declare
-  sliced text := btrim(regexp_replace(coalesce(p_part, ''), '\s+[0-9]{5}\s*$', ''));
-  idx int := 0;
-  pos int;
-  kw text;
-begin
-  if sliced = '' then
-    return null;
-  end if;
-  foreach kw in array array['แขวง', 'เขต', 'อำเภอ', 'ตำบล', 'จังหวัด']::text[]
-  loop
-    pos := pg_catalog.strpos(sliced, kw);
-    if pos > 0 and (idx = 0 or pos < idx) then
-      idx := pos;
-    end if;
-  end loop;
-  pos := pg_catalog.strpos(pg_catalog.lower(sliced), 'district');
-  if pos > 0 and (idx = 0 or pos < idx) then
-    idx := pos;
-  end if;
-  if idx > 0 then
-    sliced := btrim(pg_catalog.substr(sliced, idx));
-  end if;
-  if sliced = ''
-     or sliced ~ '[0-9]'
-     or sliced ~ 'บ้านเลขที่'
-     or sliced ~ 'ซอย'
-     or sliced ~ 'หมู่'
-     or sliced ~ 'ถนน'
-     or sliced ~* '\ysoi\y'
-     or sliced ~* '\ystreet\y'
-     or sliced ~* '\yroad\y'
-     or sliced ~* '\yrd\y' then
-    return null;
-  end if;
-  return sliced;
-end;
+  select coalesce(p_text, '') ~ '[0-9๐-๙０-９٠-٩۰-۹]'
+      or coalesce(p_text, '') ~ U&'[\0030-\0039\0660-\0669\06F0-\06F9\07C0-\07C9\0966-\096F\09E6-\09EF\0A66-\0A6F\0AE6-\0AEF\0B66-\0B6F\0BE6-\0BEF\0C66-\0C6F\0CE6-\0CEF\0D66-\0D6F\0DE6-\0DEF\0E50-\0E59\0ED0-\0ED9\0F20-\0F29\1040-\1049\1090-\1099\17E0-\17E9\1810-\1819\1946-\194F\19D0-\19D9\1B50-\1B59\1BB0-\1BB9\1C40-\1C49\1C50-\1C59\A620-\A629\A8D0-\A8D9\A900-\A909\A9D0-\A9D9\AA50-\AA59\ABF0-\ABF9\FF10-\FF19]';
 $$;
 
-revoke all on function private.carpool_coarse_area_part(text) from public, anon, authenticated;
+revoke all on function private.carpool_text_has_number(text) from public, anon, authenticated;
 
+-- Allowlist: last comma part only (province/city). No house-token blocklist.
 create or replace function private.carpool_coarse_label(p_address text)
 returns text
 language plpgsql
@@ -235,60 +208,26 @@ immutable
 set search_path = ''
 as $$
 declare
-  raw text := btrim(coalesce(p_address, ''));
+  raw text := coalesce(p_address, '');
   parts text[];
-  part text;
-  sliced text;
-  first_safe text;
-  admin_safe text;
-  idx int;
-  pos int;
-  kw text;
-  kws text[] := array['แขวง', 'เขต', 'อำเภอ', 'ตำบล', 'จังหวัด']::text[];
+  last_part text;
 begin
-  if raw = '' then
+  raw := pg_catalog.regexp_replace(
+    raw,
+    U&'[\00AD\200B-\200F\202A-\202E\2060-\206F\FEFF]',
+    '',
+    'g'
+  );
+  raw := pg_catalog.btrim(raw);
+  if raw = '' or pg_catalog.strpos(raw, ',') = 0 then
     return 'พื้นที่ใกล้เคียง';
   end if;
-  parts := regexp_split_to_array(raw, '\s*,\s*');
-  foreach part in array parts loop
-    sliced := private.carpool_coarse_area_part(part);
-    if sliced is not null then
-      if first_safe is null then
-        first_safe := sliced;
-      end if;
-      if admin_safe is null and (
-           sliced ~ 'แขวง|เขต|อำเภอ|ตำบล|จังหวัด'
-           or pg_catalog.lower(sliced) ~ 'district'
-         ) then
-        admin_safe := sliced;
-      end if;
-    end if;
-  end loop;
-  if admin_safe is not null then
-    return admin_safe;
+  parts := pg_catalog.regexp_split_to_array(raw, '\s*,\s*');
+  last_part := pg_catalog.btrim(parts[pg_catalog.cardinality(parts)]);
+  if last_part = '' or private.carpool_text_has_number(last_part) then
+    return 'พื้นที่ใกล้เคียง';
   end if;
-  -- Google "house, city": keep the remaining city. A lone nickname is not.
-  if coalesce(cardinality(parts), 0) >= 2 and first_safe is not null then
-    return first_safe;
-  end if;
-  idx := 0;
-  foreach kw in array kws loop
-    pos := pg_catalog.strpos(raw, kw);
-    if pos > 0 and (idx = 0 or pos < idx) then
-      idx := pos;
-    end if;
-  end loop;
-  pos := pg_catalog.strpos(pg_catalog.lower(raw), 'district');
-  if pos > 0 and (idx = 0 or pos < idx) then
-    idx := pos;
-  end if;
-  if idx > 0 then
-    sliced := private.carpool_coarse_area_part(pg_catalog.substr(raw, idx));
-    if sliced is not null then
-      return sliced;
-    end if;
-  end if;
-  return 'พื้นที่ใกล้เคียง';
+  return last_part;
 end;
 $$;
 
@@ -1632,12 +1571,12 @@ grant execute on function public.carpool_visible_trips() to authenticated, servi
 -- ---------------------------------------------------------------------------
 -- C2.5 rider drop-off. SELECT stays rider-own/owner/admin
 -- (carpool_bookings_select from 20261118100000). dest_* writes go through
--- carpool_set_booking_dest (trip then booking). Luggage/updated_at remain
--- column-granted. Preview luggage is anonymized dims only (no dest).
--- Discover does not return booking dest.
+-- carpool_set_booking_dest (trip then booking). Luggage is only set in
+-- book_seat — no post-booking UPDATE path (M6). Preview luggage is
+-- anonymized dims only (no dest). Discover does not return booking dest.
 -- ---------------------------------------------------------------------------
-revoke update (dest_label, dest_lat, dest_lng)
-  on table public.carpool_bookings from public, anon, authenticated;
-grant update (
+revoke update on table public.carpool_bookings from public, anon, authenticated;
+revoke update (
+  dest_label, dest_lat, dest_lng,
   luggage_h_cm, luggage_w_cm, luggage_d_cm, updated_at
-) on table public.carpool_bookings to authenticated;
+) on table public.carpool_bookings from public, anon, authenticated;

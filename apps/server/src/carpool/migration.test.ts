@@ -188,7 +188,8 @@ describe('carpool SQL test file', () => {
     expect(testSql).toMatch(/private trunk insert\/update unchanged/);
     expect(testSql).toMatch(/anon\/authenticated must not EXECUTE public\.carpool_trips_taxi_trunk/);
     expect(testSql).toMatch(/NaN detour insert\/update rejected by CHECK/);
-    expect(testSql).toMatch(/dest\/luggage edits allowed while trip is open/);
+    expect(testSql).toMatch(/dest edits allowed while trip is open/);
+    expect(testSql).toMatch(/direct UPDATE luggage is 42501/);
     expect(testSql).toMatch(/dest_\* change rejected when in_progress/);
     expect(testSql).toMatch(/luggage change rejected when in_progress/);
     expect(testSql).toMatch(/dest_\* change rejected when completed/);
@@ -601,7 +602,11 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
   it('adds carpool_set_booking_dest and revokes dest_* UPDATE', () => {
     expect(c25Sql).toMatch(/create or replace function private\.carpool_apply_booking_dest/);
     expect(c25Sql).toMatch(/create or replace function public\.carpool_set_booking_dest/);
-    expect(c25Sql).toMatch(/revoke update \(dest_label, dest_lat, dest_lng\)/);
+    expect(c25Sql).toMatch(/revoke update on table public\.carpool_bookings from public, anon, authenticated;/);
+    expect(c25Sql).toMatch(
+      /revoke update \(\s*dest_label, dest_lat, dest_lng,\s*luggage_h_cm, luggage_w_cm, luggage_d_cm, updated_at\s*\)/,
+    );
+    expect(c25Sql).not.toMatch(/grant update \(\s*luggage_h_cm/);
     expect(c25Sql).toMatch(
       /grant execute on function public\.carpool_set_booking_dest\(\s*uuid, text, double precision, double precision\s*\) to authenticated, service_role;/,
     );
@@ -622,6 +627,10 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
     expect(testSql).toMatch(/book vs cancel same seat 15x no 40P01/);
     expect(testSql).toMatch(/dest vs cancel same booking 15x no 40P01/);
     expect(testSql).toMatch(/direct UPDATE dest_\* is permission denied/);
+    expect(testSql).toMatch(/direct UPDATE on carpool_bookings by authenticated is 42501/);
+    expect(testSql).toMatch(/coarse allowlist last comma part only/);
+    expect(testSql).toMatch(/tests\.dblink_conn\(\)/);
+    expect(testSql).toMatch(/dblink conn includes host and port/);
     expect(testSql).toMatch(/non-owner payloads never leak house\/soi\/digits/);
     expect(testSql).toMatch(/offset bearing kept when true point moves under 200 m/);
     expect(testSql).toMatch(/offset bearing regenerates when true point moves over 200 m/);
@@ -642,7 +651,10 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
     expect(c25Sql).toMatch(/grant execute on function public\.carpool_visible_trips\(\) to authenticated, service_role;/);
     expect(c25Sql).toMatch(/carpool-web never sets in_progress/);
     expect(c25Sql).toMatch(/moves more than ~200 m/);
-    expect(c25Sql).toMatch(/private\.carpool_coarse_area_part/);
+    expect(c25Sql).toMatch(/drop function if exists private\.carpool_coarse_area_part/);
+    expect(c25Sql).toMatch(/create or replace function private\.carpool_text_has_number/);
+    expect(c25Sql).toMatch(/create or replace function private\.carpool_coarse_label/);
+    expect(c25Sql).toMatch(/private\.carpool_text_has_number\(last_part\)/);
     expect(testSql).toMatch(/stranger preview pickup must be ~1 km from true/);
     expect(testSql).toMatch(/authenticated cannot SELECT true pickup_lat/);
     expect(testSql).toMatch(/dest offset only when hide_dest is on/);

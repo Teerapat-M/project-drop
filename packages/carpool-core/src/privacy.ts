@@ -51,55 +51,21 @@ export function stableOffset(seed: string): { bearingRad: number; km: number } {
   };
 }
 
-const AREA_TOKEN = /แขวง|เขต|อำเภอ|ตำบล|จังหวัด|\bdistrict\b/i;
-const HOUSE_TOKEN = /บ้านเลขที่|ซอย|หมู่|ถนน|\bsoi\b|\bstreet\b|\broad\b|\brd\b/i;
-const HOUSE_NUM = /\d+\s*\/\s*\d+/;
-const DIGITS = /\d/;
-
-function stripPostal(part: string): string {
-  return part.replace(/\s+\d{5}\s*$/, '').trim();
-}
-
-function isUnsafeArea(part: string): boolean {
-  const t = stripPostal(part);
-  if (!t) return true;
-  return HOUSE_NUM.test(t) || DIGITS.test(t) || HOUSE_TOKEN.test(t);
-}
-
-function areaFromPart(part: string): string | null {
-  const trimmed = stripPostal(part.trim());
-  if (!trimmed) return null;
-  const idx = trimmed.search(AREA_TOKEN);
-  const sliced = idx >= 0 ? trimmed.slice(idx).trim() : trimmed;
-  if (!sliced || isUnsafeArea(sliced)) return null;
-  return sliced;
-}
+const FORMAT_CHARS = /[\u200B-\u200D\u2060\uFEFF\p{Cf}]/gu;
+const ANY_DIGIT = /\p{N}/u;
 
 /**
- * Area-only label for non-owners. Keeps a แขวง/เขต/อำเภอ/ตำบล/จังหวัด/
- * district token or the city. Drops house numbers, ซอย/หมู่/ถนน/soi, and
- * any part with digits. No thai-admin dataset.
+ * Non-owners get only the last comma-separated part (province/city) after
+ * stripping Unicode format chars. Any \p{N} digit, an empty last part, or a
+ * single-part label (could be the full address) → พื้นที่ใกล้เคียง.
  */
 export function coarseAddress(address: string | null | undefined): string {
-  const raw = (address ?? '').trim();
-  if (!raw) return 'พื้นที่ใกล้เคียง';
-  const parts = raw.split(/\s*,\s*/).filter(Boolean);
-  const safe: string[] = [];
-  for (const part of parts) {
-    const area = areaFromPart(part);
-    if (area) safe.push(area);
-  }
-  const admin = safe.find((s) => AREA_TOKEN.test(s));
-  if (admin) return admin;
-  // Google "house, city" / "house, district, city": keep the first remaining
-  // area or city part. A lone nickname with no comma is not a city.
-  if (parts.length >= 2 && safe[0]) return safe[0];
-  const idx = raw.search(AREA_TOKEN);
-  if (idx >= 0) {
-    const area = areaFromPart(raw.slice(idx));
-    if (area) return area;
-  }
-  return 'พื้นที่ใกล้เคียง';
+  const raw = (address ?? '').replace(FORMAT_CHARS, '').trim();
+  if (!raw.includes(',')) return 'พื้นที่ใกล้เคียง';
+  const parts = raw.split(/\s*,\s*/);
+  const last = (parts[parts.length - 1] ?? '').trim();
+  if (!last || ANY_DIGIT.test(last)) return 'พื้นที่ใกล้เคียง';
+  return last;
 }
 
 export function shouldRegenOffset(prev: GeoPoint, next: GeoPoint): boolean {

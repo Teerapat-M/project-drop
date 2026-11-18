@@ -235,12 +235,13 @@ begin
   end if;
   if has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_lat', 'UPDATE')
      or has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_lng', 'UPDATE')
-     or has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_label', 'UPDATE') then
-    raise exception 'authenticated must not UPDATE dest_* on carpool_bookings';
-  end if;
-  if not has_column_privilege('authenticated', 'public.carpool_bookings', 'luggage_h_cm', 'UPDATE')
-     or not has_column_privilege('authenticated', 'public.carpool_bookings', 'updated_at', 'UPDATE') then
-    raise exception 'authenticated must still UPDATE luggage/updated_at on carpool_bookings';
+     or has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_label', 'UPDATE')
+     or has_column_privilege('authenticated', 'public.carpool_bookings', 'luggage_h_cm', 'UPDATE')
+     or has_column_privilege('authenticated', 'public.carpool_bookings', 'luggage_w_cm', 'UPDATE')
+     or has_column_privilege('authenticated', 'public.carpool_bookings', 'luggage_d_cm', 'UPDATE')
+     or has_column_privilege('authenticated', 'public.carpool_bookings', 'updated_at', 'UPDATE')
+     or has_table_privilege('authenticated', 'public.carpool_bookings', 'UPDATE') then
+    raise exception 'authenticated must not UPDATE any column on carpool_bookings';
   end if;
   if has_function_privilege('authenticated', 'private.carpool_taxi_trunk()', 'EXECUTE')
      or has_function_privilege('anon', 'private.carpool_taxi_trunk()', 'EXECUTE') then
@@ -602,9 +603,17 @@ set search_path = public, tests, pg_catalog
 as $$
 declare
   tok text;
+  stripped text;
+  first_part text;
 begin
   if p_shown is null then
     raise exception 'coarse label is null for %', p_true;
+  end if;
+  if p_shown ~ U&'[\00AD\200B-\200F\202A-\202E\2060-\206F\FEFF]' then
+    raise exception 'non-owner label % leaked format chars from %', p_shown, p_true;
+  end if;
+  if private.carpool_text_has_number(p_shown) then
+    raise exception 'non-owner label % leaked a digit from %', p_shown, p_true;
   end if;
   for tok in select (regexp_matches(p_true, '\d+', 'g'))[1]
   loop
@@ -612,16 +621,72 @@ begin
       raise exception 'non-owner label % leaked digit sequence % from %', p_shown, tok, p_true;
     end if;
   end loop;
-  if p_shown ~ 'ซอย' or p_shown ~* '\ysoi\y' then
-    raise exception 'non-owner label % leaked soi from %', p_shown, p_true;
+  if p_shown ~ 'ซอย' or p_shown ~ 'ซ\.' or p_shown ~* '\ysoi\y'
+     or p_shown ~ 'ถนน' or p_shown ~ 'ถ\.' then
+    raise exception 'non-owner label % leaked soi/road from %', p_shown, p_true;
   end if;
   if p_shown ~ 'บ้านเลขที่' or p_shown ~ '\d+\s*/\s*\d+' then
     raise exception 'non-owner label % leaked house number from %', p_shown, p_true;
+  end if;
+  stripped := btrim(regexp_replace(coalesce(p_true, ''), U&'[\200B-\200D\2060\FEFF]', '', 'g'));
+  if position(',' in stripped) > 0 then
+    first_part := btrim(split_part(stripped, ',', 1));
+    if first_part <> '' and p_shown like '%' || first_part || '%' then
+      raise exception 'non-owner label % leaked first part % from %', p_shown, first_part, p_true;
+    end if;
   end if;
 end;
 $$;
 
 grant execute on function tests.assert_coarse_safe(text, text) to authenticated;
+
+-- L9: dblink uses the same host/port as run-carpool-rls.sh (PGHOST/PGPORT).
+\if :{?pghost}
+\else
+\set pghost localhost
+\set pgport 5432
+\set pguser postgres
+\set pgpassword postgres
+\endif
+select set_config('tests.pghost', :'pghost', false);
+select set_config('tests.pgport', :'pgport', false);
+select set_config('tests.pguser', :'pguser', false);
+select set_config('tests.pgpassword', :'pgpassword', false);
+
+create or replace function tests.dblink_conn()
+returns text
+language plpgsql
+stable
+set search_path = pg_catalog
+as $$
+declare
+  host text := coalesce(nullif(current_setting('tests.pghost', true), ''), 'localhost');
+  port text := coalesce(nullif(current_setting('tests.pgport', true), ''), '5432');
+  usr text := coalesce(nullif(current_setting('tests.pguser', true), ''), current_user);
+  pw text := nullif(current_setting('tests.pgpassword', true), '');
+begin
+  if pw is not null then
+    return format(
+      'host=%s port=%s dbname=%s user=%s password=%s',
+      host, port, current_database(), usr, pw
+    );
+  end if;
+  return format(
+    'host=%s port=%s dbname=%s user=%s',
+    host, port, current_database(), usr
+  );
+end;
+$$;
+
+do $$
+declare
+  conn text := tests.dblink_conn();
+begin
+  if position('host=' in conn) = 0 or position('port=' in conn) = 0 then
+    raise exception 'dblink conn missing host/port: %', conn;
+  end if;
+  perform tests.ok('dblink conn includes host and port');
+end $$;
 
 do $$
 declare
@@ -1129,14 +1194,16 @@ begin
 end $$;
 commit;
 
--- Direct UPDATE dest_* is permission denied (column grant revoked).
+-- Direct UPDATE dest_* / luggage / table is permission denied (42501).
 begin;
 select tests.login(id) from tests.ids where k = 'rider2';
 set local role authenticated;
 do $$
 declare
   bid uuid;
-  denied boolean := false;
+  denied_dest boolean := false;
+  denied_luggage boolean := false;
+  denied_table boolean := false;
 begin
   select id into bid from tests.ids where k = 'booking2';
   begin
@@ -1145,12 +1212,33 @@ begin
      where b.id = bid;
   exception
     when insufficient_privilege then
-      denied := true;
+      if sqlstate is distinct from '42501' then raise; end if;
+      denied_dest := true;
   end;
-  if not denied then
+  begin
+    update public.carpool_bookings
+       set luggage_h_cm = 1, luggage_w_cm = 1, luggage_d_cm = 1, updated_at = now()
+     where id = bid;
+  exception
+    when insufficient_privilege then
+      if sqlstate is distinct from '42501' then raise; end if;
+      denied_luggage := true;
+  end;
+  begin
+    update public.carpool_bookings set dest_label = dest_label where id = bid;
+  exception
+    when insufficient_privilege then
+      if sqlstate is distinct from '42501' then raise; end if;
+      denied_table := true;
+  end;
+  if not denied_dest then
     raise exception 'direct UPDATE dest_* should be permission denied';
   end if;
+  if not denied_luggage or not denied_table then
+    raise exception 'direct UPDATE on carpool_bookings by authenticated should be 42501';
+  end if;
   perform tests.ok('direct UPDATE dest_* is permission denied');
+  perform tests.ok('direct UPDATE on carpool_bookings by authenticated is 42501');
 end $$;
 commit;
 
@@ -1550,17 +1638,32 @@ begin
   if rec.dest_label is distinct from 'จุดใหม่' then
     raise exception 'open trip should allow dest_* edits, got %', rec.dest_label;
   end if;
-  update public.carpool_bookings
-     set luggage_h_cm = 45, luggage_w_cm = 35, luggage_d_cm = 25
-   where id = rec.id
-  returning * into rec;
-  if rec.luggage_h_cm is distinct from 45
-     or rec.luggage_w_cm is distinct from 35
-     or rec.luggage_d_cm is distinct from 25 then
-    raise exception 'open trip should allow luggage edits, got %×%×%',
-      rec.luggage_h_cm, rec.luggage_w_cm, rec.luggage_d_cm;
+  perform tests.ok('dest edits allowed while trip is open');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+  denied boolean := false;
+begin
+  select id into bid from tests.ids where k = 'freeze_booking';
+  begin
+    update public.carpool_bookings
+       set luggage_h_cm = 45, luggage_w_cm = 35, luggage_d_cm = 25
+     where id = bid;
+  exception
+    when insufficient_privilege then
+      if sqlstate is distinct from '42501' then raise; end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'direct UPDATE luggage should be 42501';
   end if;
-  perform tests.ok('dest/luggage edits allowed while trip is open');
+  perform tests.ok('direct UPDATE luggage is 42501');
 end $$;
 commit;
 
@@ -1611,14 +1714,12 @@ begin
        set luggage_h_cm = 99, luggage_w_cm = 99, luggage_d_cm = 99
      where id = bid;
   exception
-    when raise_exception then
-      if sqlerrm is distinct from 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว' then
-        raise;
-      end if;
+    when insufficient_privilege then
+      if sqlstate is distinct from '42501' then raise; end if;
       denied := true;
   end;
   if not denied then
-    raise exception 'luggage update should be rejected when in_progress';
+    raise exception 'luggage update should be 42501 when in_progress';
   end if;
   perform tests.ok('luggage change rejected when in_progress');
 end $$;
@@ -1671,14 +1772,12 @@ begin
        set luggage_h_cm = 11, luggage_w_cm = 11, luggage_d_cm = 11
      where id = bid;
   exception
-    when raise_exception then
-      if sqlerrm is distinct from 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว' then
-        raise;
-      end if;
+    when insufficient_privilege then
+      if sqlstate is distinct from '42501' then raise; end if;
       denied := true;
   end;
   if not denied then
-    raise exception 'luggage update should be rejected when completed';
+    raise exception 'luggage update should be 42501 when completed';
   end if;
   perform tests.ok('luggage change rejected when completed');
 end $$;
@@ -1772,14 +1871,12 @@ begin
        set luggage_h_cm = 12, luggage_w_cm = 12, luggage_d_cm = 12
      where id = bid;
   exception
-    when raise_exception then
-      if sqlerrm is distinct from 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว' then
-        raise;
-      end if;
+    when insufficient_privilege then
+      if sqlstate is distinct from '42501' then raise; end if;
       denied := true;
   end;
   if not denied then
-    raise exception 'luggage update should be rejected when cancelled';
+    raise exception 'luggage update should be 42501 when cancelled';
   end if;
   perform tests.ok('luggage change rejected when cancelled');
 end $$;
@@ -2972,7 +3069,7 @@ declare
   trip uuid;
   rider uuid;
   rider2 uuid;
-  conn text := format('dbname=%s', current_database());
+  conn text := tests.dblink_conn();
   i int;
   res_c text;
   res_b text;
@@ -3302,7 +3399,7 @@ declare
   trip uuid;
   rider uuid;
   rider2 uuid;
-  conn text := format('dbname=%s', current_database());
+  conn text := tests.dblink_conn();
   i int;
   res_c text;
   res_d text;
@@ -3438,6 +3535,55 @@ commit;
 
 do $$
 declare
+  nearby text := 'พื้นที่ใกล้เคียง';
+  zwsp text := U&'\200B';
+  got text;
+begin
+  got := private.carpool_coarse_label('๙๙, กรุงเทพฯ');
+  if got is distinct from 'กรุงเทพฯ' then
+    raise exception 'thai digits should keep last part, got %', got;
+  end if;
+  got := private.carpool_coarse_label('９９, กรุงเทพฯ');
+  if got is distinct from 'กรุงเทพฯ' then
+    raise exception 'fullwidth digits should keep last part, got %', got;
+  end if;
+  got := private.carpool_coarse_label('ซ.ลาดพร้าว, กรุงเทพฯ');
+  if got is distinct from 'กรุงเทพฯ' then
+    raise exception 'ซ. abbreviation should keep last part, got %', got;
+  end if;
+  got := private.carpool_coarse_label('ซ.๑๕, กรุงเทพฯ');
+  if got is distinct from 'กรุงเทพฯ' then
+    raise exception 'ซ. with thai digits should keep last part, got %', got;
+  end if;
+  got := private.carpool_coarse_label('ถ.สุขุมวิท, กรุงเทพฯ');
+  if got is distinct from 'กรุงเทพฯ' then
+    raise exception 'ถ. abbreviation should keep last part, got %', got;
+  end if;
+  got := private.carpool_coarse_label('Main St, Bangkok');
+  if got is distinct from 'Bangkok' then
+    raise exception 'Main St should keep last part, got %', got;
+  end if;
+  got := private.carpool_coarse_label('ซ' || zwsp || 'อยลาดพร้าว, กรุงเทพฯ');
+  if got is distinct from 'กรุงเทพฯ' then
+    raise exception 'zwsp soi should keep last part, got %', got;
+  end if;
+  got := private.carpool_coarse_label('คอนโด ABC, กรุงเทพฯ');
+  if got is distinct from 'กรุงเทพฯ' then
+    raise exception 'condo ABC should keep last part, got %', got;
+  end if;
+  got := private.carpool_coarse_label('จุดนัด');
+  if got is distinct from nearby then
+    raise exception 'single-part no-comma must fall back, got %', got;
+  end if;
+  got := private.carpool_coarse_label('บ้าน, กรุงเทพฯ 10900');
+  if got is distinct from nearby then
+    raise exception 'last part with postcode must fall back, got %', got;
+  end if;
+  perform tests.ok('coarse allowlist last comma part only');
+end $$;
+
+do $$
+declare
   trip uuid;
   addr text;
   rec jsonb;
@@ -3445,21 +3591,35 @@ declare
   vis_dest text;
   disc_pick text;
   disc_dest text;
+  want text;
+  zwsp text := U&'\200B';
   addrs text[] := array[
     'บ้านเลขที่ 99 ซอยลาดพร้าว 15, กรุงเทพฯ',
+    '๙๙, กรุงเทพฯ',
+    '９９, กรุงเทพฯ',
+    'ซ.ลาดพร้าว, กรุงเทพฯ',
+    'ซ.๑๕, กรุงเทพฯ',
+    'ถ.สุขุมวิท, กรุงเทพฯ',
+    'Main St, Bangkok',
+    'ซ' || U&'\200B' || 'อยลาดพร้าว, กรุงเทพฯ',
+    'คอนโด ABC, กรุงเทพฯ',
     '123 ซอยสุขุมวิท, คลองเตย, กรุงเทพมหานคร 10110',
     '99/1 Sukhumvit Soi 15, Khlong Toei, Bangkok 10110',
     '12 หมู่ 4 ถนนพหลโยธิน, เชียงใหม่',
     '42/3 Silom Road, Bang Rak, Bangkok',
-    'บ้านเลขที่ 9 แขวงลุมพินี เขตปทุมวัน กรุงเทพมหานคร'
+    'บ้านเลขที่ 9 แขวงลุมพินี เขตปทุมวัน กรุงเทพมหานคร',
+    'บ้าน, กรุงเทพฯ 10900'
   ];
 begin
+  -- array concat above uses the same zwsp as the dedicated case
+  addrs[8] := 'ซ' || zwsp || 'อยลาดพร้าว, กรุงเทพฯ';
   select id into trip from tests.ids where k = 'coarse_leak_trip';
   foreach addr in array addrs loop
     reset role;
     update public.carpool_trips
        set pickup_label = addr, dest_label = addr
      where id = trip;
+    want := private.carpool_coarse_label(addr);
 
     perform tests.login((select id from tests.ids where k = 'stranger'));
     set local role authenticated;
@@ -3468,6 +3628,13 @@ begin
       from public.carpool_discover_trips() d
      where d.id = trip;
     reset role;
+    if rec->>'pickup_label' is distinct from want
+       or rec->>'dest_label' is distinct from want
+       or disc_pick is distinct from want
+       or disc_dest is distinct from want then
+      raise exception 'preview/discover label mismatch for %: preview %/% discover %/% want %',
+        addr, rec->>'pickup_label', rec->>'dest_label', disc_pick, disc_dest, want;
+    end if;
     perform tests.assert_coarse_safe(rec->>'pickup_label', addr);
     perform tests.assert_coarse_safe(rec->>'dest_label', addr);
     perform tests.assert_coarse_safe(disc_pick, addr);
@@ -3479,6 +3646,10 @@ begin
       from public.carpool_visible_trips() v
      where v.id = trip;
     reset role;
+    if vis_pick is distinct from want or vis_dest is distinct from want then
+      raise exception 'visible_trips label mismatch for %: %/% want %',
+        addr, vis_pick, vis_dest, want;
+    end if;
     perform tests.assert_coarse_safe(vis_pick, addr);
     perform tests.assert_coarse_safe(vis_dest, addr);
   end loop;
@@ -3547,7 +3718,7 @@ declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 83 then
+  if n < 87 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

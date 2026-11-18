@@ -11,7 +11,9 @@ export PGUSER="${PGUSER:-postgres}"
 export PGPASSWORD="${PGPASSWORD:-postgres}"
 export PGDATABASE="${PGDATABASE:-postgres}"
 
-PSQL=(psql -h "$PGHOST" -p "$PGPORT" -v ON_ERROR_STOP=1)
+PSQL=(psql -h "$PGHOST" -p "$PGPORT" -v ON_ERROR_STOP=1 \
+  -v pghost="$PGHOST" -v pgport="$PGPORT" \
+  -v pguser="$PGUSER" -v pgpassword="$PGPASSWORD")
 "${PSQL[@]}" -f "$ROOT/supabase/tests/shim.sql"
 "${PSQL[@]}" -f "$ROOT/supabase/migrations/20261110120000_profiles.sql"
 "${PSQL[@]}" -f "$ROOT/supabase/migrations/20261118100000_carpool.sql"

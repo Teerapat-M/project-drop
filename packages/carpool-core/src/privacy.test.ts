@@ -32,19 +32,28 @@ describe('privacy offset', () => {
 });
 
 describe('coarseAddress', () => {
-  it('keeps only a safe area/city part', () => {
+  const nearby = 'พื้นที่ใกล้เคียง';
+
+  it('keeps only the last comma part when it has no digits', () => {
     expect(coarseAddress('บ้านเลขที่ 99 ซอยลาดพร้าว 15, กรุงเทพฯ')).toBe('กรุงเทพฯ');
-    expect(coarseAddress('123 ซอยสุขุมวิท, คลองเตย, กรุงเทพมหานคร 10110')).toBe('คลองเตย');
-    expect(coarseAddress('99/1 Sukhumvit Soi 15, Khlong Toei, Bangkok 10110')).toBe(
-      'Khlong Toei',
-    );
+    expect(coarseAddress('๙๙, กรุงเทพฯ')).toBe('กรุงเทพฯ');
+    expect(coarseAddress('９９, กรุงเทพฯ')).toBe('กรุงเทพฯ');
+    expect(coarseAddress('ซ.ลาดพร้าว, กรุงเทพฯ')).toBe('กรุงเทพฯ');
+    expect(coarseAddress('ซ.๑๕, กรุงเทพฯ')).toBe('กรุงเทพฯ');
+    expect(coarseAddress('ถ.สุขุมวิท, กรุงเทพฯ')).toBe('กรุงเทพฯ');
+    expect(coarseAddress('Main St, Bangkok')).toBe('Bangkok');
+    expect(coarseAddress('ซ\u200Bอยลาดพร้าว, กรุงเทพฯ')).toBe('กรุงเทพฯ');
+    expect(coarseAddress('คอนโด ABC, กรุงเทพฯ')).toBe('กรุงเทพฯ');
     expect(coarseAddress('12 หมู่ 4 ถนนพหลโยธิน, เชียงใหม่')).toBe('เชียงใหม่');
-    expect(coarseAddress('บ้านเลขที่ 9 แขวงลุมพินี เขตปทุมวัน กรุงเทพมหานคร')).toBe(
-      'แขวงลุมพินี เขตปทุมวัน กรุงเทพมหานคร',
-    );
-    expect(coarseAddress('')).toBe('พื้นที่ใกล้เคียง');
-    expect(coarseAddress('จุดนัด')).toBe('พื้นที่ใกล้เคียง');
-    expect(coarseAddress('99/1 ซอยลาดพร้าว')).toBe('พื้นที่ใกล้เคียง');
+  });
+
+  it('falls back when there is no comma, or the last part has digits', () => {
+    expect(coarseAddress('')).toBe(nearby);
+    expect(coarseAddress('จุดนัด')).toBe(nearby);
+    expect(coarseAddress('99/1 ซอยลาดพร้าว')).toBe(nearby);
+    expect(coarseAddress('บ้านเลขที่ 9 แขวงลุมพินี เขตปทุมวัน กรุงเทพมหานคร')).toBe(nearby);
+    expect(coarseAddress('123 ซอยสุขุมวิท, คลองเตย, กรุงเทพมหานคร 10110')).toBe(nearby);
+    expect(coarseAddress('บ้าน, กรุงเทพฯ 10900')).toBe(nearby);
   });
 });
 
