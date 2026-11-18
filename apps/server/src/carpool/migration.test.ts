@@ -314,12 +314,15 @@ describe('carpool taxi trunk migration', () => {
   });
 
   it('adds NaN detour CHECK and freezes dest/luggage after the trip starts', () => {
-    const replicaAt = taxiTrunkSql.indexOf("session_replication_role', 'replica'");
+    const disableAt = taxiTrunkSql.indexOf('disable trigger carpool_bookings_guard');
     const nanAt = taxiTrunkSql.indexOf("detour_km = 'NaN'");
+    const enableAt = taxiTrunkSql.indexOf('enable trigger carpool_bookings_guard');
     const checkAt = taxiTrunkSql.indexOf('carpool_bookings_detour_not_nan');
-    expect(replicaAt).toBeGreaterThan(0);
-    expect(nanAt).toBeGreaterThan(replicaAt);
-    expect(checkAt).toBeGreaterThan(nanAt);
+    expect(disableAt).toBeGreaterThan(0);
+    expect(nanAt).toBeGreaterThan(disableAt);
+    expect(enableAt).toBeGreaterThan(nanAt);
+    expect(checkAt).toBeGreaterThan(enableAt);
+    expect(taxiTrunkSql).not.toMatch(/session_replication_role/);
     expect(taxiTrunkSql).toMatch(/check \(detour_km <> 'NaN'\)/);
     expect(stopsSql).not.toMatch(/carpool_bookings_detour_not_nan/);
     expect(stopsSql).not.toMatch(/cannot change drop-off or luggage after the trip has started/);

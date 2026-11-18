@@ -213,15 +213,15 @@ grant execute on function public.carpool_trip_preview(uuid) to authenticated, se
 -- PostgreSQL treats numeric NaN as greater than every non-NaN value.
 -- Backfill first so existing rows cannot violate the new CHECK.
 -- carpool_bookings_guard restores OLD.detour_km when dest_* is unchanged,
--- so a plain UPDATE would leave NaN in place. Replica role skips the
--- trigger (same pattern as the seed that inserts the legacy NaN row).
+-- so a plain UPDATE would leave NaN in place. Disable only that trigger
+-- so FK and other triggers still fire.
 -- ---------------------------------------------------------------------------
 begin;
-select set_config('session_replication_role', 'replica', true);
+alter table public.carpool_bookings disable trigger carpool_bookings_guard;
 update public.carpool_bookings
    set detour_km = 0
  where detour_km = 'NaN';
-select set_config('session_replication_role', 'origin', true);
+alter table public.carpool_bookings enable trigger carpool_bookings_guard;
 commit;
 
 alter table public.carpool_bookings
