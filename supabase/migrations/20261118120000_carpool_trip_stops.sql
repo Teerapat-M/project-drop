@@ -189,8 +189,9 @@ grant execute on function public.carpool_trip_preview(uuid) to authenticated, se
 
 -- ---------------------------------------------------------------------------
 -- Authoritative detour floor (do not trust client p_detour_km).
--- Haversine great-circle km; ROAD_FACTOR 1.3 because Thai roads are ~30%
--- longer than crow-flies (highways, one-ways). Not a live Routes measurement.
+-- Haversine great-circle km. ROAD_FACTOR 1.0: this floor is only an anti-cheat
+-- lower bound. Straight-line distance is always ≤ on-road distance, so it
+-- never blocks an honest road-based client value. Not a live Routes measurement.
 -- An Edge Function with a server-side Routes key would be more accurate but
 -- needs Bell to mint a separate key — this floor is the merge-blocking fix.
 -- Internal helpers: same grant pattern as private.carpool_refresh_status.
@@ -237,9 +238,9 @@ security definer
 set search_path = ''
 as $$
 declare
-  -- ROAD_FACTOR 1.3: great-circle underestimates on-road km in northern
-  -- Thailand (highways vs crow-flies). Documented constant, not GPS/Routes.
-  road_factor constant numeric := 1.3;
+  -- ROAD_FACTOR 1.0: anti-cheat lower bound only. Straight-line haversine is
+  -- always ≤ road distance, so it never blocks an honest road-based value.
+  road_factor constant numeric := 1.0;
   trip public.carpool_trips%rowtype;
   st record;
   main_km double precision := 0;
@@ -291,7 +292,7 @@ end;
 $$;
 
 comment on function private.carpool_detour_floor_km(uuid, double precision, double precision) is
-  'max(0, (haversine via rider dest − haversine main path) * 1.3). Internal.';
+  'max(0, (haversine via rider dest − haversine main path) * 1.0). Anti-cheat lower bound; straight-line never exceeds road km.';
 
 revoke all on function private.carpool_detour_floor_km(uuid, double precision, double precision) from public, anon, authenticated;
 
@@ -394,3 +395,69 @@ comment on function public.carpool_book_seat(
   numeric, numeric, numeric, numeric
 ) is
   'Atomic seat booking. SELECT FOR UPDATE; first confirm wins. Loser: ที่นั่งนี้เพิ่งถูกจอง. detour_km = greatest(haversine floor, client).';
+
+-- Riders may edit dest_* / luggage, not detour_km (column grant + trigger).
+revoke update (detour_km) on table public.carpool_bookings from public, anon, authenticated;
+grant update (
+  dest_label, dest_lat, dest_lng,
+  luggage_h_cm, luggage_w_cm, luggage_d_cm, updated_at
+) on table public.carpool_bookings to authenticated;
+
+create or replace function public.carpool_bookings_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+begin
+  -- Authenticated has no INSERT/DELETE grant. RPCs are SECURITY DEFINER but
+  -- auth.uid() is still the caller — do not reject user JWTs here.
+  if tg_op = 'INSERT' then
+    if uid is not null then
+      new.rider_id := uid;
+    end if;
+    -- Same floor as carpool_book_seat: never store less than haversine.
+    new.detour_km := greatest(
+      private.carpool_detour_floor_km(new.trip_id, new.dest_lat, new.dest_lng),
+      coalesce(new.detour_km, 0)
+    );
+    return new;
+  end if;
+  if tg_op = 'DELETE' then
+    if uid is not null and old.rider_id is distinct from uid then
+      raise exception 'only the rider can cancel their booking';
+    end if;
+    return old;
+  end if;
+  if uid is not null then
+    if new.rider_id is distinct from old.rider_id
+       or new.trip_id is distinct from old.trip_id
+       or new.seat_id is distinct from old.seat_id then
+      raise exception 'cannot reassign a booking';
+    end if;
+    if new.rider_id is distinct from uid then
+      raise exception 'only the rider can edit their booking';
+    end if;
+  end if;
+  -- dest_* change: recompute floor vs client/NEW value. Else freeze detour_km.
+  if new.dest_label is distinct from old.dest_label
+     or new.dest_lat is distinct from old.dest_lat
+     or new.dest_lng is distinct from old.dest_lng then
+    new.detour_km := greatest(
+      private.carpool_detour_floor_km(new.trip_id, new.dest_lat, new.dest_lng),
+      coalesce(new.detour_km, 0)
+    );
+  else
+    new.detour_km := old.detour_km;
+  end if;
+  new.updated_at := pg_catalog.now();
+  return new;
+end;
+$$;
+
+comment on function public.carpool_bookings_guard() is
+  'Freeze identity columns; dest_* recomputes detour floor; otherwise detour_km = OLD. Trigger-only.';
+
+revoke execute on function public.carpool_bookings_guard() from public, anon, authenticated;

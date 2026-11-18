@@ -143,6 +143,14 @@ begin
      or has_function_privilege('anon', 'private.carpool_is_trip_owner(uuid)', 'EXECUTE') then
     raise exception 'anon must not EXECUTE carpool policy helpers';
   end if;
+  if has_column_privilege('authenticated', 'public.carpool_bookings', 'detour_km', 'UPDATE') then
+    raise exception 'authenticated must not UPDATE carpool_bookings.detour_km';
+  end if;
+  if not has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_lat', 'UPDATE')
+     or not has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_lng', 'UPDATE')
+     or not has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_label', 'UPDATE') then
+    raise exception 'authenticated must still UPDATE dest_* on carpool_bookings';
+  end if;
 end $$;
 
 -- Booking RPC: row lock, exact Thai conflict message, own-trip / not-open / closed.
@@ -753,6 +761,79 @@ begin
   perform tests.ok('honest detour kept; charge only the requester');
 end $$;
 
+-- Direct UPDATE detour_km is permission denied (column grant revoked).
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+  denied boolean := false;
+  before_km numeric;
+  after_km numeric;
+begin
+  select id into bid from tests.ids where k = 'booking2';
+  select b.detour_km into before_km from public.carpool_bookings b where b.id = bid;
+  begin
+    update public.carpool_bookings b set detour_km = 0 where b.id = bid;
+  exception
+    when insufficient_privilege then
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'direct UPDATE detour_km should be permission denied';
+  end if;
+  select b.detour_km into after_km from public.carpool_bookings b where b.id = bid;
+  if after_km is distinct from before_km then
+    raise exception 'detour_km changed after denied UPDATE: % -> %', before_km, after_km;
+  end if;
+  perform tests.ok('direct UPDATE detour_km is permission denied');
+end $$;
+commit;
+
+-- dest_* change recomputes floor (NEW.detour_km frozen by column grant, so
+-- coalesce is the previous stored value; a farther dest raises it).
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+begin
+  select id into bid from tests.ids where k = 'booking2';
+  update public.carpool_bookings b
+     set dest_label = 'ไกลกว่า', dest_lat = 18.650, dest_lng = 99.800
+   where b.id = bid;
+end $$;
+commit;
+
+do $$
+declare
+  trip uuid;
+  stored numeric;
+  floor_km numeric;
+  honest numeric;
+begin
+  select id into trip from tests.ids where k = 'trip2';
+  select b.detour_km into stored
+    from public.carpool_bookings b
+   where b.id = (select id from tests.ids where k = 'booking2');
+  floor_km := private.carpool_detour_floor_km(trip, 18.650, 99.800);
+  if stored is distinct from floor_km then
+    raise exception 'dest change should store floor %, got %', floor_km, stored;
+  end if;
+  if floor_km <= 0 then
+    raise exception 'farther dest should raise a positive floor, got %', floor_km;
+  end if;
+  select b.detour_km into honest
+    from public.carpool_bookings b
+   where b.id = (select id from tests.ids where k = 'booking3');
+  if honest is distinct from 999 then
+    raise exception 'requester-only: stranger detour should stay 999, got %', honest;
+  end if;
+  perform tests.ok('dest change recomputes floor; charge only the requester');
+end $$;
+
 -- Discover/preview: rounded coords, no owner_id (stops follow origin/dest).
 begin;
 select tests.login(id) from tests.ids where k = 'stranger';
@@ -896,7 +977,7 @@ declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 19 then
+  if n < 22 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

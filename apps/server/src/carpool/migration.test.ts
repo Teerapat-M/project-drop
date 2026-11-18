@@ -175,6 +175,8 @@ describe('carpool SQL test file', () => {
     expect(testSql).toMatch(/underreported p_detour_km raised to floor/);
     expect(testSql).toMatch(/honest detour kept; charge only the requester/);
     expect(testSql).toMatch(/no-detour rider gets 0/);
+    expect(testSql).toMatch(/direct UPDATE detour_km is permission denied/);
+    expect(testSql).toMatch(/dest change recomputes floor; charge only the requester/);
   });
 });
 
@@ -198,7 +200,14 @@ describe('carpool trip stops migration', () => {
 
   it('makes carpool_book_seat store greatest(haversine floor, client detour)', () => {
     expect(stopsSql).toMatch(/create or replace function private\.carpool_haversine_km/);
-    expect(stopsSql).toMatch(/road_factor constant numeric := 1\.3/);
+    expect(stopsSql).toMatch(/road_factor constant numeric := 1\.0/);
+    expect(stopsSql).toMatch(/straight-line/);
+    expect(stopsSql).toMatch(/revoke update \(detour_km\) on table public\.carpool_bookings/);
+    expect(stopsSql).toMatch(/create or replace function public\.carpool_bookings_guard/);
+    expect(stopsSql).toMatch(/new\.detour_km := old\.detour_km/);
+    expect(stopsSql).toMatch(
+      /revoke execute on function public\.carpool_bookings_guard\(\) from public, anon, authenticated;/,
+    );
     expect(stopsSql).toMatch(/create or replace function private\.carpool_detour_floor_km/);
     expect(stopsSql).toMatch(
       /revoke all on function private\.carpool_haversine_km\([\s\S]*?\) from public, anon, authenticated;/,
