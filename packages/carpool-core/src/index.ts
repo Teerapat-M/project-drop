@@ -41,3 +41,11 @@ export {
   type TrunkRect,
   type TrunkLayout,
 } from './trunk';
+
+export {
+  BANGKOK_PROVINCE_CODE,
+  BANGKOK_CENTER,
+  THAI_PROVINCES,
+  provinceByCode,
+  type ThaiProvince,
+} from './thaiAdmin';

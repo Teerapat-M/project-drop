@@ -72,6 +72,52 @@ describe('computeFare — taxi A/B/C 12 km, B detour 1.5 km', () => {
   });
 });
 
+describe('computeFare — taxi passenger counts (driver never pays)', () => {
+  const driver = { id: 'driver', open: false, booked: false, role: 'owner_driver' as const };
+  const km = 12;
+  const main = 84;
+
+  it.each([
+    [1, 84],
+    [2, 42],
+    [3, 28],
+    [4, 21],
+  ] as const)('%s passenger(s) split %s THB with no detour', (n, share) => {
+    const seats = [
+      driver,
+      ...Array.from({ length: n }, (_, i) => passenger(String.fromCharCode(65 + i))),
+    ];
+    const result = computeFare({ vehicle: 'taxi', mainRouteKm: km, seats });
+    const p = byId(result);
+    expect(result.mainFareThb).toBe(main);
+    expect(p.driver.amountThb).toBe(0);
+    expect(p.driver.ownerDriverCostSharing).toBe(false);
+    expect(result.persons.filter((x) => x.amountThb > 0)).toHaveLength(n);
+    expect(p.A.amountThb).toBe(share);
+    expect(sumAmounts(result)).toBe(main);
+  });
+
+  it.each([1, 2, 3, 4] as const)('%s passenger(s) with B (or A) detour 1.5 km = +21 only to requester', (n) => {
+    const ids = Array.from({ length: n }, (_, i) => String.fromCharCode(65 + i));
+    const requester = n === 1 ? 'A' : 'B';
+    const seats = [
+      driver,
+      ...ids.map((id) => passenger(id, id === requester ? { detourKm: 1.5 } : {})),
+    ];
+    const result = computeFare({ vehicle: 'taxi', mainRouteKm: km, seats });
+    const p = byId(result);
+    const share = main / n;
+    expect(p.driver.amountThb).toBe(0);
+    expect(p[requester].breakdown.detourThb).toBe(21);
+    expect(p[requester].amountThb).toBe(share + 21);
+    for (const id of ids.filter((x) => x !== requester)) {
+      expect(p[id].breakdown.detourThb).toBe(0);
+      expect(p[id].amountThb).toBe(share);
+    }
+    expect(sumAmounts(result)).toBe(main + 21);
+  });
+});
+
 describe('computeFare — private car + owner-driver', () => {
   const result = computeFare({
     vehicle: 'private_car',
@@ -84,6 +130,23 @@ describe('computeFare — private car + owner-driver', () => {
     ],
   });
   const p = byId(result);
+
+  it.each([
+    [0, 84],
+    [1, 42],
+    [2, 28],
+    [3, 21],
+  ] as const)('driver plus %s rider(s) → %s THB each on the main fare', (n, share) => {
+    const seats = [
+      { id: 'driver', open: true, booked: true, role: 'owner_driver' as const },
+      ...Array.from({ length: n }, (_, i) => passenger(String.fromCharCode(65 + i))),
+    ];
+    const result = computeFare({ vehicle: 'private_car', mainRouteKm: 12, seats });
+    expect(result.mainFareThb).toBe(84);
+    expect(byId(result).driver.amountThb).toBe(share);
+    expect(byId(result).driver.ownerDriverCostSharing).toBe(true);
+    expect(result.persons.filter((x) => x.amountThb > 0)).toHaveLength(n + 1);
+  });
 
   it('counts the owner-driver as a payer (A 21, B 42, C 21, driver 21, total 105)', () => {
     expect(result.mainFareThb).toBe(84);
