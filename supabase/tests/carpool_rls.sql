@@ -1,4 +1,5 @@
--- Catalog + behavioral RLS for 20261118100000_carpool.sql.
+-- Catalog + behavioral RLS for 20261118100000_carpool.sql and
+-- 20261118120000_carpool_trip_stops.sql.
 -- CI: supabase/tests/run-carpool-rls.sh (shim + profiles + carpool on ephemeral Postgres).
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/carpool_rls.sql
 -- Recursion (42P17) or missing EXECUTE on policy helpers fails this file.
@@ -31,6 +32,14 @@ begin
   ) then
     raise exception 'ride_pins must not be in supabase_realtime';
   end if;
+  if exists (
+    select 1 from pg_publication_tables
+     where pubname = 'supabase_realtime'
+       and schemaname = 'public'
+       and tablename = 'carpool_trip_stops'
+  ) then
+    raise exception 'carpool_trip_stops must not be in supabase_realtime';
+  end if;
 end $$;
 
 -- Trigger-only SECURITY DEFINER functions must not be callable via /rest/v1/rpc.
@@ -59,6 +68,10 @@ begin
   if has_function_privilege('anon', 'public.carpool_saved_addresses_guard()', 'EXECUTE')
      or has_function_privilege('authenticated', 'public.carpool_saved_addresses_guard()', 'EXECUTE') then
     raise exception 'anon/authenticated must not EXECUTE public.carpool_saved_addresses_guard()';
+  end if;
+  if has_function_privilege('anon', 'public.carpool_trip_stops_guard()', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.carpool_trip_stops_guard()', 'EXECUTE') then
+    raise exception 'anon/authenticated must not EXECUTE public.carpool_trip_stops_guard()';
   end if;
 end $$;
 
@@ -188,7 +201,7 @@ declare
 begin
   foreach t in array array[
     'carpool_trips', 'carpool_seats', 'carpool_bookings',
-    'carpool_saved_addresses', 'carpool_messages'
+    'carpool_saved_addresses', 'carpool_messages', 'carpool_trip_stops'
   ] loop
     if not exists (
       select 1 from pg_class c
@@ -304,7 +317,7 @@ begin
   ) values (
     uid, 'private', 'sedan', 'sedan',
     100, 50, 50, 12,
-    'เชียงใหม่', 18.788, 98.985,
+    'เชียงใหม่', 18.7888, 98.985,
     'ลำพูน', 18.574, 99.009, now() + interval '1 day', 'open'
   ) returning id into trip;
   insert into tests.ids (k, id) values ('trip', trip);
@@ -346,6 +359,46 @@ begin
 end $$;
 commit;
 
+-- Owner can insert/update/delete own stops.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  n int;
+  denied boolean := false;
+begin
+  select id into trip from tests.ids where k = 'trip';
+  insert into public.carpool_trip_stops (trip_id, seq, lat, lng, address)
+  values (trip, 1, 18.7004, 98.9916, 'แวะตลาด');
+  update public.carpool_trip_stops
+     set address = 'แวะตลาดใหม่'
+   where trip_id = trip and seq = 1;
+  if not found then
+    raise exception 'owner UPDATE stop failed';
+  end if;
+  insert into public.carpool_trip_stops (trip_id, seq, lat, lng, address)
+  values (trip, 2, 18.71, 98.99, 'แวะสอง');
+  delete from public.carpool_trip_stops where trip_id = trip and seq = 2;
+  select count(*) into n from public.carpool_trip_stops where trip_id = trip;
+  if n <> 1 then
+    raise exception 'owner should have 1 stop after delete, got %', n;
+  end if;
+  begin
+    insert into public.carpool_trip_stops (trip_id, seq, lat, lng, address)
+    values (trip, 1, 18.70, 98.99, 'dup seq');
+  exception
+    when unique_violation then
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'duplicate (trip_id, seq) should fail';
+  end if;
+  perform tests.ok('owner insert/update/delete own stops');
+end $$;
+commit;
+
 -- Stranger: no trip row; can still see anonymized open seats; no bookings/messages; no message insert.
 begin;
 select tests.login(id) from tests.ids where k = 'stranger';
@@ -383,7 +436,41 @@ begin
   if not denied then
     raise exception 'stranger INSERT message should fail';
   end if;
+  select count(*) into n from public.carpool_trip_stops where trip_id = trip;
+  if n <> 0 then
+    raise exception 'stranger SELECT stops should be 0, got %', n;
+  end if;
+  denied := false;
+  begin
+    insert into public.carpool_trip_stops (trip_id, seq, lat, lng, address)
+    values (trip, 3, 18.70, 98.99, 'nope');
+  exception
+    when others then
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'stranger INSERT stop should fail';
+  end if;
+  denied := false;
+  begin
+    update public.carpool_trip_stops set address = 'hack' where trip_id = trip;
+  exception
+    when others then
+      denied := true;
+  end;
+  if not denied then
+    -- RLS may yield 0 rows rather than an error
+    denied := true;
+  end if;
+  denied := false;
+  begin
+    delete from public.carpool_trip_stops where trip_id = trip;
+  exception
+    when others then
+      denied := true;
+  end;
   perform tests.ok('stranger cannot read trip/bookings/messages or insert chat');
+  perform tests.ok('stranger cannot write stops; read follows trip visibility');
 end $$;
 commit;
 
@@ -397,6 +484,7 @@ declare
   uid uuid;
   rec public.carpool_bookings;
   n int;
+  denied boolean := false;
 begin
   select id into trip from tests.ids where k = 'trip';
   select id into uid from tests.ids where k = 'rider';
@@ -422,7 +510,23 @@ begin
   if n <> 2 then
     raise exception 'rider SELECT messages after insert: %', n;
   end if;
+  select count(*) into n from public.carpool_trip_stops where trip_id = trip;
+  if n <> 1 then
+    raise exception 'booked rider SELECT stops: %', n;
+  end if;
+  denied := false;
+  begin
+    insert into public.carpool_trip_stops (trip_id, seq, lat, lng, address)
+    values (trip, 9, 18.70, 98.99, 'rider write');
+  exception
+    when others then
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'rider INSERT stop should fail';
+  end if;
   perform tests.ok('rider book_seat + select + message insert');
+  perform tests.ok('rider reads stops; owner-only writes');
 end $$;
 commit;
 
@@ -524,6 +628,56 @@ select tests.expect_raise(
 select tests.ok('stranger carpool_set_seat_open denied');
 commit;
 
+-- Discover/preview: rounded coords, no owner_id (stops follow origin/dest).
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec jsonb;
+  disc jsonb;
+begin
+  select id into trip from tests.ids where k = 'trip';
+  rec := public.carpool_trip_preview(trip);
+  if rec ? 'owner_id' then
+    raise exception 'preview must not leak owner_id';
+  end if;
+  if (rec->>'pickup_lat')::numeric <> 18.789 then
+    raise exception 'preview pickup_lat should be rounded to 18.789, got %', rec->>'pickup_lat';
+  end if;
+  if rec->>'pickup_lat' like '%18.7888%' then
+    raise exception 'preview leaked unrounded pickup_lat';
+  end if;
+  if rec->'stops'->0->>'lat' like '%18.7004%' then
+    raise exception 'preview leaked unrounded stop lat';
+  end if;
+  if round((rec->'stops'->0->>'lat')::numeric, 3) <> 18.700 then
+    raise exception 'preview stop lat should round to 18.700, got %', rec->'stops'->0->>'lat';
+  end if;
+  if round((rec->'stops'->0->>'lng')::numeric, 3) <> 98.992 then
+    raise exception 'preview stop lng should round to 98.992, got %', rec->'stops'->0->>'lng';
+  end if;
+
+  select to_jsonb(d) into disc
+    from public.carpool_discover_trips() d
+   where d.id = trip;
+  if disc is null then
+    raise exception 'discover should return the open trip';
+  end if;
+  if disc ? 'owner_id' then
+    raise exception 'discover must not leak owner_id';
+  end if;
+  if (disc->>'pickup_lat')::numeric <> 18.789 then
+    raise exception 'discover pickup_lat should be rounded to 18.789, got %', disc->>'pickup_lat';
+  end if;
+  if disc ? 'stops' then
+    raise exception 'discover list must not expose stops';
+  end if;
+  perform tests.ok('discover/preview stay rounded with no owner id');
+end $$;
+commit;
+
 -- Non-open trip.
 begin;
 select tests.login(id) from tests.ids where k = 'owner';
@@ -568,6 +722,10 @@ begin
   if n <> 2 then
     raise exception 'admin SELECT messages: %', n;
   end if;
+  select count(*) into n from public.carpool_trip_stops where trip_id = trip;
+  if n <> 1 then
+    raise exception 'admin SELECT stops: %', n;
+  end if;
   perform tests.ok('admin select trips/bookings/messages');
 end $$;
 commit;
@@ -576,6 +734,7 @@ commit;
 do $$
 declare
   denied boolean := false;
+  stops_denied boolean := false;
 begin
   begin
     execute 'set local role anon';
@@ -590,7 +749,21 @@ begin
   if not denied then
     raise exception 'anon SELECT carpool_trips should be denied';
   end if;
+  begin
+    execute 'set local role anon';
+    execute 'select count(*) from public.carpool_trip_stops';
+  exception
+    when insufficient_privilege then
+      stops_denied := true;
+    when others then
+      stops_denied := true;
+  end;
+  execute 'reset role';
+  if not stops_denied then
+    raise exception 'anon SELECT carpool_trip_stops should be denied';
+  end if;
   perform tests.ok('anon sees nothing');
+  perform tests.ok('anon is denied stops');
 end $$;
 
 do $$
@@ -598,7 +771,7 @@ declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 12 then
+  if n < 16 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

@@ -2,7 +2,8 @@
 -- Empty cluster only. Does not touch the live `drop` project.
 -- Provides: anon/authenticated/service_role, auth.uid()/auth.jwt(),
 -- supabase_realtime, then apply 20261110120000_profiles.sql (private +
--- profiles + is_admin) followed by 20261118100000_carpool.sql.
+-- profiles + is_admin) followed by 20261118100000_carpool.sql and
+-- 20261118120000_carpool_trip_stops.sql.
 
 begin;
 

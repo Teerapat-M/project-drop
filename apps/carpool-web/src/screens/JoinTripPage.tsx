@@ -16,6 +16,7 @@ import { LuggageBlock } from '../components/LuggageBlock';
 import type { PickedPlace } from '../maps/MapProvider';
 import { PlaceField } from '../maps/PlaceField';
 import { RouteMiniMap } from '../maps/RouteMiniMap';
+import { detourFromViaKm } from '../maps/routePoints';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
 import type { SeatPosition, SeatState, TripPreview } from '../types';
@@ -32,6 +33,7 @@ export function JoinTripPage() {
   const [dest, setDest] = useState('ตลาดกลาง');
   const [destPlace, setDestPlace] = useState<PickedPlace | null>(null);
   const [detour, setDetour] = useState(0);
+  const [detourEdited, setDetourEdited] = useState(false);
   const [h, setH] = useState(50);
   const [w, setW] = useState(40);
   const [d, setD] = useState(25);
@@ -240,6 +242,12 @@ export function JoinTripPage() {
               lng: preview.pickup_lng,
               address: preview.pickup_label,
             }}
+            waypoints={(preview.stops ?? []).map((s) => ({
+              id: `w${s.seq}`,
+              lat: s.lat,
+              lng: s.lng,
+              address: s.address,
+            }))}
             stops={
               destPlace && (destPlace.lat !== preview.dest_lat || destPlace.lng !== preview.dest_lng)
                 ? [{ ...destPlace, id: 'you' }]
@@ -249,6 +257,10 @@ export function JoinTripPage() {
               lat: preview.dest_lat,
               lng: preview.dest_lng,
               address: preview.dest_label,
+            }}
+            onKm={(viaKm) => {
+              if (detourEdited) return;
+              setDetour(detourFromViaKm(viaKm, preview.route_km));
             }}
           />
         </div>
@@ -268,7 +280,17 @@ export function JoinTripPage() {
         />
         <label className="field">
           ระยะทางที่อ้อม (กม.)
-          <input type="number" min={0} step="0.1" value={detour} onChange={(e) => setDetour(Number(e.target.value))} />
+          <input
+            data-testid="detour-km"
+            type="number"
+            min={0}
+            step="0.1"
+            value={detour}
+            onChange={(e) => {
+              setDetourEdited(true);
+              setDetour(Number(e.target.value));
+            }}
+          />
         </label>
         <p className="muted">สัมภาระของคุณ {noBags ? 'ไม่มี' : `${w} × ${h} × ${d} ซม. = ${bagL.toFixed(0)} ลิตร`}</p>
       </section>

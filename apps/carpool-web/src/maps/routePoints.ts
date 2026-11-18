@@ -8,35 +8,62 @@ export type OrderedRoute = {
   labels: string[];
 };
 
+function finiteStops(stops: readonly NamedStop[]): NamedStop[] {
+  return stops.filter((s) => Number.isFinite(s.coord.lat) && Number.isFinite(s.coord.lng));
+}
+
 /**
- * origin → stops in carpool-core shortest drop-off order → destination.
+ * origin → saved waypoints (fixed seq) → extra stops in carpool-core shortest
+ * drop-off order (from the last waypoint, else origin) → destination.
  * Destination stays last (not part of the permutation).
  */
 export async function orderedRoute(input: {
   origin: LatLng | null;
   originLabel: string;
-  stops: readonly NamedStop[];
+  waypoints?: readonly NamedStop[];
+  stops?: readonly NamedStop[];
   destination: LatLng | null;
   destinationLabel: string;
 }): Promise<OrderedRoute | null> {
   if (!input.origin || !input.destination) return null;
-  const stops = input.stops.filter((s) => Number.isFinite(s.coord.lat) && Number.isFinite(s.coord.lng));
-  if (!stops.length) {
-    return {
-      points: [input.origin, input.destination],
-      labels: [input.originLabel, input.destinationLabel],
-    };
+  const waypoints = finiteStops(input.waypoints ?? []);
+  const extra = finiteStops(input.stops ?? []);
+  let middle: NamedStop[] = [...waypoints];
+  if (extra.length) {
+    const pickup = (middle.at(-1)?.coord ?? input.origin) as GeoPoint;
+    const result = await orderDropoffs({
+      pickup,
+      riders: extra.map((s) => ({ id: s.id, coord: s.coord })),
+    });
+    const byId = new Map(extra.map((s) => [s.id, s]));
+    middle = [
+      ...middle,
+      ...result.order.map((id) => byId.get(id)).filter((s): s is NamedStop => Boolean(s)),
+    ];
   }
-  const result = await orderDropoffs({
-    pickup: input.origin as GeoPoint,
-    riders: stops.map((s) => ({ id: s.id, coord: s.coord })),
-  });
-  const byId = new Map(stops.map((s) => [s.id, s]));
-  const ordered = result.order
-    .map((id) => byId.get(id))
-    .filter((s): s is NamedStop => Boolean(s));
   return {
-    points: [input.origin, ...ordered.map((s) => s.coord), input.destination],
-    labels: [input.originLabel, ...ordered.map((s) => s.label), input.destinationLabel],
+    points: [input.origin, ...middle.map((s) => s.coord), input.destination],
+    labels: [input.originLabel, ...middle.map((s) => s.label), input.destinationLabel],
   };
+}
+
+/** Persist create-trip จุดแวะ in the ordered path (skip origin + destination). */
+export function waypointsFromOrdered(ordered: OrderedRoute): {
+  seq: number;
+  lat: number;
+  lng: number;
+  address: string;
+}[] {
+  return ordered.points.slice(1, -1).map((p, i) => ({
+    seq: i + 1,
+    lat: p.lat,
+    lng: p.lng,
+    address: ordered.labels[i + 1] ?? '',
+  }));
+}
+
+/** Detour charged only to that requester via computeFare `detourKm`. */
+export function detourFromViaKm(viaKm: number, mainRouteKm: number): number {
+  if (!Number.isFinite(viaKm) || !Number.isFinite(mainRouteKm)) return 0;
+  return Math.max(0, viaKm - mainRouteKm);
 }

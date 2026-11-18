@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useIsDesktop } from '../lib/media';
-import { FALLBACK_ORIGIN, type AutocompletePrediction, type LatLng, type PickedPlace } from './MapProvider';
+import {
+  FALLBACK_ORIGIN,
+  MIN_AUTOCOMPLETE_CHARS,
+  type AutocompletePrediction,
+  type LatLng,
+  type PickedPlace,
+} from './MapProvider';
 import { MapView } from './MapView';
 import { useMapProvider } from './MapsProvider';
 
@@ -20,6 +26,7 @@ export function PlacePicker({ title, initial, onPick, onClose }: Props) {
   const [address, setAddress] = useState(initial?.address ?? '');
   const [busy, setBusy] = useState(false);
   const tokenRef = useRef(provider.newAutocompleteSession());
+  const pickedPredictionRef = useRef(false);
 
   useEffect(() => {
     void provider.load();
@@ -27,7 +34,7 @@ export function PlacePicker({ title, initial, onPick, onClose }: Props) {
 
   useEffect(() => {
     const q = query.trim();
-    if (!q) {
+    if (q.length < MIN_AUTOCOMPLETE_CHARS) {
       setHits([]);
       return;
     }
@@ -38,6 +45,7 @@ export function PlacePicker({ title, initial, onPick, onClose }: Props) {
   }, [provider, query]);
 
   const applyCoord = async (coord: LatLng) => {
+    pickedPredictionRef.current = false;
     setPin(coord);
     setBusy(true);
     try {
@@ -53,6 +61,7 @@ export function PlacePicker({ title, initial, onPick, onClose }: Props) {
     try {
       const place = await provider.placeDetails(hit.placeId, tokenRef.current);
       tokenRef.current = provider.newAutocompleteSession();
+      pickedPredictionRef.current = true;
       setPin(place);
       setAddress(place.address);
       setQuery(place.address);
@@ -63,7 +72,15 @@ export function PlacePicker({ title, initial, onPick, onClose }: Props) {
   };
 
   const confirm = () => {
-    onPick({ lat: pin.lat, lng: pin.lng, address: address || query });
+    if (!pickedPredictionRef.current) {
+      provider.endAutocompleteSession(tokenRef.current);
+      tokenRef.current = provider.newAutocompleteSession();
+    }
+    onPick({
+      lat: pin.lat,
+      lng: pin.lng,
+      address: address || query || `${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}`,
+    });
   };
 
   const mode = desktop ? 'modal' : 'fullscreen';

@@ -26,6 +26,8 @@ export function createMockMapProvider(): MapProvider & {
   placeDetails: ReturnType<typeof vi.fn>;
   reverseGeocode: ReturnType<typeof vi.fn>;
   route: ReturnType<typeof vi.fn>;
+  newAutocompleteSession: ReturnType<typeof vi.fn>;
+  endAutocompleteSession: ReturnType<typeof vi.fn>;
 } {
   const load = vi.fn(async () => undefined);
   const autocomplete = vi.fn(async (query: string) =>
@@ -33,7 +35,13 @@ export function createMockMapProvider(): MapProvider & {
   );
   const placeDetails = vi.fn(async () => MOCK_PLACE);
   const reverseGeocode = vi.fn(async (coord: LatLng) => `ปักหมุด ${coord.lat.toFixed(3)},${coord.lng.toFixed(3)}`);
-  const route = vi.fn(async () => ({ distanceKm: 12, encodedPolyline: 'abc' }));
+  const route = vi.fn(async (points: readonly LatLng[]) => ({
+    distanceKm: points.length <= 2 ? 12 : 15,
+    encodedPolyline: 'abc',
+  }));
+  let sessionN = 0;
+  const newAutocompleteSession = vi.fn(() => `session-${(sessionN += 1)}`);
+  const endAutocompleteSession = vi.fn();
 
   return {
     available: true,
@@ -42,7 +50,8 @@ export function createMockMapProvider(): MapProvider & {
     placeDetails,
     reverseGeocode,
     route,
-    newAutocompleteSession: () => 'session-1',
+    newAutocompleteSession,
+    endAutocompleteSession,
     renderMap(container: HTMLElement, options: MapRenderOptions): MapInstance {
       container.replaceChildren();
       const node = document.createElement('button');

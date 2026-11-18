@@ -26,7 +26,7 @@ Bell must create the key himself:
 
 Do not commit the live value. The web app never sends the key to our server; it is a browser key, so referrer + API + quota restrictions are the real safety net.
 
-**Limits (no migration in this PR).** Create-trip จุดแวะ are used only to order the mini-map route and to set `route_km`; they are not stored on `carpool_trips` (the table still has one pickup and one dest). If Routes `computeRoutes` is blocked in the browser, the provider falls back to the Maps JS Directions service. Markers use `google.maps.Marker` (no Cloud mapId). OpenStreetMap later: implement `MapProvider` and swap it in `createMapProvider`.
+Create-trip จุดแวะ are stored on `carpool_trip_stops` (seq order after `orderDropoffs`), not as jsonb on `carpool_trips`. Join mini-map and drop-off rebuild origin → saved stops → destination. If Routes `computeRoutes` is blocked in the browser, the provider falls back to the Maps JS Directions service. Markers use `google.maps.Marker` (no Cloud mapId). OpenStreetMap later: implement `MapProvider` and swap it in `createMapProvider`.
 
 ## Scripts
 
@@ -50,10 +50,10 @@ Static Vite app on **Vercel**:
 - Env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, optional `VITE_GOOGLE_MAPS_API_KEY`
 - Auth → URL configuration: add the Vercel origin to Redirect URLs
 
-Do **not** apply the SQL to the live `drop` project from CI. Bell runs `supabase/migrations/20261118100000_carpool.sql` in the SQL editor after the existing Drop migrations. CI applies it only to an ephemeral Postgres (`supabase/tests/run-carpool-rls.sh`).
+Do **not** apply the SQL to the live `drop` project from CI. Bell runs `supabase/migrations/20261118100000_carpool.sql` then `20261118120000_carpool_trip_stops.sql` in the SQL editor after the existing Drop migrations. CI applies them only to an ephemeral Postgres (`supabase/tests/run-carpool-rls.sh`).
 
 ## Supabase dashboard (Bell)
 
 No new Exposed schema: tables are `carpool_*` in `public`.
 
-After applying the migration, confirm **Database → Publications → `supabase_realtime`** includes `carpool_seats` and `carpool_messages`, and still **excludes** `ride_pins`.
+After applying the migrations, confirm **Database → Publications → `supabase_realtime`** includes `carpool_seats` and `carpool_messages`, and still **excludes** `ride_pins` and `carpool_trip_stops`.

@@ -46,10 +46,14 @@ export type MarkerRenderOptions = {
   onDragEnd?: (coord: LatLng) => void;
 };
 
+/** Places Autocomplete (New) bills a session; skip until 3 trimmed chars. */
+export const MIN_AUTOCOMPLETE_CHARS = 3;
+
 export interface MapProvider {
   readonly available: boolean;
   load: () => Promise<void>;
   newAutocompleteSession: () => string;
+  endAutocompleteSession: (sessionToken: string) => void;
   autocomplete: (query: string, sessionToken: string) => Promise<AutocompletePrediction[]>;
   placeDetails: (placeId: string, sessionToken: string) => Promise<PickedPlace>;
   reverseGeocode: (coord: LatLng) => Promise<string>;
@@ -91,6 +95,10 @@ export class FallbackMapProvider implements MapProvider {
 
   newAutocompleteSession(): string {
     return 'fallback';
+  }
+
+  endAutocompleteSession(_sessionToken: string): void {
+    return;
   }
 
   async autocomplete(_query: string, _sessionToken: string): Promise<AutocompletePrediction[]> {

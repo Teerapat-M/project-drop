@@ -24,5 +24,7 @@ describe('Google Maps request shape + no-key fallback', () => {
     expect(fallback.available).toBe(false);
     await expect(fallback.load()).resolves.toBeUndefined();
     await expect(fallback.autocomplete('เชียงใหม่', 't')).resolves.toEqual([]);
+    await expect(fallback.autocomplete('ab', 't')).resolves.toEqual([]);
+    fallback.endAutocompleteSession('t');
   });
 });

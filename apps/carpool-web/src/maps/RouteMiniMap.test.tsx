@@ -40,6 +40,21 @@ describe('RouteMiniMap', () => {
     expect(screen.getByTestId('route-chain').textContent).toContain(MOCK_DEST.address);
   });
 
+  it('keeps saved waypoints in order on the main path', async () => {
+    const provider = createMockMapProvider();
+    render(
+      <MapsProvider provider={provider}>
+        <RouteMiniMap
+          origin={MOCK_PLACE}
+          waypoints={[{ ...MOCK_PLACE, id: 'w1', address: 'แวะ' }]}
+          destination={MOCK_DEST}
+        />
+      </MapsProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId('route-chain').textContent).toContain('แวะ'));
+    expect(screen.getByTestId('route-chain').textContent).toMatch(/แวะ.*ลำพูน/);
+  });
+
   it('falls back to the placeholder map when no key is configured', () => {
     const provider = new FallbackMapProvider();
     const load = vi.spyOn(provider, 'load');

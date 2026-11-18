@@ -1,5 +1,6 @@
 import {
   FALLBACK_ORIGIN,
+  MIN_AUTOCOMPLETE_CHARS,
   type AutocompletePrediction,
   type LatLng,
   type MapInstance,
@@ -177,6 +178,10 @@ export class GoogleMapProvider implements MapProvider {
     return id;
   }
 
+  endAutocompleteSession(sessionToken: string): void {
+    this.tokens.delete(sessionToken);
+  }
+
   private sessionToken(id: string): unknown {
     const maps = gmaps();
     const Token = maps.places?.AutocompleteSessionToken;
@@ -190,7 +195,7 @@ export class GoogleMapProvider implements MapProvider {
 
   async autocomplete(query: string, sessionToken: string): Promise<AutocompletePrediction[]> {
     const q = query.trim();
-    if (!q) return [];
+    if (q.length < MIN_AUTOCOMPLETE_CHARS) return [];
     await this.load();
     const maps = gmaps();
     const Suggestion = maps.places?.AutocompleteSuggestion;

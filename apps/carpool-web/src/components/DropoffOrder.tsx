@@ -5,17 +5,27 @@ export type Stop = { id: string; label: string };
 type Props = {
   result: DropoffOrderResult;
   pickupLabel: string;
+  waypoints?: Stop[];
   stops: Stop[];
   driverView?: boolean;
   youId?: string | null;
 };
 
-export function DropoffOrder({ result, pickupLabel, stops, driverView = false, youId }: Props) {
+export function DropoffOrder({
+  result,
+  pickupLabel,
+  waypoints = [],
+  stops,
+  driverView = false,
+  youId,
+}: Props) {
   const byId = Object.fromEntries(stops.map((s) => [s.id, s.label]));
   const mark = (id: string, label: string) => (id === youId ? `${label} (คุณ)` : label);
-  const chain = ['รับ', ...result.order.map((id, i) => `${i + 1} ${mark(id, byId[id] ?? id)}`)].join(
-    ' → ',
-  );
+  const chain = [
+    'รับ',
+    ...waypoints.map((w) => w.label),
+    ...result.order.map((id, i) => `${i + 1} ${mark(id, byId[id] ?? id)}`),
+  ].join(' → ');
 
   return (
     <section data-testid="dropoff-order" className="stack">
@@ -33,6 +43,11 @@ export function DropoffOrder({ result, pickupLabel, stops, driverView = false, y
         <li className="card" data-testid="stop-pickup">
           รับ {pickupLabel}
         </li>
+        {waypoints.map((w) => (
+          <li key={w.id} className="card" data-testid={`stop-way-${w.id}`}>
+            แวะ {w.label}
+          </li>
+        ))}
         {result.order.map((id, i) => (
           <li key={id} className="card" data-testid={`stop-${id}`}>
             {i + 1}. ส่ง {mark(id, byId[id] ?? id)}

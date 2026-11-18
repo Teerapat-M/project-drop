@@ -8,12 +8,23 @@ import { orderedRoute, type NamedStop } from './routePoints';
 
 type Props = {
   origin: PickedPlace | null;
+  waypoints?: readonly (PickedPlace & { id: string })[];
   stops?: readonly (PickedPlace & { id: string })[];
   destination: PickedPlace | null;
   onKm?: (km: number) => void;
 };
 
-export function RouteMiniMap({ origin, stops = [], destination, onKm }: Props) {
+function namedFrom(places: readonly (PickedPlace & { id: string })[]): NamedStop[] {
+  return places
+    .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng))
+    .map((s, i) => ({
+      id: s.id,
+      coord: { lat: s.lat, lng: s.lng },
+      label: s.address || `จุดแวะ ${i + 1}`,
+    }));
+}
+
+export function RouteMiniMap({ origin, waypoints = [], stops = [], destination, onKm }: Props) {
   const provider = useMapProvider();
   const [labels, setLabels] = useState<string[]>([]);
   const [points, setPoints] = useState<LatLng[] | null>(null);
@@ -22,23 +33,18 @@ export function RouteMiniMap({ origin, stops = [], destination, onKm }: Props) {
   onKmRef.current = onKm;
   const originKey = origin ? `${origin.lat},${origin.lng},${origin.address}` : '';
   const destKey = destination ? `${destination.lat},${destination.lng},${destination.address}` : '';
+  const waypointsKey = waypoints.map((s) => `${s.id}:${s.lat},${s.lng},${s.address}`).join('|');
   const stopsKey = stops.map((s) => `${s.id}:${s.lat},${s.lng},${s.address}`).join('|');
 
   useEffect(() => {
     let dead = false;
     const handle = window.setTimeout(() => {
       void (async () => {
-        const named: NamedStop[] = stops
-          .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng))
-          .map((s, i) => ({
-            id: s.id,
-            coord: { lat: s.lat, lng: s.lng },
-            label: s.address || `จุดแวะ ${i + 1}`,
-          }));
         const ordered = await orderedRoute({
           origin: origin ? { lat: origin.lat, lng: origin.lng } : null,
           originLabel: origin?.address || 'ต้นทาง',
-          stops: named,
+          waypoints: namedFrom(waypoints),
+          stops: namedFrom(stops),
           destination: destination ? { lat: destination.lat, lng: destination.lng } : null,
           destinationLabel: destination?.address || 'ปลายทาง',
         });
@@ -62,7 +68,7 @@ export function RouteMiniMap({ origin, stops = [], destination, onKm }: Props) {
       dead = true;
       window.clearTimeout(handle);
     };
-  }, [originKey, destKey, stopsKey, provider]);
+  }, [originKey, destKey, waypointsKey, stopsKey, provider]);
 
   const chain = labels.length ? labels.join(' → ') : 'เลือกต้นทางและปลายทางเพื่อดูเส้นทาง';
   const showMap = provider.available && (points?.length ?? 0) >= 2;

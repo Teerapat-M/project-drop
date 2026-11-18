@@ -30,6 +30,30 @@ describe('PlacePicker', () => {
     await waitFor(() => expect(provider.placeDetails).toHaveBeenCalledWith('p1', 'session-1'));
     fireEvent.click(screen.getByTestId('place-confirm'));
     expect(onPick).toHaveBeenCalledWith(MOCK_PLACE);
+    expect(provider.endAutocompleteSession).not.toHaveBeenCalled();
+  });
+
+  it('does not autocomplete until 3 trimmed characters, still debounced', async () => {
+    const { provider } = renderPicker(390);
+    fireEvent.change(screen.getByTestId('place-search'), { target: { value: 'วโ' } });
+    await new Promise((r) => setTimeout(r, 250));
+    expect(provider.autocomplete).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByTestId('place-search'), { target: { value: 'วโรรส' } });
+    expect(provider.autocomplete).not.toHaveBeenCalled();
+    await waitFor(() => expect(provider.autocomplete).toHaveBeenCalledTimes(1));
+    expect(provider.autocomplete).toHaveBeenCalledWith('วโรรส', 'session-1');
+  });
+
+  it('ends the Places session when confirming a dropped pin without a prediction', async () => {
+    const { provider, onPick } = renderPicker(390);
+    await waitFor(() => expect(screen.getByTestId('mock-map')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('mock-map'));
+    await waitFor(() => expect(provider.reverseGeocode).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId('place-confirm'));
+    expect(provider.endAutocompleteSession).toHaveBeenCalled();
+    expect(provider.endAutocompleteSession.mock.calls[0]?.[0]).toMatch(/^session-/);
+    expect(provider.newAutocompleteSession.mock.calls.length).toBeGreaterThan(1);
+    expect(onPick).toHaveBeenCalled();
   });
 
   it('tap-to-drop pin reverse-geocodes in Thai and confirms that point', async () => {

@@ -10,6 +10,7 @@ import { ICON_CHOICES, VEHICLE_LABEL } from '../lib/carIcons';
 import { FALLBACK_DEST, FALLBACK_ORIGIN, type PickedPlace } from '../maps/MapProvider';
 import { PlaceField } from '../maps/PlaceField';
 import { RouteMiniMap } from '../maps/RouteMiniMap';
+import { orderedRoute, waypointsFromOrdered } from '../maps/routePoints';
 import { useMapProvider } from '../maps/MapsProvider';
 import { positionsFor, SEAT_LABELS } from '../lib/seats';
 import { thaiRpcError } from '../lib/seatRpc';
@@ -125,6 +126,34 @@ export function CreateTripPage() {
       return;
     }
     const id = data.id as string;
+    const mids = stops
+      .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng))
+      .map((s) => ({
+        ...s,
+        address: s.address.trim() || `${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}`,
+      }));
+    const ordered = await orderedRoute({
+      origin: { lat: origin.lat, lng: origin.lng },
+      originLabel: origin.address,
+      stops: mids.map((s) => ({
+        id: s.id,
+        coord: { lat: s.lat, lng: s.lng },
+        label: s.address,
+      })),
+      destination: { lat: destination.lat, lng: destination.lng },
+      destinationLabel: destination.address,
+    });
+    const rows = ordered ? waypointsFromOrdered(ordered) : [];
+    if (rows.length) {
+      const { error: stopError } = await supabase.from('carpool_trip_stops').insert(
+        rows.map((row) => ({ trip_id: id, ...row })),
+      );
+      if (stopError) {
+        setBusy(false);
+        setError(stopError.message);
+        return;
+      }
+    }
     for (const p of positions) {
       if (!open[p]) {
         const { error: seatError } = await supabase.rpc('carpool_set_seat_open', {

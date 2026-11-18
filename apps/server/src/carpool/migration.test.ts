@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 const root = join(__dirname, '../../../../supabase');
 const sql = readFileSync(join(root, 'migrations/20261118100000_carpool.sql'), 'utf8');
+const stopsSql = readFileSync(join(root, 'migrations/20261118120000_carpool_trip_stops.sql'), 'utf8');
 const testSql = readFileSync(join(root, 'tests/carpool_rls.sql'), 'utf8');
 const ridesSql = readFileSync(join(root, 'migrations/20261110180000_rides.sql'), 'utf8');
 const revokeSql = readFileSync(
@@ -167,5 +168,40 @@ describe('carpool SQL test file', () => {
     expect(testSql).toMatch(/owner carpool_set_seat_open toggle/);
     expect(testSql).toMatch(/cannot close booked seat via carpool_set_seat_open/);
     expect(testSql).toMatch(/stranger carpool_set_seat_open denied/);
+    expect(testSql).toMatch(/owner insert\/update\/delete own stops/);
+    expect(testSql).toMatch(/stranger cannot write stops/);
+    expect(testSql).toMatch(/discover\/preview stay rounded with no owner id/);
+    expect(testSql).toMatch(/anon is denied stops/);
+  });
+});
+
+describe('carpool trip stops migration', () => {
+  it('is a new file after 20261118100000 and does not edit it', () => {
+    expect(sql).not.toMatch(/carpool_trip_stops/);
+    expect(stopsSql).toMatch(/create table public\.carpool_trip_stops/);
+    expect(stopsSql).toMatch(/unique \(trip_id, seq\)/);
+    expect(stopsSql).toMatch(/on delete cascade/);
+    expect(stopsSql).toMatch(/alter table public\.carpool_trip_stops enable row level security/);
+  });
+
+  it('mirrors trip visibility for reads and owner-only writes', () => {
+    expect(stopsSql).toMatch(/private\.carpool_is_trip_owner\(trip_id\)/);
+    expect(stopsSql).toMatch(/private\.carpool_is_booked_rider\(trip_id\)/);
+    expect(stopsSql).toMatch(/carpool_trip_stops_insert_owner/);
+    expect(stopsSql).toMatch(/revoke execute on function public\.carpool_trip_stops_guard\(\) from public, anon, authenticated;/);
+    expect(stopsSql).toMatch(/set search_path = ''/);
+    expect(stopsSql).not.toMatch(/add table public\.carpool_trip_stops/);
+  });
+
+  it('replaces preview with rounded stop coords and no owner_id', () => {
+    const preview =
+      stopsSql.match(
+        /create or replace function public\.carpool_trip_preview[\s\S]*?end;\n\$\$;/,
+      )?.[0] ?? '';
+    expect(preview).toMatch(/pg_catalog\.round\(st\.lat::numeric, 3\)/);
+    expect(preview).toMatch(/pg_catalog\.round\(st\.lng::numeric, 3\)/);
+    expect(preview).not.toMatch(/'owner_id'/);
+    expect(preview).not.toMatch(/t\.owner_id as/);
+    expect(preview).toMatch(/'stops'/);
   });
 });
