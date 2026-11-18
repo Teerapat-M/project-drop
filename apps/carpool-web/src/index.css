@@ -169,12 +169,26 @@ a {
   align-items: center;
 }
 
+.check-row {
+  min-height: var(--tap);
+  cursor: pointer;
+}
+
+.check-row input[type='checkbox'] {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  flex-shrink: 0;
+  accent-color: #222;
+}
+
 .stack {
   display: grid;
   gap: 12px;
 }
 
-.home-create-inline {
+.btn.home-create-inline {
   display: none;
 }
 
@@ -287,7 +301,6 @@ a {
   text-align: center;
   border-radius: 12px;
   min-height: var(--tap);
-  display: flex;
   align-items: center;
   justify-content: center;
   font-size: 13px;
@@ -337,15 +350,23 @@ a {
 }
 
 .seat-map {
+  --car-ar: 250 / 550;
+  position: relative;
   width: 100%;
-  max-width: 280px;
+  max-width: 250px;
   margin: 0 auto;
+  aspect-ratio: var(--car-ar);
+  container: car / inline-size;
 }
 
-.seat-map svg {
+.seat-map-car {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  height: auto;
-  display: block;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
 }
 
 .overflow-block {
@@ -397,6 +418,7 @@ a {
 
 .chat-sheet-title {
   text-align: center;
+  font-weight: 700;
 }
 
 .chat-sheet-body {
@@ -435,9 +457,353 @@ a {
   border-radius: 12px;
 }
 
+.trip-card {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 12px 12px;
+  align-items: start;
+}
+
+.trip-card .btn {
+  grid-column: 2;
+  justify-self: end;
+}
+
 .trip-card h3 {
   margin: 0 0 4px;
   font-size: 16px;
+}
+
+.car-photo {
+  width: 56px;
+  height: 40px;
+  object-fit: contain;
+  display: block;
+}
+
+.car-photo-sm {
+  width: 28px;
+  height: 20px;
+}
+
+.icon-choice .car-photo {
+  width: 48px;
+  height: 32px;
+}
+
+.badge.taxi {
+  background: #222;
+  color: #fff;
+  margin-left: 6px;
+}
+
+.badge.waiting {
+  background: var(--drop-primary);
+  color: var(--drop-on-primary);
+}
+
+.badge.completed,
+.badge.cancelled,
+.badge.in_progress {
+  justify-self: end;
+}
+
+.trip-head {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.history-card {
+  text-decoration: none;
+  color: inherit;
+  grid-template-columns: 56px 1fr auto;
+}
+
+.history-card .muted:first-child {
+  grid-column: 1 / 3;
+}
+
+.seat-slot {
+  position: absolute;
+  container: seat / size;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.seat-hit {
+  pointer-events: auto;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  height: 100%;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-family: 'Noto Sans Thai', sans-serif;
+}
+
+.seat-hit:disabled {
+  cursor: default;
+}
+
+.seat-face {
+  position: relative;
+  box-sizing: border-box;
+  width: 100cqw;
+  height: 100cqh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 3px;
+  border: 1px solid #333333;
+  border-radius: max(4px, calc(8 * 100cqw / 250));
+  background: #ffffff;
+  color: #333333;
+  overflow: hidden;
+}
+
+.seat-face[data-state='selected'] {
+  background: #333333;
+  border-color: #333333;
+  color: #ffffff;
+}
+
+.seat-face[data-state='booked'] {
+  background: #d8d8d8;
+  border-color: #bdbdbd;
+  color: #222222;
+}
+
+.seat-face[data-state='locked'] {
+  background: #e8e8e8;
+  border-color: #333333;
+  color: #333333;
+}
+
+/* Closed is not in Penpot; muted grey well, faded label. */
+.seat-face[data-state='closed'] {
+  background: #eeeeee;
+  border-color: #c8c8c8;
+  color: #8a8a8a;
+}
+
+.seat-copy {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  width: 100%;
+  text-align: center;
+}
+
+.seat-code,
+.seat-caption {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seat-code {
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.15;
+}
+
+.seat-caption {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.seat-lock {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 12px;
+  height: 12px;
+}
+
+@container car (min-width: 0px) {
+  .seat-code {
+    font-size: max(8px, calc(10 * 100cqw / 250));
+  }
+  .seat-caption {
+    font-size: max(8px, calc(11 * 100cqw / 250));
+  }
+  .seat-lock {
+    width: max(10px, calc(12 * 100cqw / 250));
+    height: max(10px, calc(12 * 100cqw / 250));
+  }
+  .trunk-label {
+    font-size: max(9px, calc(12 * 100cqw / 250));
+  }
+  .trunk-remain {
+    font-size: max(8px, calc(10 * 100cqw / 250));
+  }
+}
+
+.trunk-slot {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.trunk-label {
+  position: relative;
+  z-index: 2;
+  margin: 0;
+  padding: 2px 6px;
+  background: #ffffff;
+  border: 1px solid #111111;
+  border-radius: 6px;
+  color: #111111;
+  font-family: 'Noto Sans Thai', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.trunk-frame {
+  position: absolute;
+  inset: 0;
+}
+
+.trunk-rect {
+  position: absolute;
+  overflow: hidden;
+  background: #e8e8e8;
+  border: 1px solid #333333;
+}
+
+.trunk-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #cfcfcf;
+}
+
+.trunk-fill.is-overflow {
+  background: var(--drop-danger);
+}
+
+.trunk-remain {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Noto Sans Thai', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  color: #333;
+  z-index: 1;
+  padding: 4px;
+  text-align: center;
+}
+
+.chat-bubble {
+  position: fixed;
+  right: 8px;
+  bottom: calc(var(--nav-h) + 10px);
+  z-index: 35;
+  width: var(--tap);
+  height: var(--tap);
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.chat-bubble img {
+  width: 40px;
+  height: 40px;
+}
+
+.chat-sheet-title {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.chat-sheet-body {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-msg {
+  max-width: 82%;
+  padding: 10px 12px;
+  border-radius: 14px;
+}
+
+.chat-msg.mine {
+  align-self: flex-end;
+  background: #222;
+  color: #fff;
+}
+
+.chat-msg.mine .muted {
+  color: #ccc;
+}
+
+.chat-msg.theirs {
+  align-self: flex-start;
+  background: #f3f3f3;
+  border: 1px solid var(--drop-border);
+}
+
+.map-placeholder {
+  min-height: 140px;
+  background: #f3f3f3;
+  border: 1px dashed var(--drop-border);
+  border-radius: 12px;
+  padding: 16px;
+  color: var(--drop-muted);
+}
+
+.order-chain {
+  font-weight: 700;
+  color: var(--drop-text);
+}
+
+.avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #222;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 22px;
+}
+
+.address-row {
+  text-align: left;
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
 }
 
 .muted {
@@ -462,7 +828,7 @@ a {
     display: none;
   }
 
-  .home-create-inline,
+  .btn.home-create-inline,
   .search-card,
   .ad-slot {
     display: flex;
@@ -527,8 +893,17 @@ a {
 
   .trip-card {
     display: grid;
-    grid-template-columns: 180px 1fr auto;
+    grid-template-columns: 72px 1fr auto;
     gap: 16px;
     align-items: center;
+  }
+
+  .trip-card .btn {
+    grid-column: auto;
+  }
+
+  .chat-bubble {
+    right: 24px;
+    bottom: 24px;
   }
 }

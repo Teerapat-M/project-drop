@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { RATE_THB_PER_KM } from '@drop/carpool-core';
+import { CarPhoto } from '../components/CarPhoto';
+import { TaxiBadge } from '../components/TaxiBadge';
 import { DEMO_TRIPS } from '../fixtures';
+import { VEHICLE_LABEL } from '../lib/carIcons';
 import { estimateViewerFare } from '../lib/estimateFare';
 import { formatDepart, thb } from '../lib/format';
 import { getSupabase } from '../supabase';
@@ -36,7 +39,7 @@ export function TripListPage() {
   return (
     <main className="page">
       <h1 className="page-title">หน้าแรก</h1>
-      <p className="lede">แชร์ที่นั่งไปด้วยกัน · {RATE_THB_PER_KM} ฿/กม. หารเท่ากันคนที่นั่ง</p>
+      <p className="lede">แชร์ที่นั่งไปด้วยกัน · {RATE_THB_PER_KM} ฿/กม. หารเท่ากันตามจำนวนคนที่นั่ง</p>
 
       <form
         className="search-card stack"
@@ -129,6 +132,7 @@ function TripCardView({ trip }: { trip: TripCard }) {
   });
   return (
     <article className={`card trip-card ${full ? 'dimmed' : ''}`} data-testid={`trip-${trip.id}`}>
+      <CarPhoto car_icon={trip.car_icon} vehicle_type={trip.vehicle_type} kind={trip.kind} />
       <div>
         <h3>
           {trip.pickup_label} → {trip.dest_label}{' '}
@@ -137,18 +141,16 @@ function TripCardView({ trip }: { trip: TripCard }) {
               เต็มแล้ว
             </span>
           ) : null}
+          {trip.kind === 'taxi' ? <TaxiBadge /> : null}
         </h3>
         <p className="muted" style={{ margin: 0 }}>
-          {trip.owner_display_name} ·{' '}
-          {trip.vehicle_type === 'sedan' ? 'เก๋ง 4 ประตู' : trip.vehicle_type === 'hatch' ? 'รถ 5 ประตู' : 'กระบะ'}
-          {trip.kind === 'taxi' ? ' · แท็กซี่' : ''} · {trip.route_km} กม.
+          {trip.owner_display_name} · {VEHICLE_LABEL[trip.vehicle_type]} · {trip.route_km} กม.
         </p>
         <p>
-          คาดว่า ~{thb(est.amountThb)} ฿ ถ้ามี {est.payerCount} คน · ตัวอย่าง
+          ประมาณ {thb(est.amountThb)} ฿ เมื่อมี {est.payerCount} คน · ตัวอย่าง
         </p>
         <p className="muted">{formatDepart(trip.depart_at)} · ว่าง {trip.open_seats}/{trip.bookable_seats}</p>
       </div>
-      <div />
       <Link to={`/trips/${trip.id}`} className="btn tap-target">
         {full ? 'ดูทริป' : 'ดูทริปนี้'}
       </Link>

@@ -2,21 +2,35 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
+import { CHAT_BIND, CHAT_OPEN, getBoundChat, unbindChat } from '../lib/chatEvents';
 import { useIsDesktop } from '../lib/media';
+import { ChatBubble } from './ChatBubble';
 import { ChatSheet } from './ChatSheet';
-
-const stub = { opacity: 0.7 as const };
 
 export function Layout() {
   const desktop = useIsDesktop();
   const { demo, user } = useAuth();
   const navigate = useNavigate();
-  const [chat, setChat] = useState(false);
+  const [chatTrip, setChatTrip] = useState<string | null>(getBoundChat());
+  const [sheet, setSheet] = useState(false);
 
   useEffect(() => {
-    const open = () => setChat(true);
-    window.addEventListener('carpool-open-chat', open);
-    return () => window.removeEventListener('carpool-open-chat', open);
+    setChatTrip(getBoundChat());
+    const bind = (e: Event) => {
+      const tripId = (e as CustomEvent<{ tripId?: string }>).detail?.tripId;
+      if (tripId) setChatTrip(tripId);
+    };
+    const open = (e: Event) => {
+      const tripId = (e as CustomEvent<{ tripId?: string }>).detail?.tripId;
+      if (tripId) setChatTrip(tripId);
+      setSheet(true);
+    };
+    window.addEventListener(CHAT_BIND, bind);
+    window.addEventListener(CHAT_OPEN, open);
+    return () => {
+      window.removeEventListener(CHAT_BIND, bind);
+      window.removeEventListener(CHAT_OPEN, open);
+    };
   }, []);
 
   const signOut = async () => {
@@ -42,32 +56,37 @@ export function Layout() {
         <NavLink to="/trips/new" className="nav-link tap-target">
           สร้างทริป
         </NavLink>
-        <NavLink to="/history" className="nav-link tap-target" style={stub}>
+        <NavLink to="/history" className="nav-link tap-target">
           ประวัติทริป
         </NavLink>
         <span style={{ marginLeft: 'auto' }} />
-        <NavLink to="/features" className="nav-link tap-target" style={stub}>
+        <NavLink to="/features" className="nav-link tap-target">
           ฟีเจอร์และไอเดีย
         </NavLink>
-        <button type="button" className="icon-btn tap-target" aria-label="แชท" onClick={() => setChat(true)}>
+        <button
+          type="button"
+          className="icon-btn tap-target"
+          aria-label="แชท"
+          onClick={() => setSheet(true)}
+        >
           💬
         </button>
-        <NavLink to="/donate" className="nav-link tap-target" style={stub}>
-          สนับสนุนแพลตฟอร์ม
+        <NavLink to="/donate" className="nav-link tap-target">
+          สนับสนุนแอป
         </NavLink>
-        <NavLink to="/account" className="nav-link tap-target" style={stub}>
+        <NavLink to="/account" className="nav-link tap-target">
           บัญชี
         </NavLink>
         {user && !demo ? (
           <button type="button" className="nav-link tap-target" onClick={() => void signOut()}>
-            ออก
+            ออกจากระบบ
           </button>
         ) : null}
       </header>
 
       {demo ? (
         <p className="muted" style={{ margin: 0, padding: '8px 16px', background: '#fff8c2' }}>
-          โหมดตัวอย่าง — ตั้ง VITE_SUPABASE_URL และ VITE_SUPABASE_ANON_KEY เพื่อต่อโปรเจกต์ drop
+          โหมดตัวอย่าง — ตั้งค่า VITE_SUPABASE_URL และ VITE_SUPABASE_ANON_KEY เพื่อเชื่อมกับโปรเจกต์ drop
         </p>
       ) : null}
 
@@ -80,15 +99,25 @@ export function Layout() {
         <NavLink to="/trips/new" className="nav-link tap-target">
           สร้าง
         </NavLink>
-        <NavLink to="/history" className="nav-link tap-target" style={stub}>
+        <NavLink to="/history" className="nav-link tap-target">
           ประวัติ
         </NavLink>
-        <NavLink to="/account" className="nav-link tap-target" style={stub}>
+        <NavLink to="/account" className="nav-link tap-target">
           บัญชี
         </NavLink>
       </nav>
 
-      <ChatSheet open={chat} onClose={() => setChat(false)} />
+      {chatTrip && !sheet ? <ChatBubble onClick={() => setSheet(true)} /> : null}
+      <ChatSheet
+        open={sheet}
+        tripId={chatTrip}
+        onClose={() => {
+          setSheet(false);
+          setChatTrip(null);
+          unbindChat();
+        }}
+        onMinimize={() => setSheet(false)}
+      />
     </div>
   );
 }

@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="240" viewBox="0 0 360 240">
+  <defs>
+    <linearGradient id="o2Body" x1="0.12" y1="0.05" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#8B949C"/>
+      <stop offset="0.42" stop-color="#4E575F"/>
+      <stop offset="1" stop-color="#2C333A"/>
+    </linearGradient>
+    <linearGradient id="o2Glass" x1="0.2" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#E4F6FF"/>
+      <stop offset="0.35" stop-color="#8ED0F2"/>
+      <stop offset="1" stop-color="#3A88C4"/>
+    </linearGradient>
+    <linearGradient id="o2Under" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#A392A8"/>
+      <stop offset="1" stop-color="#6E5E74"/>
+    </linearGradient>
+    <linearGradient id="o2Light" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFF6C4"/>
+      <stop offset="0.55" stop-color="#F2C94C"/>
+      <stop offset="1" stop-color="#E0A020"/>
+    </linearGradient>
+    <radialGradient id="o2Tire" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#5A5160"/>
+      <stop offset="0.55" stop-color="#2B2432"/>
+      <stop offset="1" stop-color="#161218"/>
+    </radialGradient>
+    <radialGradient id="o2Hub" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#F0E6EE"/>
+      <stop offset="1" stop-color="#B79AAC"/>
+    </radialGradient>
+    <linearGradient id="o2Bumper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#D8D0D6"/>
+      <stop offset="1" stop-color="#8E8490"/>
+    </linearGradient>
+    <clipPath id="o2Clip"><path d="M22 156 C18 146 26 136 44 130 C100 118 150 114 178 114 C196 100 214 88 238 84 C256 82 274 90 290 102 C304 114 316 122 324 126 L348 128 C354 129 356 134 356 144 L356 160 C356 168 350 174 338 176 L40 176 C28 174 22 166 22 156 Z"/></clipPath>
+  </defs>
+  <ellipse cx="186" cy="218" rx="152" ry="10" fill="#1A1220" opacity="0.16"/>
+  <ellipse cx="310" cy="188" rx="30" ry="31" fill="url(#o2Tire)"/>
+  <ellipse cx="310" cy="188" rx="14" ry="14.5" fill="url(#o2Hub)"/>
+  <ellipse cx="306" cy="184" rx="5" ry="5" fill="#FFFFFF" opacity="0.35"/>
+  <ellipse cx="64" cy="188" rx="30" ry="31" fill="url(#o2Tire)"/>
+  <ellipse cx="64" cy="188" rx="14" ry="14.5" fill="url(#o2Hub)"/>
+  <ellipse cx="60" cy="184" rx="5" ry="5" fill="#FFFFFF" opacity="0.35"/>
+  <path d="M30 174 C28 180 34 186 46 187 L326 187 C340 186 346 180 344 174 Z" fill="url(#o2Under)"/>
+  <!-- long low coupe: very long hood, cabin set far back, low continuous slope into a tiny straight deck -->
+  <path d="M22 156
+    C18 146 26 136 44 130
+    C100 118 150 114 178 114
+    C196 100 214 88 238 84
+    C256 82 274 90 290 102
+    C304 114 316 122 324 126
+    L348 128
+    C354 129 356 134 356 144
+    L356 160
+    C356 168 350 174 338 176
+    L40 176
+    C28 174 22 166 22 156 Z" fill="url(#o2Body)"/>
+  <path d="M324 126 L348 128 C354 129 355 134 355 138 L324 138 Z" fill="#C5CDD4" opacity="0.28"/>
+  <path d="M20 152 C14 150 14 162 22 168 L42 172 L38 156 C36 150 28 150 20 152 Z" fill="url(#o2Bumper)"/>
+  <path d="M340 162 C350 160 358 164 356 172 C354 178 344 178 332 176 L340 162 Z" fill="url(#o2Bumper)"/>
+  <g clip-path="url(#o2Clip)">
+    <ellipse cx="78" cy="148" rx="28" ry="11" fill="#A8B0B6" opacity="0.22"/>
+    <ellipse cx="312" cy="150" rx="18" ry="12" fill="#1C2228" opacity="0.22"/>
+    <ellipse cx="118" cy="118" rx="48" ry="5.5" fill="#FFFFFF" opacity="0.20" transform="rotate(-5 118 118)"/>
+    <ellipse cx="248" cy="94" rx="24" ry="4" fill="#FFFFFF" opacity="0.24" transform="rotate(14 248 94)"/>
+  </g>
+  <path d="M184 116
+    C198 98 218 86 240 84
+    C258 82 274 92 288 108
+    C296 116 304 124 308 128
+    L192 130
+    C182 130 178 122 184 116 Z" fill="url(#o2Glass)"/>
+  <path d="M286 104 C296 114 310 124 324 126 L324 136 L300 130 C292 118 286 110 286 104 Z" fill="#1C2228" opacity="0.40"/>
+  <path d="M238 86 L240 128" stroke="#1C2228" stroke-width="2.5" opacity="0.22" stroke-linecap="round"/>
+  <rect x="26" y="134" width="34" height="7" rx="3.5" fill="url(#o2Light)" transform="rotate(-10 43 137.5)"/>
+  <rect x="28" y="135.2" width="12" height="2.8" rx="1.4" fill="#FFFFFF" opacity="0.75" transform="rotate(-10 43 137.5)"/>
+  <rect x="348" y="138" width="6" height="12" rx="2.5" fill="#E55A62"/>
+  <rect x="349" y="139.5" width="2.6" height="4.5" rx="1.2" fill="#FFC4C8" opacity="0.75"/>
+</svg>

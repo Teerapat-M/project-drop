@@ -1,0 +1,191 @@
+{
+  "source": "Penpot file drop-friend, boards B07 / B07h / B07p / M-B07 (read-only)",
+  "units": "x, y, w, h are fractions of the car image width/height (top-left origin)",
+  "taxi": "same as sedan (B20/B21/M-B21 use the identical sedan art); no separate taxi image",
+  "vehicles": {
+    "sedan": {
+      "image": "sedan.png",
+      "boardSizePx": [
+        250,
+        550
+      ],
+      "createBoardSizePx": [
+        150,
+        330
+      ],
+      "seatRadiusPx": 8,
+      "trunkRadiusPx": 6,
+      "seats": {
+        "1A": {
+          "x": 0.16,
+          "y": 0.414545,
+          "w": 0.3,
+          "h": 0.1
+        },
+        "1B": {
+          "x": 0.54,
+          "y": 0.414545,
+          "w": 0.3,
+          "h": 0.1
+        },
+        "2A": {
+          "x": 0.16,
+          "y": 0.525455,
+          "w": 0.2,
+          "h": 0.1
+        },
+        "2C": {
+          "x": 0.396,
+          "y": 0.525455,
+          "w": 0.2,
+          "h": 0.1
+        },
+        "2B": {
+          "x": 0.632,
+          "y": 0.525455,
+          "w": 0.2,
+          "h": 0.1
+        }
+      },
+      "trunk": {
+        "x": 0.2,
+        "y": 0.754545,
+        "w": 0.6,
+        "h": 0.145455
+      }
+    },
+    "hatch": {
+      "image": "hatch.png",
+      "boardSizePx": [
+        250,
+        472
+      ],
+      "createBoardSizePx": [
+        150,
+        283
+      ],
+      "seats": {
+        "1A": {
+          "x": 0.16,
+          "y": 0.411017,
+          "w": 0.3,
+          "h": 0.095339
+        },
+        "1B": {
+          "x": 0.54,
+          "y": 0.411017,
+          "w": 0.3,
+          "h": 0.095339
+        },
+        "2A": {
+          "x": 0.16,
+          "y": 0.521186,
+          "w": 0.3,
+          "h": 0.095339
+        },
+        "2B": {
+          "x": 0.54,
+          "y": 0.521186,
+          "w": 0.3,
+          "h": 0.095339
+        }
+      },
+      "trunk": {
+        "x": 0.18,
+        "y": 0.639831,
+        "w": 0.64,
+        "h": 0.199153
+      },
+      "note": "no 2C seat"
+    },
+    "pickup": {
+      "image": "pickup.png",
+      "boardSizePx": [
+        250,
+        625
+      ],
+      "createBoardSizePx": [
+        150,
+        375
+      ],
+      "seats": {
+        "1A": {
+          "x": 0.16,
+          "y": 0.3104,
+          "w": 0.3,
+          "h": 0.0848
+        },
+        "1B": {
+          "x": 0.54,
+          "y": 0.3104,
+          "w": 0.3,
+          "h": 0.0848
+        },
+        "2A": {
+          "x": 0.16,
+          "y": 0.4224,
+          "w": 0.3,
+          "h": 0.0848
+        },
+        "2B": {
+          "x": 0.54,
+          "y": 0.4224,
+          "w": 0.3,
+          "h": 0.0848
+        }
+      },
+      "trunk": {
+        "x": 0.14,
+        "y": 0.5808,
+        "w": 0.72,
+        "h": 0.3008,
+        "label": "truck bed"
+      },
+      "note": "no 2C seat"
+    }
+  },
+  "fonts": {
+    "family": "Noto Sans Thai",
+    "seatLabel": {
+      "size": 11,
+      "weight": 700
+    },
+    "seatCode": {
+      "size": 10,
+      "weight": 400
+    },
+    "trunkLabel": {
+      "size": 12,
+      "weight": 700,
+      "color": "#111111"
+    },
+    "note": "sizes at 250px-wide car; M-B07/M-B21 2C uses label 7/500 and code 8/700 (inconsistent, rear-middle added later), recommend using the standard sizes"
+  },
+  "seatStates": {
+    "mine": {
+      "fill": "#333333",
+      "stroke": "#333333",
+      "text": "#ffffff"
+    },
+    "driver-locked": {
+      "fill": "#e8e8e8",
+      "stroke": "#333333",
+      "text": "#333333"
+    },
+    "open": {
+      "fill": "#ffffff",
+      "stroke": "#333333",
+      "text": "#333333"
+    },
+    "booked": {
+      "fill": "#d8d8d8",
+      "stroke": "#bdbdbd",
+      "text": "#222222"
+    },
+    "closed": null
+  },
+  "notes": [
+    "closed state is not drawn on any seat map in the file (B02 open/closed toggles are form controls only); SWE should define it or ask design"
+  ],
+  "imageNote": "PNGs are 2x (500px wide) upscaled with LANCZOS from Penpot's native 1x 250px export; fractions are resolution-independent"
+}

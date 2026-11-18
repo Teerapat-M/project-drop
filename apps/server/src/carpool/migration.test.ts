@@ -164,5 +164,8 @@ describe('carpool SQL test file', () => {
     expect(testSql).toMatch(/ที่นั่งนี้ปิดอยู่/);
     expect(testSql).toMatch(/anon sees nothing/);
     expect(testSql).toMatch(/admin SELECT trip/);
+    expect(testSql).toMatch(/owner carpool_set_seat_open toggle/);
+    expect(testSql).toMatch(/cannot close booked seat via carpool_set_seat_open/);
+    expect(testSql).toMatch(/stranger carpool_set_seat_open denied/);
   });
 });

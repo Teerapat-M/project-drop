@@ -47,13 +47,13 @@ export function LoginPage() {
     });
     setBusy(false);
     if (otpError) setError(otpError.message);
-    else setInfo('ส่งลิงก์เข้าสู่ระบบไปที่อีเมลแล้ว');
+    else setInfo('เช็กอีเมลแล้วกดลิงก์เพื่อเข้าสู่ระบบ');
   };
 
   return (
     <main className="page" style={{ maxWidth: 420 }}>
       <h1 className="page-title">เข้าสู่ระบบ</h1>
-      <p className="lede">ใช้บัญชี Drop ชุดเดียว (อีเมล/รหัสผ่าน หรือลิงก์มายากล)</p>
+      <p className="lede">ใช้บัญชี Drop ชุดเดียว — อีเมลกับรหัสผ่าน หรือลิงก์เข้าสู่ระบบทางอีเมล</p>
       {!configured ? (
         <p className="muted">โหมดตัวอย่าง — ยังไม่ได้ตั้งค่า Supabase</p>
       ) : null}
@@ -78,12 +78,16 @@ export function LoginPage() {
           />
         </label>
         {error ? <p style={{ color: 'var(--drop-danger)', margin: 0 }}>{error}</p> : null}
-        {info ? <p style={{ color: 'var(--drop-success)', margin: 0 }}>{info}</p> : null}
+        {info ? (
+          <p data-testid="login-hint" style={{ color: 'var(--drop-success)', margin: 0 }}>
+            {info}
+          </p>
+        ) : null}
         <button className="btn tap-target" type="submit" disabled={busy}>
           เข้าสู่ระบบ
         </button>
         <button className="btn ghost tap-target" type="button" onClick={() => void onMagic()} disabled={busy}>
-          ส่งลิงก์มายากล
+          ส่งลิงก์เข้าสู่ระบบทางอีเมล
         </button>
       </form>
     </main>

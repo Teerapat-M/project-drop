@@ -7,6 +7,8 @@ import { CreateTripPage } from './screens/CreateTripPage';
 import { DropoffOrderPage } from './screens/DropoffOrderPage';
 import { FareSummaryPage } from './screens/FareSummaryPage';
 import { JoinTripPage } from './screens/JoinTripPage';
+import { AccountPage } from './screens/AccountPage';
+import { HistoryPage } from './screens/HistoryPage';
 import { StubPage } from './screens/StubPage';
 import { TripListPage } from './screens/TripListPage';
 
@@ -33,10 +35,11 @@ export function App() {
         <Route path="/trips/:id" element={<JoinTripPage />} />
         <Route path="/trips/:id/fare" element={<FareSummaryPage />} />
         <Route path="/trips/:id/order" element={<DropoffOrderPage />} />
+        <Route path="/history" element={<HistoryPage />} />
+        <Route path="/history/:id" element={<DropoffOrderPage />} />
+        <Route path="/account" element={<AccountPage />} />
         <Route path="/map" element={<StubPage name="map" />} />
         <Route path="/chat" element={<StubPage name="chat" />} />
-        <Route path="/history" element={<StubPage name="history" />} />
-        <Route path="/account" element={<StubPage name="account" />} />
         <Route path="/parcels" element={<StubPage name="parcels" />} />
         <Route path="/donate" element={<StubPage name="donate" />} />
         <Route path="/features" element={<StubPage name="features" />} />

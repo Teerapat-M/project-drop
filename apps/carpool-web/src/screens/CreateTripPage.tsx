@@ -1,18 +1,16 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { RATE_THB_PER_KM } from '@drop/carpool-core';
-import { liters } from '../lib/format';
-import { positionsFor, SEAT_LABELS } from '../lib/seats';
+import { CarPhoto } from '../components/CarPhoto';
 import { CarSeatMap } from '../components/CarSeatMap';
+import { TaxiBadge } from '../components/TaxiBadge';
+import { liters } from '../lib/format';
+import { ICON_CHOICES, VEHICLE_LABEL } from '../lib/carIcons';
+import { positionsFor, SEAT_LABELS } from '../lib/seats';
+import { thaiRpcError } from '../lib/seatRpc';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
 import type { SeatPosition, SeatState, VehicleType } from '../types';
-
-const ICONS: Record<VehicleType, string[]> = {
-  sedan: ['sedan', 'sedan_opt1', 'sedan_opt2'],
-  hatch: ['hatch', 'hatch_yellow', 'hatch_cream'],
-  pickup: ['pickup', 'pickup_white', 'pickup_navy'],
-};
 
 const TRUNK = {
   sedan: { w: 100, h: 50, l: 50 },
@@ -59,8 +57,12 @@ export function CreateTripPage() {
 
   const onVehicle = (v: VehicleType) => {
     setVehicle(v);
-    setIcon(ICONS[v][0]);
+    setIcon(ICON_CHOICES[v][0].id);
     setTrunk(TRUNK[v]);
+  };
+
+  const toggleSeat = (p: SeatPosition, isOpen: boolean) => {
+    setOpen((s) => ({ ...s, [p]: isOpen }));
   };
 
   const publish = async () => {
@@ -109,11 +111,16 @@ export function CreateTripPage() {
     const id = data.id as string;
     for (const p of positions) {
       if (!open[p]) {
-        await supabase.rpc('carpool_set_seat_open', {
+        const { error: seatError } = await supabase.rpc('carpool_set_seat_open', {
           p_trip_id: id,
           p_position: p,
           p_is_open: false,
         });
+        if (seatError) {
+          setBusy(false);
+          setError(thaiRpcError(seatError.message, 'ปิดที่นั่งไม่สำเร็จ'));
+          return;
+        }
       }
     }
     if (taxi) {
@@ -123,7 +130,7 @@ export function CreateTripPage() {
       });
       if (claimError) {
         setBusy(false);
-        setError(claimError.message);
+        setError(thaiRpcError(claimError.message, 'จองที่นั่งคนขับไม่สำเร็จ'));
         return;
       }
     }
@@ -142,6 +149,20 @@ export function CreateTripPage() {
       </div>
       <div className="create-grid">
         <div className="stack">
+          {taxi ? (
+            <div className="row">
+              <CarPhoto car_icon="taxi" vehicle_type="sedan" kind="taxi" />
+              <div>
+                <p style={{ margin: 0 }}>
+                  รถแท็กซี่เก๋ง · ที่นั่งคนขับล็อกไว้ <TaxiBadge />
+                </p>
+                <p className="muted" style={{ margin: 0 }}>
+                  คนขับแท็กซี่ไม่ร่วมหารค่าโดยสาร · หารเฉพาะที่นั่งที่เปิดและมีคนจอง
+                </p>
+              </div>
+            </div>
+          ) : null}
+
           <label className="field">
             ต้นทาง
             <input value={pickup} onChange={(e) => setPickup(e.target.value)} />
@@ -154,7 +175,7 @@ export function CreateTripPage() {
             วันออกเดินทาง
             <input type="datetime-local" value={depart} onChange={(e) => setDepart(e.target.value)} />
           </label>
-          <p className="muted">ที่นั่งที่เปิดให้จอง {openCount} / {positions.length} เปิด</p>
+          <p className="muted">ที่นั่งที่เปิดให้จอง {openCount}/{positions.length} ที่</p>
           <label className="field">
             ระยะทางโดยประมาณ (กม.)
             <input type="number" min={0} value={km} onChange={(e) => setKm(Number(e.target.value))} />
@@ -172,9 +193,9 @@ export function CreateTripPage() {
           />
 
           {taxi ? (
-            <p className="muted">ค่าโดยสาร {RATE_THB_PER_KM} ฿/กม. หารเท่ากันที่นั่งที่เปิดและจอง · ตัวอย่าง</p>
+            <p className="muted">ค่าโดยสาร {RATE_THB_PER_KM} ฿/กม. หารเท่ากันเฉพาะที่นั่งที่เปิดและมีคนจอง · ตัวอย่าง</p>
           ) : (
-            <p className="muted">ใช้อัตราคงที่ {RATE_THB_PER_KM} ฿/กม. (ช่องบาท/กม. ถูกซ่อน ไม่ลบ)</p>
+            <p className="muted">ใช้อัตราคงที่ {RATE_THB_PER_KM} ฿/กม.</p>
           )}
 
           {!taxi ? (
@@ -186,24 +207,23 @@ export function CreateTripPage() {
                   className={`chip tap-target ${vehicle === v ? 'on' : ''}`}
                   onClick={() => onVehicle(v)}
                 >
-                  {v === 'sedan' ? 'เก๋ง 4 ประตู' : v === 'hatch' ? 'รถ 5 ประตู' : 'กระบะ'}
+                  {VEHICLE_LABEL[v]}
                 </button>
               ))}
             </div>
-          ) : (
-            <p>รถแท็กซี่เก๋ง · ที่นั่งคนขับล็อก</p>
-          )}
+          ) : null}
 
           {!taxi ? (
-            <div className="row">
-              {ICONS[vehicle].map((c) => (
+            <div className="row icon-picker">
+              {ICON_CHOICES[vehicle].map((c) => (
                 <button
-                  key={c}
+                  key={c.id}
                   type="button"
-                  className={`chip tap-target ${icon === c ? 'on' : ''}`}
-                  onClick={() => setIcon(c)}
+                  className={`chip tap-target icon-choice ${icon === c.id ? 'on' : ''}`}
+                  onClick={() => setIcon(c.id)}
+                  aria-label={c.label}
                 >
-                  {c}
+                  <CarPhoto car_icon={c.id} vehicle_type={vehicle} alt={c.label} />
                 </button>
               ))}
             </div>
@@ -215,7 +235,7 @@ export function CreateTripPage() {
                 key={p}
                 type="button"
                 className={`chip tap-target ${open[p] ? 'on' : ''}`}
-                onClick={() => setOpen((s) => ({ ...s, [p]: !s[p] }))}
+                onClick={() => toggleSeat(p, !open[p])}
               >
                 {SEAT_LABELS[p]} · {open[p] ? 'เปิด' : 'ปิด'}
               </button>
@@ -260,7 +280,7 @@ export function CreateTripPage() {
                 ท้ายกลาง
               </button>
               <button type="button" className="chip tap-target" onClick={() => setTrunk(TRUNK.taxiOver)}>
-                ท้ายใหญ่ (ตัวอย่างล้น)
+                ท้ายใหญ่ (ตัวอย่างสัมภาระล้น)
               </button>
             </div>
           ) : null}
@@ -270,7 +290,10 @@ export function CreateTripPage() {
             vehicle={taxi ? 'sedan' : vehicle}
             seats={seats}
             selected={taxi ? ownerSeat : null}
+            onToggleOpen={toggleSeat}
+            ownPosition={taxi ? ownerSeat : null}
             driverLabel={taxi ? 'คนขับแท็กซี่' : 'คุณ'}
+            trunk={trunk}
           />
         </div>
       </div>
@@ -279,7 +302,7 @@ export function CreateTripPage() {
 
       <div className="sticky-bar">
         <button className="btn tap-target" type="button" disabled={busy} onClick={() => void publish()}>
-          เผยแพร่ทริป
+          เปิดทริป
         </button>
       </div>
     </main>

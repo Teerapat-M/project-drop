@@ -41,4 +41,9 @@ describe('mobile-first layout', () => {
     expect(screen.getByTestId('app-shell')).toHaveAttribute('data-layout', 'desktop');
     expect(screen.getByTestId('desktop-nav')).toBeInTheDocument();
   });
+
+  it('keeps 44px tap targets on seat buttons and chat bubble CSS', () => {
+    expect(css).toMatch(/\.seat-hit\s*\{[^}]*min-height:\s*var\(--tap\)/s);
+    expect(css).toMatch(/\.chat-bubble\s*\{[^}]*width:\s*var\(--tap\)/s);
+  });
 });

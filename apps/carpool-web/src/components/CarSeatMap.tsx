@@ -1,92 +1,232 @@
-import type { SeatState, VehicleType } from '../types';
+import type { CSSProperties } from 'react';
+import { layoutTrunk, type LuggagePiece } from '@drop/carpool-core';
+import { liters } from '../lib/format';
+import {
+  boxStyle,
+  carTopdownSrc,
+  SEAT_CODE_TO_POSITION,
+  vehicleSeatLayout,
+  type SeatBox,
+  type SeatCode,
+} from '../lib/seatLayout';
 import { SEAT_LABELS, seatCode } from '../lib/seats';
+import type { SeatPosition, SeatState, VehicleType } from '../types';
+
+export type TrunkDims = { w: number; h: number; l: number };
 
 type Props = {
   vehicle: VehicleType;
   seats: SeatState[];
   selected?: string | null;
   onSelect?: (position: SeatState['position']) => void;
+  onToggleOpen?: (position: SeatState['position'], isOpen: boolean) => void;
   driverLabel?: string;
+  ownPosition?: SeatPosition | null;
+  trunk?: TrunkDims;
+  luggage?: LuggagePiece[];
 };
 
-export function CarSeatMap({ vehicle, seats, selected, onSelect, driverLabel = 'คนขับ' }: Props) {
+export function CarSeatMap({
+  vehicle,
+  seats,
+  selected,
+  onSelect,
+  onToggleOpen,
+  driverLabel = 'คนขับ',
+  ownPosition,
+  trunk,
+  luggage = [],
+}: Props) {
+  const spec = vehicleSeatLayout(vehicle);
+  const [boardW, boardH] = spec.boardSizePx;
   const byPos = Object.fromEntries(seats.map((s) => [s.position, s]));
-  const hasMiddle = vehicle === 'sedan';
 
   return (
-    <div className="seat-map" data-testid="seat-map">
-      <svg viewBox="0 0 220 420" role="img" aria-label="แผนที่นั่ง มองจากด้านบน คนขับอยู่ขวา">
-        <rect x="30" y="8" width="160" height="404" rx="48" fill="#f6e27a" stroke="#222" />
-        <rect x="48" y="28" width="124" height="70" rx="16" fill="#d9d9d9" opacity="0.85" />
-        <rect x="48" y="250" width="124" height="50" rx="10" fill="#eee" opacity="0.7" />
-        <circle cx="38" cy="90" r="14" fill="#333" />
-        <circle cx="182" cy="90" r="14" fill="#333" />
-        <circle cx="38" cy="310" r="14" fill="#333" />
-        <circle cx="182" cy="310" r="14" fill="#333" />
-        <circle cx="148" cy="118" r="10" fill="none" stroke="#222" strokeWidth="3" />
-        {tile(byPos.front_passenger, 48, 108, selected, onSelect)}
-        {driverTile(148, 108, driverLabel)}
-        {tile(byPos.rear_left, 48, 188, selected, onSelect)}
-        {hasMiddle
-          ? tile(byPos.rear_middle, 98, 188, selected, onSelect, 44)
-          : null}
-        {tile(byPos.rear_right, hasMiddle ? 148 : 148, 188, selected, onSelect)}
-        <text x="110" y="330" textAnchor="middle" fontSize="11" fill="#222">
-          ท้ายรถ
-        </text>
-      </svg>
+    <div
+      className={`seat-map seat-map-${vehicle}`}
+      data-testid="seat-map"
+      data-vehicle={vehicle}
+      style={{ '--car-ar': `${boardW} / ${boardH}` } as CSSProperties}
+    >
+      <img className="seat-map-car" src={carTopdownSrc(vehicle)} alt="" data-testid="seat-map-car" />
+      {(Object.entries(spec.seats) as [SeatCode, SeatBox][]).map(([code, box]) => {
+        if (code === '1B') {
+          return <DriverSeat key={code} box={box} label={driverLabel} />;
+        }
+        const position = SEAT_CODE_TO_POSITION[code];
+        const seat = byPos[position];
+        if (!seat) return null;
+        return (
+          <PassengerSeat
+            key={code}
+            code={code}
+            box={box}
+            seat={seat}
+            selected={selected}
+            ownPosition={ownPosition}
+            onSelect={onSelect}
+            onToggleOpen={onToggleOpen}
+          />
+        );
+      })}
+      {trunk ? <TrunkOverlay spec={spec} trunk={trunk} luggage={luggage} /> : null}
     </div>
   );
 }
 
-function driverTile(x: number, y: number, label: string) {
+function DriverSeat({ box, label }: { box: SeatBox; label: string }) {
   return (
-    <g>
-      <rect x={x - 22} y={y} width="44" height="56" rx="8" fill="#e8e8e8" stroke="#222" />
-      <text x={x} y={y + 16} textAnchor="middle" fontSize="9" fill="#222">
-        1B ล็อก
-      </text>
-      <text x={x} y={y + 30} textAnchor="middle" fontSize="9" fill="#222">
-        {label}
-      </text>
-    </g>
+    <div className="seat-slot" data-testid="seat-slot-1B" data-box={boxKey(box)} style={boxStyle(box)}>
+      <button
+        type="button"
+        className="seat-hit tap-target"
+        data-testid="seat-driver"
+        data-state="locked"
+        disabled
+        aria-label={`ที่นั่งคนขับ ล็อกไว้ · ${label}`}
+      >
+        <span className="seat-face" data-state="locked">
+          <LockIcon />
+          <span className="seat-copy">
+            <span className="seat-code">1B</span>
+            <span className="seat-caption">คนขับ</span>
+          </span>
+        </span>
+      </button>
+    </div>
   );
 }
 
-function tile(
-  seat: SeatState | undefined,
-  x: number,
-  y: number,
-  selected: string | null | undefined,
-  onSelect?: Props['onSelect'],
-  w = 44,
-) {
-  if (!seat) return null;
+function PassengerSeat({
+  code,
+  box,
+  seat,
+  selected,
+  ownPosition,
+  onSelect,
+  onToggleOpen,
+}: {
+  code: SeatCode;
+  box: SeatBox;
+  seat: SeatState;
+  selected?: string | null;
+  ownPosition?: SeatPosition | null;
+  onSelect?: Props['onSelect'];
+  onToggleOpen?: Props['onToggleOpen'];
+}) {
   const isSelected = selected === seat.position;
   const closed = !seat.is_open;
   const booked = seat.is_booked;
-  const fill = closed ? '#cfcfcf' : booked ? '#d0d0d0' : isSelected ? '#222' : '#fff';
-  const color = isSelected ? '#fff' : '#222';
-  const clickable = Boolean(onSelect) && seat.is_open && !seat.is_booked;
+  const mine = ownPosition === seat.position;
+  const state = closed ? 'closed' : booked ? 'booked' : isSelected || mine ? 'selected' : 'open';
+  const clickable = onToggleOpen ? !booked : Boolean(onSelect) && seat.is_open && !seat.is_booked;
+  const caption = closed
+    ? 'ปิด'
+    : booked
+      ? (seat.label ?? 'จองแล้ว')
+      : isSelected
+        ? 'เลือกแล้ว'
+        : 'ว่าง';
+
   return (
-    <g
-      data-testid={`seat-${seat.position}`}
-      data-state={closed ? 'closed' : booked ? 'booked' : isSelected ? 'selected' : 'open'}
-      style={{ cursor: clickable ? 'pointer' : 'default' }}
-      onClick={() => {
-        if (clickable) onSelect?.(seat.position);
-      }}
+    <div
+      className="seat-slot"
+      data-testid={`seat-slot-${code}`}
+      data-box={boxKey(box)}
+      style={boxStyle(box)}
     >
-      <rect x={x - 22} y={y} width={w} height="56" rx="8" fill={fill} stroke="#222" />
-      <text x={x - 22 + w / 2} y={y + 16} textAnchor="middle" fontSize="9" fill={color}>
-        {seatCode(seat.position)}
-      </text>
-      <text x={x - 22 + w / 2} y={y + 30} textAnchor="middle" fontSize="8" fill={color}>
-        {SEAT_LABELS[seat.position]}
-      </text>
-      <text x={x - 22 + w / 2} y={y + 44} textAnchor="middle" fontSize="8" fill={color}>
-        {closed ? 'ปิด' : booked ? (seat.label ?? 'จองแล้ว') : isSelected ? 'เลือกแล้ว' : 'ว่าง'}
-      </text>
-    </g>
+      <button
+        type="button"
+        className={`seat-hit tap-target${mine ? ' seat-own' : ''}`}
+        data-testid={`seat-${seat.position}`}
+        data-state={state}
+        aria-pressed={isSelected}
+        aria-label={`${code} ${SEAT_LABELS[seat.position]} ${caption}`}
+        disabled={!clickable}
+        onClick={() => {
+          if (onToggleOpen) {
+            if (!booked) onToggleOpen(seat.position, !seat.is_open);
+            return;
+          }
+          if (seat.is_open && !seat.is_booked) onSelect?.(seat.position);
+        }}
+      >
+        <span className="seat-face" data-state={state}>
+          <span className="seat-copy">
+            <span className="seat-code">{seatCode(seat.position)}</span>
+            <span className="seat-caption">{caption}</span>
+          </span>
+        </span>
+      </button>
+    </div>
   );
+}
+
+function TrunkOverlay({
+  spec,
+  trunk,
+  luggage,
+}: {
+  spec: ReturnType<typeof vehicleSeatLayout>;
+  trunk: TrunkDims;
+  luggage: LuggagePiece[];
+}) {
+  const [boardW, boardH] = spec.boardSizePx;
+  const frameW = spec.trunk.w * boardW;
+  const frameH = spec.trunk.h * boardH;
+  const layout = layoutTrunk({
+    widthCm: trunk.w,
+    heightCm: trunk.h,
+    lengthCm: trunk.l,
+    frameWidth: frameW,
+    frameHeight: frameH,
+    luggage,
+  });
+  const capL = liters(trunk.w, trunk.h, trunk.l);
+  const remainL = Math.max(0, (layout.capacityVol - layout.usedVol) / 1000);
+  const fillPct = layout.rect.height > 0 ? (layout.fillHeight / layout.rect.height) * 100 : 0;
+
+  return (
+    <div className="trunk-slot" data-testid="trunk-slot" style={boxStyle(spec.trunk)}>
+      <p className="trunk-label" data-testid="trunk-label">
+        ท้ายรถ {trunk.w}×{trunk.h}×{trunk.l} ซม. = {capL.toFixed(0)} ล.
+      </p>
+      <div className="trunk-frame">
+        <div
+          className="trunk-rect"
+          data-testid="trunk-rect"
+          style={{
+            left: `${(layout.rect.x / frameW) * 100}%`,
+            top: `${(layout.rect.y / frameH) * 100}%`,
+            width: `${(layout.rect.width / frameW) * 100}%`,
+            height: `${(layout.rect.height / frameH) * 100}%`,
+            borderRadius: `${layout.cornerRadius}px`,
+          }}
+        >
+          <div
+            className={`trunk-fill${layout.overflow ? ' is-overflow' : ''}`}
+            data-testid="trunk-fill"
+            data-overflow={layout.overflow ? 'true' : 'false'}
+            style={{ height: `${Math.min(100, fillPct)}%` }}
+          />
+          <span className="trunk-remain" data-testid="trunk-remain">
+            เหลือ {remainL.toFixed(0)} ลิตร
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LockIcon() {
+  return (
+    <svg className="seat-lock" data-testid="driver-lock" viewBox="0 0 16 16" aria-hidden>
+      <rect x="3" y="7" width="10" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M5 7V5.2a3 3 0 0 1 6 0V7" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function boxKey(box: SeatBox): string {
+  return `${box.x} ${box.y} ${box.w} ${box.h}`;
 }

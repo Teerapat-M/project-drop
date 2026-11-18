@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="240" viewBox="0 0 360 240">
+  <defs>
+    <linearGradient id="txBody" x1="0.12" y1="0.05" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#FFE98A"/>
+      <stop offset="0.4" stop-color="#F0C400"/>
+      <stop offset="1" stop-color="#C48A08"/>
+    </linearGradient>
+    <linearGradient id="txGlass" x1="0.2" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#FFF8D8"/>
+      <stop offset="0.35" stop-color="#E8D48A"/>
+      <stop offset="1" stop-color="#B89440"/>
+    </linearGradient>
+    <linearGradient id="txUnder" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#A392A8"/>
+      <stop offset="1" stop-color="#6E5E74"/>
+    </linearGradient>
+    <linearGradient id="txLight" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFF6C4"/>
+      <stop offset="0.55" stop-color="#F2C94C"/>
+      <stop offset="1" stop-color="#E0A020"/>
+    </linearGradient>
+    <radialGradient id="txTire" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#5A5160"/>
+      <stop offset="0.55" stop-color="#2B2432"/>
+      <stop offset="1" stop-color="#161218"/>
+    </radialGradient>
+    <radialGradient id="txHub" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#F0E6EE"/>
+      <stop offset="1" stop-color="#B79AAC"/>
+    </radialGradient>
+    <linearGradient id="txBumper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#D8D0D6"/>
+      <stop offset="1" stop-color="#8E8490"/>
+    </linearGradient>
+    <clipPath id="txClip"><path d="M32 154 C28 144 36 132 56 126 C84 118 108 112 128 108 C142 88 160 70 190 66 C220 62 248 70 266 86 C282 100 296 114 308 122 L338 124 C346 125 350 130 350 140 L350 160 C350 168 344 174 332 176 L48 176 C38 174 32 166 32 154 Z"/></clipPath>
+  </defs>
+  <ellipse cx="180" cy="218" rx="140" ry="10" fill="#1A1220" opacity="0.16"/>
+  <ellipse cx="294" cy="188" rx="30" ry="31" fill="url(#txTire)"/>
+  <ellipse cx="294" cy="188" rx="14" ry="14.5" fill="url(#txHub)"/>
+  <ellipse cx="290" cy="184" rx="5" ry="5" fill="#FFFFFF" opacity="0.35"/>
+  <ellipse cx="80" cy="188" rx="30" ry="31" fill="url(#txTire)"/>
+  <ellipse cx="80" cy="188" rx="14" ry="14.5" fill="url(#txHub)"/>
+  <ellipse cx="76" cy="184" rx="5" ry="5" fill="#FFFFFF" opacity="0.35"/>
+  <path d="M36 174 C34 180 40 186 52 187 L320 187 C334 186 340 180 338 174 Z" fill="url(#txUnder)"/>
+  <!-- touring 4-door fastback: shorter hood, long high greenhouse, then a sloping roof into a short straight deck -->
+  <path d="M32 154
+    C28 144 36 132 56 126
+    C84 118 108 112 128 108
+    C142 88 160 70 190 66
+    C220 62 248 70 266 86
+    C282 100 296 114 308 122
+    L338 124
+    C346 125 350 130 350 140
+    L350 160
+    C350 168 344 174 332 176
+    L48 176
+    C38 174 32 166 32 154 Z" fill="url(#txBody)"/>
+  <path d="M308 122 L338 124 C346 125 348 130 348 136 L308 136 Z" fill="#FFF6D0" opacity="0.45"/>
+  <path d="M30 150 C24 148 24 160 32 166 L52 170 L46 154 C44 148 36 148 30 150 Z" fill="url(#txBumper)"/>
+  <path d="M334 162 C344 160 352 164 350 172 C348 178 338 178 326 176 L334 162 Z" fill="url(#txBumper)"/>
+  <g clip-path="url(#txClip)">
+    <ellipse cx="86" cy="146" rx="24" ry="11" fill="#FFF3C0" opacity="0.28"/>
+    <ellipse cx="300" cy="148" rx="18" ry="12" fill="#C48A08" opacity="0.20"/>
+    <ellipse cx="96" cy="116" rx="34" ry="6" fill="#FFFFFF" opacity="0.28" transform="rotate(-8 96 116)"/>
+    <ellipse cx="210" cy="74" rx="32" ry="5.5" fill="#FFFFFF" opacity="0.28"/>
+  </g>
+  <path d="M130 110
+    C144 88 164 70 194 68
+    C224 66 246 78 260 94
+    C272 108 286 118 296 124
+    L138 126
+    C128 126 124 118 130 110 Z" fill="url(#txGlass)"/>
+  <path d="M258 92 C270 106 290 118 308 122 L308 134 L282 128 C272 114 260 100 258 92 Z" fill="#C48A08" opacity="0.34"/>
+  <path d="M176 70 L178 124" stroke="#C48A08" stroke-width="2.4" opacity="0.16" stroke-linecap="round"/>
+  <path d="M222 70 L224 124" stroke="#C48A08" stroke-width="2.4" opacity="0.16" stroke-linecap="round"/>
+  <rect x="36" y="134" width="30" height="8" rx="4" fill="url(#txLight)" transform="rotate(-8 51 138)"/>
+  <rect x="38" y="135.5" width="11" height="3" rx="1.5" fill="#FFFFFF" opacity="0.75" transform="rotate(-8 51 138)"/>
+  <rect x="342" y="136" width="7" height="14" rx="3" fill="#E55A62"/>
+  <rect x="343" y="138" width="3" height="5" rx="1.4" fill="#FFC4C8" opacity="0.75"/>
+
+  <!-- original taxi roof lamp (no logo, no text) -->
+  <rect x="196" y="54" width="8" height="14" rx="1.5" fill="#5A4A20"/>
+  <rect x="174" y="32" width="52" height="26" rx="4" fill="#5A4A20"/>
+  <rect x="176" y="34" width="48" height="22" rx="3" fill="#FFF8E6"/>
+  <rect x="178" y="36" width="44" height="18" rx="2.5" fill="#FFE56A"/>
+  <rect x="186" y="42" width="28" height="6" rx="1.5" fill="#FFFFFF" opacity="0.55"/>
+</svg>
