@@ -77,6 +77,7 @@ export function CreateTripPage() {
   const [noBags, setNoBags] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [hideDest, setHideDest] = useState(false);
   const shownTrunk = taxi ? TAXI_TRUNK : trunk;
 
   const positions = positionsFor(taxi ? 'sedan' : vehicle);
@@ -157,6 +158,7 @@ export function CreateTripPage() {
         dest_lat: destination.lat,
         dest_lng: destination.lng,
         max_detour_km: taxi ? maxDetour : null,
+        hide_dest: hideDest,
         depart_at: new Date(depart).toISOString(),
         status: 'open',
       })
@@ -270,6 +272,20 @@ export function CreateTripPage() {
             placeholder="เลือกปลายทาง"
             onChange={setDest}
           />
+          <label className="field">
+            <span className="row" style={{ alignItems: 'center', gap: 8 }}>
+              <input
+                data-testid="hide-dest"
+                type="checkbox"
+                checked={hideDest}
+                onChange={(e) => setHideDest(e.target.checked)}
+              />
+              ซ่อนตำแหน่งปลายทางจริง
+            </span>
+            <span className="muted">
+              จุดขึ้นเลื่อน ~1 กม. ให้คนอื่นเสมอ · เปิดช่องนี้ถ้าจะเลื่อนจุดลงด้วย
+            </span>
+          </label>
           {stops.map((stop, i) => (
             <PlaceField
               key={stop.id}

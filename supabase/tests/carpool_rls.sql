@@ -44,6 +44,14 @@ begin
   ) then
     raise exception 'carpool_trip_stops must not be in supabase_realtime';
   end if;
+  if exists (
+    select 1 from pg_publication_tables
+     where pubname = 'supabase_realtime'
+       and schemaname = 'public'
+       and tablename = 'carpool_trips'
+  ) then
+    raise exception 'carpool_trips must not be in supabase_realtime';
+  end if;
 end $$;
 
 -- Trigger-only SECURITY DEFINER functions must not be callable via /rest/v1/rpc.
@@ -100,6 +108,9 @@ begin
   end if;
   if not has_function_privilege('authenticated', 'public.carpool_trip_preview(uuid)', 'EXECUTE') then
     raise exception 'authenticated must EXECUTE public.carpool_trip_preview';
+  end if;
+  if not has_function_privilege('authenticated', 'public.carpool_visible_trips()', 'EXECUTE') then
+    raise exception 'authenticated must EXECUTE public.carpool_visible_trips';
   end if;
   if not has_function_privilege('authenticated', book_sig, 'EXECUTE') then
     raise exception 'authenticated must EXECUTE public.carpool_book_seat';
@@ -178,6 +189,16 @@ begin
        'authenticated',
        'private.carpool_round_km_half(numeric)',
        'EXECUTE'
+     )
+     or has_function_privilege(
+       'authenticated',
+       'private.carpool_visible_geo(uuid)',
+       'EXECUTE'
+     )
+     or has_function_privilege(
+       'authenticated',
+       'private.carpool_ensure_trip_offset(uuid)',
+       'EXECUTE'
      ) then
     raise exception 'authenticated must not EXECUTE detour floor helpers';
   end if;
@@ -187,6 +208,11 @@ begin
   end if;
   if has_column_privilege('authenticated', 'public.carpool_bookings', 'detour_km', 'UPDATE') then
     raise exception 'authenticated must not UPDATE carpool_bookings.detour_km';
+  end if;
+  if has_column_privilege('authenticated', 'public.carpool_trips', 'pickup_lat', 'SELECT')
+     or has_column_privilege('authenticated', 'public.carpool_trips', 'pickup_label', 'SELECT')
+     or has_table_privilege('authenticated', 'private.carpool_trip_offset', 'SELECT') then
+    raise exception 'authenticated must not SELECT true trip coords, labels, or offset bearings';
   end if;
   if not has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_lat', 'UPDATE')
      or not has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_lng', 'UPDATE')
@@ -421,6 +447,25 @@ as $$
   insert into tests.passed (name) values (p_name) on conflict do nothing;
 $$;
 
+-- Callable as authenticated (private.carpool_haversine_km is revoked).
+create or replace function tests.haversine_km(
+  lat1 double precision, lng1 double precision,
+  lat2 double precision, lng2 double precision
+)
+returns double precision
+language sql
+immutable
+as $$
+  select 2 * 6371 * asin(sqrt(
+    power(sin(radians((lat2 - lat1) / 2)), 2)
+    + cos(radians(lat1)) * cos(radians(lat2))
+      * power(sin(radians((lng2 - lng1) / 2)), 2)
+  ));
+$$;
+grant execute on function tests.haversine_km(
+  double precision, double precision, double precision, double precision
+) to authenticated;
+
 create or replace function tests.expect_raise(p_sql text, p_exact text)
 returns void
 language plpgsql
@@ -444,6 +489,9 @@ grant select, insert on tests.ids, tests.passed to authenticated;
 grant execute on function tests.login(uuid) to authenticated;
 grant execute on function tests.ok(text) to authenticated;
 grant execute on function tests.expect_raise(text, text) to authenticated;
+grant execute on function tests.haversine_km(
+  double precision, double precision, double precision, double precision
+) to authenticated;
 
 create or replace function tests.try_book_seat(
   p_uid uuid,
@@ -1033,11 +1081,18 @@ begin
   if rec ? 'owner_id' then
     raise exception 'preview must not leak owner_id';
   end if;
-  if (rec->>'pickup_lat')::numeric <> 18.789 then
-    raise exception 'preview pickup_lat should be rounded to 18.789, got %', rec->>'pickup_lat';
-  end if;
   if rec->>'pickup_lat' like '%18.7888%' then
     raise exception 'preview leaked unrounded pickup_lat';
+  end if;
+  if abs(tests.haversine_km(
+       18.7888, 98.985,
+       (rec->>'pickup_lat')::float8, (rec->>'pickup_lng')::float8
+     ) - 1.0) > 0.25 then
+    raise exception 'stranger preview pickup must be ~1 km from true, got % %',
+      rec->>'pickup_lat', rec->>'pickup_lng';
+  end if;
+  if rec->>'pickup_approx' is distinct from 'true' then
+    raise exception 'stranger preview must flag pickup_approx';
   end if;
   if rec->'stops'->0->>'lat' like '%18.7004%' then
     raise exception 'preview leaked unrounded stop lat';
@@ -1058,8 +1113,15 @@ begin
   if disc ? 'owner_id' then
     raise exception 'discover must not leak owner_id';
   end if;
-  if (disc->>'pickup_lat')::numeric <> 18.789 then
-    raise exception 'discover pickup_lat should be rounded to 18.789, got %', disc->>'pickup_lat';
+  if abs(tests.haversine_km(
+       18.7888, 98.985,
+       (disc->>'pickup_lat')::float8, (disc->>'pickup_lng')::float8
+     ) - 1.0) > 0.25 then
+    raise exception 'stranger discover pickup must be ~1 km from true, got % %',
+      disc->>'pickup_lat', disc->>'pickup_lng';
+  end if;
+  if (disc->>'pickup_lat')::numeric = 18.789 then
+    raise exception 'stranger discover must not return the true rounded pickup';
   end if;
   if disc ? 'stops' then
     raise exception 'discover list must not expose stops';
@@ -1099,6 +1161,15 @@ begin
    where d.id = trip;
   if not coalesce((disc->>'is_mine')::boolean, false) then
     raise exception 'owner discover is_mine should be true';
+  end if;
+  if (rec->>'pickup_lat')::numeric <> 18.789 then
+    raise exception 'owner preview pickup_lat should be true rounded 18.789, got %', rec->>'pickup_lat';
+  end if;
+  if (disc->>'pickup_lat')::numeric <> 18.789 then
+    raise exception 'owner discover pickup_lat should be true rounded 18.789, got %', disc->>'pickup_lat';
+  end if;
+  if coalesce((rec->>'pickup_approx')::boolean, true) then
+    raise exception 'owner preview must not set pickup_approx';
   end if;
   perform tests.ok('is_mine true only for the owner');
 end $$;
@@ -2398,15 +2469,16 @@ begin
   end if;
   perform tests.ok('discover both pickup and dest');
 
-  -- ~4.4 km north of origin is inside 5; ~6.7 km is outside.
+  -- Offset origin is ~1 km from true. A point ~2.2 km north stays inside
+  -- 5 km even in the worst bearing; ~8.9 km north stays outside.
   select count(*) into n from public.carpool_discover_trips(
-    'private', null, null, null, null, 13.79, 100.5, null, null, 5
+    'private', null, null, null, null, 13.77, 100.5, null, null, 5
   ) d where d.id = bkk;
   if n <> 1 then
     raise exception 'radius inside should match bkk';
   end if;
   select count(*) into n from public.carpool_discover_trips(
-    'private', null, null, null, null, 13.81, 100.5, null, null, 5
+    'private', null, null, null, null, 13.83, 100.5, null, null, 5
   ) d where d.id = bkk;
   if n <> 0 then
     raise exception 'radius outside should miss bkk';
@@ -2654,16 +2726,21 @@ begin
         ) d
        where d.id = trip;
       if rec.pickup_distance_km is null
-         or rec.pickup_distance_km not in (0, 0.5)
+         or rec.pickup_distance_km not in (0.5, 1.0, 1.5)
          or rec.pickup_distance_km * 2 <> trunc(rec.pickup_distance_km * 2) then
-        raise exception 'probe grid must stay on 0/0.5 km steps, got %', rec.pickup_distance_km;
+        raise exception 'probe grid around true pickup must stay on 0.5 km steps near the offset, got %', rec.pickup_distance_km;
       end if;
-      n_distinct := n_distinct | (case when rec.pickup_distance_km = 0.5 then 2 else 1 end);
+      n_distinct := n_distinct | (case
+        when rec.pickup_distance_km = 0.5 then 1
+        when rec.pickup_distance_km = 1.0 then 2
+        else 4
+      end);
     end loop;
   end loop;
-  -- n_distinct is a bitmask 1=0km, 2=0.5km; at most both, never empty.
-  if n_distinct = 0 or n_distinct > 3 then
-    raise exception 'probe grid leaked finer than rounding: mask %', n_distinct;
+  -- bitmask 1=0.5, 2=1.0, 4=1.5; a ±111 m grid around true cannot see 0 km
+  -- (the advertised point is the offset) or steps finer than 0.5.
+  if n_distinct = 0 or n_distinct > 7 then
+    raise exception 'probe grid leaked finer than offset+rounding: mask %', n_distinct;
   end if;
   perform tests.ok('probe grid cannot beat 0.5 km rounding');
 end $$;
@@ -2887,12 +2964,240 @@ begin
   perform tests.ok('book vs cancel same seat 15x no 40P01');
 end $$;
 
+-- Privacy offset: table SELECT denied; dest offset only when hide_dest;
+-- booked rider offset until 30 min / in_progress; probe grid is stable.
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  leaked boolean := false;
+begin
+  select id into trip from tests.ids where k = 'trip';
+  begin
+    execute format('select pickup_lat from public.carpool_trips where id = %L', trip);
+    leaked := true;
+  exception
+    when insufficient_privilege then
+      leaked := false;
+  end;
+  if leaked then
+    raise exception 'authenticated must not SELECT carpool_trips.pickup_lat';
+  end if;
+  perform tests.ok('authenticated cannot SELECT true pickup_lat');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+begin
+  select id into trip from tests.ids where k = 'search_bkk';
+  update public.carpool_trips set hide_dest = true where id = trip;
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec jsonb;
+  dkm double precision;
+begin
+  select id into trip from tests.ids where k = 'search_bkk';
+  rec := public.carpool_trip_preview(trip);
+  dkm := tests.haversine_km(
+    14.35, 100.57,
+    (rec->>'dest_lat')::float8, (rec->>'dest_lng')::float8
+  );
+  if abs(dkm - 1.0) > 0.25 then
+    raise exception 'hide_dest dest offset should be ~1 km, got %', dkm;
+  end if;
+  perform tests.ok('dest offset only when hide_dest is on');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec jsonb;
+begin
+  select id into trip from tests.ids where k = 'search_bkk';
+  rec := public.carpool_trip_preview(trip);
+  if abs((rec->>'dest_lat')::float8 - 14.35) > 0.001 then
+    raise exception 'owner still sees true dest when hide_dest, got %', rec->>'dest_lat';
+  end if;
+  update public.carpool_trips set hide_dest = false where id = trip;
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec jsonb;
+begin
+  select id into trip from tests.ids where k = 'search_bkk';
+  rec := public.carpool_trip_preview(trip);
+  if abs((rec->>'dest_lat')::float8 - 14.35) > 0.001 then
+    raise exception 'dest must stay true when hide_dest is off, got %', rec->>'dest_lat';
+  end if;
+  perform tests.ok('dest stays true when hide_dest is off');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 12,
+    'บ้านเลขที่ 9, คลองเตย, กรุงเทพมหานคร', 13.7563, 100.5018,
+    'อยุธยา', 14.35, 100.57, now() + interval '2 day', 'open'
+  ) returning id into trip;
+  insert into tests.ids (k, id) values ('privacy_offset_trip', trip);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+begin
+  select id into trip from tests.ids where k = 'privacy_offset_trip';
+  perform public.carpool_book_seat(
+    trip, 'rear_middle', 'จุดลงเอ', 13.76, 100.51, 0, null, null, null
+  );
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec jsonb;
+  dkm double precision;
+begin
+  select id into trip from tests.ids where k = 'privacy_offset_trip';
+  rec := public.carpool_trip_preview(trip);
+  dkm := tests.haversine_km(
+    13.7563, 100.5018,
+    (rec->>'pickup_lat')::float8, (rec->>'pickup_lng')::float8
+  );
+  if rec->>'pickup_approx' is distinct from 'true' then
+    raise exception 'booked rider far from depart should see approx pickup';
+  end if;
+  if abs(dkm - 1.0) > 0.25 then
+    raise exception 'booked rider offset should be ~1 km, got %', dkm;
+  end if;
+  if rec->>'pickup_label' like '%บ้านเลขที่%' then
+    raise exception 'coarse label leaked house text: %', rec->>'pickup_label';
+  end if;
+  perform tests.ok('booked rider before reveal gets offset pickup');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+begin
+  select id into trip from tests.ids where k = 'privacy_offset_trip';
+  update public.carpool_trips
+     set status = 'in_progress'
+   where id = trip;
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec jsonb;
+begin
+  select id into trip from tests.ids where k = 'privacy_offset_trip';
+  rec := public.carpool_trip_preview(trip);
+  if rec->>'pickup_approx' is distinct from 'false' then
+    raise exception 'booked rider after in_progress should see true pickup';
+  end if;
+  if (rec->>'pickup_lat')::numeric <> 13.756 then
+    raise exception 'revealed pickup should be true rounded 13.756, got %', rec->>'pickup_lat';
+  end if;
+  perform tests.ok('booked rider after reveal gets true pickup');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec jsonb;
+  lat1 double precision;
+  lng1 double precision;
+  lat2 double precision;
+  lng2 double precision;
+  i int;
+begin
+  select id into trip from tests.ids where k = 'probe_trip';
+  rec := public.carpool_trip_preview(trip);
+  lat1 := (rec->>'pickup_lat')::float8;
+  lng1 := (rec->>'pickup_lng')::float8;
+  for i in 0..12 loop
+    select d.pickup_lat, d.pickup_lng into lat2, lng2
+      from public.carpool_discover_trips(
+        'private', null, null, null, null,
+        13.75634 + i * 0.002, 100.50187, null, null, 5
+      ) d
+     where d.id = trip;
+    if lat2 is not null and (lat2 is distinct from lat1 or lng2 is distinct from lng1) then
+      raise exception 'probe discover returned shifting pickup % % vs stable % %', lat2, lng2, lat1, lng1;
+    end if;
+  end loop;
+  if abs(tests.haversine_km(13.75634, 100.50187, lat1, lng1) - 1.0) > 0.25 then
+    raise exception 'stable discover pickup not ~1 km from true';
+  end if;
+  perform tests.ok('probe discover cannot recover true point better than offset');
+end $$;
+commit;
+
 do $$
 declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 72 then
+  if n < 78 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

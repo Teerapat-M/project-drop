@@ -31,6 +31,7 @@ describe('BookedTripPage', () => {
     expect(screen.getByTestId('route-mini-map')).toBeInTheDocument();
     expect(screen.queryByTestId('join-submit')).toBeNull();
     expect(screen.getByTestId('own-dropoff')).toHaveTextContent('จุดลงของคุณ · ตลาดวโรรส');
+    expect(screen.getByTestId('pickup-approx')).toHaveTextContent('จุดขึ้นโดยประมาณ');
     expect(screen.getByTestId('own-detour')).toHaveTextContent('ออกนอกเส้นทาง 1.2 กม.');
     expect(screen.getByTestId('own-booking')).toHaveTextContent('สัมภาระของคุณ ไม่มีข้อมูล');
   });

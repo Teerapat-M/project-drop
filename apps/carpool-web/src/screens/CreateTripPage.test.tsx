@@ -92,6 +92,8 @@ describe('CreateTripPage maps', () => {
     expect(screen.getByTestId('place-origin')).toHaveTextContent('กรุงเทพมหานคร');
     expect(screen.getByTestId('place-dest')).toHaveTextContent('เลือกปลายทาง');
     expect(screen.getByTestId('create-submit')).toBeDisabled();
+    expect(screen.getByTestId('hide-dest')).not.toBeChecked();
+    expect(screen.getByText('ซ่อนตำแหน่งปลายทางจริง')).toBeInTheDocument();
   });
 
   it('keeps 44px taps and the 390px stacked mini-map layout, including taxi create', () => {

@@ -25,6 +25,7 @@ import { RouteMiniMap } from '../maps/RouteMiniMap';
 import { parseDetourKm } from '../lib/detourInput';
 import { pointSetKey, readRouteCache } from '../maps/routeCache';
 import { detourFromViaKm } from '../maps/routePoints';
+import { maskTripForViewer } from '../lib/privacyMask';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
 import type { SeatPosition, SeatState, TripPreview } from '../types';
@@ -79,7 +80,12 @@ export function JoinTripPage() {
 
   useEffect(() => {
     if (demo) {
-      setPreview(demoPreview(id));
+      const raw = demoPreview(id);
+      setPreview(
+        raw
+          ? maskTripForViewer(raw, { isOwner: raw.is_mine === true, isBookedRider: false })
+          : raw,
+      );
       return;
     }
     const supabase = getSupabase();
@@ -274,6 +280,11 @@ export function JoinTripPage() {
           <h2 style={{ margin: 0, fontSize: 16 }}>
             {preview.pickup_label} → {preview.dest_label} {taxi ? <TaxiBadge /> : null}
           </h2>
+          {preview.pickup_approx ? (
+            <p className="muted" style={{ margin: 0 }} data-testid="pickup-approx">
+              จุดขึ้นโดยประมาณ · จะแสดงจุดนัดจริงก่อนออกเดินทาง 30 นาที
+            </p>
+          ) : null}
           <p className="muted" style={{ margin: 0 }}>
             คนขับ {preview.owner_display_name} · {VEHICLE_LABEL[preview.vehicle_type]}
           </p>

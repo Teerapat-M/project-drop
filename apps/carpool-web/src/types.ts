@@ -44,6 +44,10 @@ export type TripCard = {
   pickup_distance_km?: number | null;
   dest_distance_km?: number | null;
   extra_km?: number | null;
+  /** Creator opted to offset dest for non-owners. */
+  hide_dest?: boolean;
+  /** True when this viewer sees the ~1 km pickup offset, not the house pin. */
+  pickup_approx?: boolean;
 };
 
 export type TripRole = 'created' | 'booked';

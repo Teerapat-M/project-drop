@@ -84,6 +84,9 @@ describe('CreateTripPage persist stops', () => {
         dest_label: expect.any(String),
       }),
     );
+    expect(tripsInsert[0]).toEqual(
+      expect.objectContaining({ hide_dest: false }),
+    );
     expect(tripsInsert[0] as Record<string, unknown>).not.toHaveProperty('origin_province_code');
     expect(tripsInsert[0] as Record<string, unknown>).not.toHaveProperty('dest_district_code');
     await waitFor(() => expect(stopsInsert.length).toBe(1));

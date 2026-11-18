@@ -33,6 +33,22 @@
 --   * bookings_guard dest_* (and insert) path: lock the trip FOR UPDATE
 --     before private.carpool_enforce_max_detour so a concurrent cap lower
 --     cannot slip between the floor check and the write.
+--
+-- Privacy offset: true coords stay on carpool_trips. Non-owners read via
+-- DEFINER RPCs (discover/preview/visible_trips) that apply a ~1 km offset
+-- (bearing+km stored once in private.carpool_trip_offset; regen only when
+-- that true point changes). Pickup/origin always offset for non-owners.
+-- Dest offset only when hide_dest. Fare / detour floor / book_seat keep
+-- the true route. Discover proximity uses the offset vertices, then 3-dec
+-- + 0.5 km. Residual: listed pickup can be ~1 km from the true origin
+-- book_seat does not check; taxi dest-floor exclude still uses the true
+-- floor so common book_seat rejections are not listed.
+-- Reveal: in_progress exists in the enum/guards but carpool-web never
+-- sets it. Booked riders get the true pickup 30 min before depart_at or
+-- once status is in_progress/completed.
+-- Coarse labels: truncate stored formatted address (last two comma parts
+-- or from the first แขวง/เขต/อำเภอ/ตำบล/จังหวัด). No thai-admin dataset,
+-- no extra reverse-geocode.
 
 -- ---------------------------------------------------------------------------
 -- Geo columns: already nullable from 20261118130000. Drop pairing CHECKs.
@@ -48,6 +64,12 @@ alter table public.carpool_trips
   drop constraint if exists carpool_trips_origin_district_matches_province;
 alter table public.carpool_trips
   drop constraint if exists carpool_trips_dest_district_matches_province;
+
+alter table public.carpool_trips
+  add column if not exists hide_dest boolean not null default false;
+
+comment on column public.carpool_trips.hide_dest is
+  'Opt-in: also offset the destination for non-owners. Default false (pickup/origin only). UI label: ซ่อนตำแหน่งปลายทางจริง.';
 
 -- ---------------------------------------------------------------------------
 -- Route vertices + nearby-point match. Point-to-vertex haversine.
@@ -90,18 +112,294 @@ $$;
 
 revoke all on function private.carpool_round_km_half(numeric) from public, anon, authenticated;
 
-create or replace function private.carpool_route_vertices(p_trip_id uuid)
-returns table (idx integer, lat double precision, lng double precision)
+-- ---------------------------------------------------------------------------
+-- Creator-point privacy: ~1 km offset, random bearing stored once in private.
+-- True coords stay on carpool_trips (fare / detour / book_seat / owner).
+-- Non-owners read only via DEFINER RPCs that apply the offset.
+-- ---------------------------------------------------------------------------
+create table if not exists private.carpool_trip_offset (
+  trip_id uuid primary key references public.carpool_trips (id) on delete cascade,
+  pickup_bearing_rad double precision not null,
+  pickup_km numeric not null
+    constraint carpool_trip_offset_pickup_km check (pickup_km between 0.9 and 1.1),
+  dest_bearing_rad double precision not null,
+  dest_km numeric not null
+    constraint carpool_trip_offset_dest_km check (dest_km between 0.9 and 1.1),
+  pickup_src_lat double precision not null,
+  pickup_src_lng double precision not null,
+  dest_src_lat double precision not null,
+  dest_src_lng double precision not null
+);
+
+revoke all on table private.carpool_trip_offset from public, anon, authenticated;
+alter table private.carpool_trip_offset enable row level security;
+comment on table private.carpool_trip_offset is
+  'Per-trip random bearing+km (0.9–1.1). Regenerated only when that true point changes. Never granted to clients.';
+
+create or replace function private.carpool_offset_point(
+  p_lat double precision,
+  p_lng double precision,
+  p_bearing_rad double precision,
+  p_km numeric
+)
+returns table (lat double precision, lng double precision)
 language sql
-stable
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select
+    pg_catalog.degrees(pg_catalog.asin(
+      pg_catalog.sin(pg_catalog.radians(p_lat)) * pg_catalog.cos(p_km / 6371.0)
+      + pg_catalog.cos(pg_catalog.radians(p_lat)) * pg_catalog.sin(p_km / 6371.0)
+        * pg_catalog.cos(p_bearing_rad)
+    )),
+    ((pg_catalog.degrees(pg_catalog.radians(p_lng) + pg_catalog.atan2(
+        pg_catalog.sin(p_bearing_rad) * pg_catalog.sin(p_km / 6371.0)
+          * pg_catalog.cos(pg_catalog.radians(p_lat)),
+        pg_catalog.cos(p_km / 6371.0)
+          - pg_catalog.sin(pg_catalog.radians(p_lat)) * pg_catalog.sin(
+              pg_catalog.asin(
+                pg_catalog.sin(pg_catalog.radians(p_lat)) * pg_catalog.cos(p_km / 6371.0)
+                + pg_catalog.cos(pg_catalog.radians(p_lat)) * pg_catalog.sin(p_km / 6371.0)
+                  * pg_catalog.cos(p_bearing_rad)
+              )
+            )
+      )) + 540)::numeric % 360) - 180;
+$$;
+
+revoke all on function private.carpool_offset_point(
+  double precision, double precision, double precision, numeric
+) from public, anon, authenticated;
+
+create or replace function private.carpool_coarse_label(p_address text)
+returns text
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare
+  raw text := btrim(coalesce(p_address, ''));
+  parts text[];
+  n int;
+  idx int;
+  pos int;
+  kw text;
+begin
+  if raw = '' then
+    return 'พื้นที่ใกล้เคียง';
+  end if;
+  parts := regexp_split_to_array(raw, '\s*,\s*');
+  n := coalesce(cardinality(parts), 0);
+  if n >= 2 then
+    return btrim(parts[n - 1] || ', ' || parts[n]);
+  end if;
+  idx := 0;
+  foreach kw in array array['แขวง', 'เขต', 'อำเภอ', 'ตำบล', 'จังหวัด']::text[]
+  loop
+    pos := pg_catalog.strpos(raw, kw);
+    if pos > 0 and (idx = 0 or pos < idx) then
+      idx := pos;
+    end if;
+  end loop;
+  if idx > 0 then
+    return btrim(pg_catalog.substr(raw, idx));
+  end if;
+  return 'พื้นที่ใกล้เคียง';
+end;
+$$;
+
+revoke all on function private.carpool_coarse_label(text) from public, anon, authenticated;
+
+create or replace function private.carpool_ensure_trip_offset(p_trip_id uuid)
+returns void
+language plpgsql
 security definer
 set search_path = ''
 as $$
-  select 0,
-         private.carpool_round_deg(t.pickup_lat),
-         private.carpool_round_deg(t.pickup_lng)
-    from public.carpool_trips t
-   where t.id = p_trip_id
+declare
+  t public.carpool_trips%rowtype;
+  o private.carpool_trip_offset%rowtype;
+  p_br double precision;
+  d_br double precision;
+  p_km numeric;
+  d_km numeric;
+begin
+  select * into t from public.carpool_trips where id = p_trip_id;
+  if not found then
+    return;
+  end if;
+  select * into o from private.carpool_trip_offset where trip_id = p_trip_id;
+  p_br := 2 * pg_catalog.pi() * pg_catalog.random();
+  d_br := 2 * pg_catalog.pi() * pg_catalog.random();
+  p_km := 0.9 + (pg_catalog.random() * 0.2);
+  d_km := 0.9 + (pg_catalog.random() * 0.2);
+  if o.trip_id is null then
+    insert into private.carpool_trip_offset (
+      trip_id, pickup_bearing_rad, pickup_km, dest_bearing_rad, dest_km,
+      pickup_src_lat, pickup_src_lng, dest_src_lat, dest_src_lng
+    ) values (
+      p_trip_id, p_br, p_km, d_br, d_km,
+      t.pickup_lat, t.pickup_lng, t.dest_lat, t.dest_lng
+    );
+    return;
+  end if;
+  if o.pickup_src_lat is distinct from t.pickup_lat
+     or o.pickup_src_lng is distinct from t.pickup_lng then
+    update private.carpool_trip_offset
+       set pickup_bearing_rad = p_br,
+           pickup_km = p_km,
+           pickup_src_lat = t.pickup_lat,
+           pickup_src_lng = t.pickup_lng
+     where trip_id = p_trip_id;
+  end if;
+  if o.dest_src_lat is distinct from t.dest_lat
+     or o.dest_src_lng is distinct from t.dest_lng then
+    update private.carpool_trip_offset
+       set dest_bearing_rad = d_br,
+           dest_km = d_km,
+           dest_src_lat = t.dest_lat,
+           dest_src_lng = t.dest_lng
+     where trip_id = p_trip_id;
+  end if;
+end;
+$$;
+
+revoke all on function private.carpool_ensure_trip_offset(uuid) from public, anon, authenticated;
+
+create or replace function private.carpool_trip_offset_on_trips()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.carpool_ensure_trip_offset(new.id);
+  return new;
+end;
+$$;
+
+revoke execute on function private.carpool_trip_offset_on_trips() from public, anon, authenticated;
+
+drop trigger if exists carpool_trip_offset_on_trips on public.carpool_trips;
+create trigger carpool_trip_offset_on_trips
+  after insert or update of pickup_lat, pickup_lng, dest_lat, dest_lng
+  on public.carpool_trips
+  for each row
+  execute function private.carpool_trip_offset_on_trips();
+
+insert into private.carpool_trip_offset (
+  trip_id, pickup_bearing_rad, pickup_km, dest_bearing_rad, dest_km,
+  pickup_src_lat, pickup_src_lng, dest_src_lat, dest_src_lng
+)
+select t.id,
+       2 * pg_catalog.pi() * pg_catalog.random(),
+       0.9 + (pg_catalog.random() * 0.2),
+       2 * pg_catalog.pi() * pg_catalog.random(),
+       0.9 + (pg_catalog.random() * 0.2),
+       t.pickup_lat, t.pickup_lng, t.dest_lat, t.dest_lng
+  from public.carpool_trips t
+ where not exists (
+   select 1 from private.carpool_trip_offset o where o.trip_id = t.id
+ );
+
+-- Reveal true pickup to booked riders 30 min before depart_at, or when
+-- status is in_progress/completed. carpool-web never sets in_progress.
+create or replace function private.carpool_visible_geo(p_trip_id uuid)
+returns table (
+  pickup_lat double precision,
+  pickup_lng double precision,
+  dest_lat double precision,
+  dest_lng double precision,
+  pickup_label text,
+  dest_label text,
+  hide_dest boolean,
+  pickup_approx boolean
+)
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+  t public.carpool_trips%rowtype;
+  o private.carpool_trip_offset%rowtype;
+  reveal_pickup boolean;
+  mask_dest boolean;
+  off_lat double precision;
+  off_lng double precision;
+begin
+  select * into t from public.carpool_trips where id = p_trip_id;
+  if not found then
+    return;
+  end if;
+  perform private.carpool_ensure_trip_offset(p_trip_id);
+  select * into o from private.carpool_trip_offset where trip_id = p_trip_id;
+
+  reveal_pickup := (t.owner_id is not distinct from uid)
+    or (
+      uid is not null
+      and exists (
+        select 1 from public.carpool_bookings b
+         where b.trip_id = t.id and b.rider_id = uid
+      )
+      and (
+        t.status in ('in_progress', 'completed')
+        or t.depart_at <= pg_catalog.now() + interval '30 minutes'
+      )
+    );
+  mask_dest := (t.owner_id is distinct from uid) and t.hide_dest;
+
+  pickup_approx := not reveal_pickup;
+  hide_dest := t.hide_dest;
+
+  if reveal_pickup then
+    pickup_lat := private.carpool_round_deg(t.pickup_lat);
+    pickup_lng := private.carpool_round_deg(t.pickup_lng);
+    pickup_label := t.pickup_label;
+  else
+    select p.lat, p.lng into off_lat, off_lng
+      from private.carpool_offset_point(
+        t.pickup_lat, t.pickup_lng, o.pickup_bearing_rad, o.pickup_km
+      ) p;
+    pickup_lat := private.carpool_round_deg(off_lat);
+    pickup_lng := private.carpool_round_deg(off_lng);
+    pickup_label := private.carpool_coarse_label(t.pickup_label);
+  end if;
+
+  if not mask_dest then
+    dest_lat := private.carpool_round_deg(t.dest_lat);
+    dest_lng := private.carpool_round_deg(t.dest_lng);
+    dest_label := t.dest_label;
+  else
+    select p.lat, p.lng into off_lat, off_lng
+      from private.carpool_offset_point(
+        t.dest_lat, t.dest_lng, o.dest_bearing_rad, o.dest_km
+      ) p;
+    dest_lat := private.carpool_round_deg(off_lat);
+    dest_lng := private.carpool_round_deg(off_lng);
+    dest_label := private.carpool_coarse_label(t.dest_label);
+  end if;
+
+  return next;
+end;
+$$;
+
+comment on function private.carpool_visible_geo(uuid) is
+  'Viewer-masked origin/dest. Offset ~1 km from private bearing. Pickup revealed to booked riders 30 min before depart or in_progress/completed. Internal.';
+
+revoke all on function private.carpool_visible_geo(uuid) from public, anon, authenticated;
+
+create or replace function private.carpool_route_vertices(p_trip_id uuid)
+returns table (idx integer, lat double precision, lng double precision)
+language sql
+volatile
+security definer
+set search_path = ''
+as $$
+  select 0, g.pickup_lat, g.pickup_lng
+    from private.carpool_visible_geo(p_trip_id) g
   union all
   select s.seq,
          private.carpool_round_deg(s.lat),
@@ -112,14 +410,13 @@ as $$
   select coalesce((
            select max(s.seq) from public.carpool_trip_stops s where s.trip_id = p_trip_id
          ), 0) + 1,
-         private.carpool_round_deg(t.dest_lat),
-         private.carpool_round_deg(t.dest_lng)
-    from public.carpool_trips t
-   where t.id = p_trip_id;
+         g.dest_lat,
+         g.dest_lng
+    from private.carpool_visible_geo(p_trip_id) g;
 $$;
 
 comment on function private.carpool_route_vertices(uuid) is
-  'Ordered route vertices rounded to 3 decimals: origin (idx 0), stops by seq, destination. Internal.';
+  'Ordered route vertices: masked origin/dest for the viewer, true stops. 3-decimal. Internal.';
 
 revoke all on function private.carpool_route_vertices(uuid) from public, anon, authenticated;
 
@@ -139,7 +436,7 @@ returns table (
   extra_km numeric
 )
 language plpgsql
-stable
+volatile
 security definer
 set search_path = ''
 as $$
@@ -296,6 +593,10 @@ revoke all on function private.carpool_search_distances(
 drop function if exists public.carpool_discover_trips(
   public.carpool_trip_kind, text, text, text, text
 );
+drop function if exists public.carpool_discover_trips(
+  public.carpool_trip_kind, text, text, text, text,
+  double precision, double precision, double precision, double precision, numeric
+);
 
 create function public.carpool_discover_trips(
   p_kind public.carpool_trip_kind default null,
@@ -337,10 +638,12 @@ returns table (
   max_detour_km numeric,
   pickup_distance_km numeric,
   dest_distance_km numeric,
-  extra_km numeric
+  extra_km numeric,
+  hide_dest boolean,
+  pickup_approx boolean
 )
 language plpgsql
-stable
+volatile
 security definer
 set search_path = ''
 as $$
@@ -382,12 +685,12 @@ begin
          t.route_km,
          t.depart_at,
          t.status,
-         t.pickup_label,
-         t.dest_label,
-         pg_catalog.round(t.pickup_lat::numeric, 3)::double precision,
-         pg_catalog.round(t.pickup_lng::numeric, 3)::double precision,
-         pg_catalog.round(t.dest_lat::numeric, 3)::double precision,
-         pg_catalog.round(t.dest_lng::numeric, 3)::double precision,
+         g.pickup_label,
+         g.dest_label,
+         g.pickup_lat,
+         g.pickup_lng,
+         g.dest_lat,
+         g.dest_lng,
          t.trunk_w_cm,
          t.trunk_h_cm,
          t.trunk_l_cm,
@@ -408,9 +711,12 @@ begin
          t.max_detour_km,
          m.pickup_distance_km,
          m.dest_distance_km,
-         m.extra_km
+         m.extra_km,
+         g.hide_dest,
+         g.pickup_approx
     from public.carpool_trips t
     join public.profiles p on p.id = t.owner_id
+    join lateral private.carpool_visible_geo(t.id) g on true
     left join lateral private.carpool_search_distances(
       t.id, t.kind, t.max_detour_km,
       p_pickup_lat, p_pickup_lng, p_dest_lat, p_dest_lng, p_radius_km
@@ -945,6 +1251,199 @@ revoke all on function public.carpool_set_seat_open(
 grant execute on function public.carpool_set_seat_open(
   uuid, public.carpool_seat_position, boolean
 ) to authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- Preview: same payload as 130000, but origin/dest go through visible_geo.
+-- ---------------------------------------------------------------------------
+create or replace function public.carpool_trip_preview(p_trip_id uuid)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+  rec jsonb;
+begin
+  if uid is null then
+    raise exception 'not authenticated';
+  end if;
+
+  select jsonb_build_object(
+           'id', t.id,
+           'kind', t.kind,
+           'vehicle_type', t.vehicle_type,
+           'car_icon', t.car_icon,
+           'route_km', t.route_km,
+           'depart_at', t.depart_at,
+           'status', t.status,
+           'pickup_label', g.pickup_label,
+           'dest_label', g.dest_label,
+           'pickup_lat', g.pickup_lat,
+           'pickup_lng', g.pickup_lng,
+           'dest_lat', g.dest_lat,
+           'dest_lng', g.dest_lng,
+           'trunk_w_cm', t.trunk_w_cm,
+           'trunk_h_cm', t.trunk_h_cm,
+           'trunk_l_cm', t.trunk_l_cm,
+           'owner_display_name', p.full_name,
+           'is_mine', t.owner_id = uid,
+           'origin_province_code', t.origin_province_code,
+           'dest_province_code', t.dest_province_code,
+           'origin_district_code', t.origin_district_code,
+           'dest_district_code', t.dest_district_code,
+           'max_detour_km', t.max_detour_km,
+           'hide_dest', g.hide_dest,
+           'pickup_approx', g.pickup_approx,
+           'stops', (
+             select coalesce(jsonb_agg(jsonb_build_object(
+               'seq', st.seq,
+               'address', st.address,
+               'lat', pg_catalog.round(st.lat::numeric, 3),
+               'lng', pg_catalog.round(st.lng::numeric, 3)
+             ) order by st.seq), '[]'::jsonb)
+               from public.carpool_trip_stops st
+              where st.trip_id = t.id
+           ),
+           'luggage', (
+             select coalesce(jsonb_agg(jsonb_build_object(
+               'height_cm', b.luggage_h_cm,
+               'width_cm', b.luggage_w_cm,
+               'depth_cm', b.luggage_d_cm
+             ) order by
+                 (b.luggage_h_cm * b.luggage_w_cm * b.luggage_d_cm) desc,
+                 b.luggage_h_cm,
+                 b.luggage_w_cm,
+                 b.luggage_d_cm
+             ), '[]'::jsonb)
+               from public.carpool_bookings b
+              where b.trip_id = t.id
+                and b.luggage_h_cm is not null
+                and b.luggage_w_cm is not null
+                and b.luggage_d_cm is not null
+           ),
+           'seats', (
+             select coalesce(jsonb_agg(jsonb_build_object(
+               'id', s.id,
+               'position', s.position,
+               'is_open', s.is_open,
+               'is_booked', s.is_booked
+             ) order by s.position), '[]'::jsonb)
+               from public.carpool_seats s
+              where s.trip_id = t.id
+           )
+         )
+    into rec
+    from public.carpool_trips t
+    join public.profiles p on p.id = t.owner_id
+    join lateral private.carpool_visible_geo(t.id) g on true
+   where t.id = p_trip_id
+     and t.status in ('open', 'full', 'in_progress', 'completed', 'cancelled');
+
+  if rec is null then
+    raise exception 'trip not found';
+  end if;
+  return rec;
+end;
+$$;
+
+comment on function public.carpool_trip_preview(uuid) is
+  'Join-page preview: viewer-masked origin/dest (offset ~1 km), is_mine (never owner_id), anonymized seats and luggage. Pickup revealed to booked riders 30 min before depart.';
+
+revoke all on function public.carpool_trip_preview(uuid) from public, anon;
+grant execute on function public.carpool_trip_preview(uuid) to authenticated, service_role;
+
+-- Non-owners must not SELECT true coords or house-level labels from the table.
+-- Postgres cannot revoke a table-level SELECT per column, so revoke SELECT
+-- then re-grant every column except geo/labels. INSERT/UPDATE of true
+-- columns stays so CreateTripPage can write them. Reads go through
+-- preview/discover/visible_trips (DEFINER).
+revoke select on table public.carpool_trips from authenticated;
+grant select (
+  id, owner_id, kind, vehicle_type, car_icon,
+  trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+  depart_at, status, created_at, updated_at,
+  origin_province_code, dest_province_code,
+  origin_district_code, dest_district_code,
+  max_detour_km, hide_dest
+) on table public.carpool_trips to authenticated;
+
+drop function if exists public.carpool_visible_trips();
+create or replace function public.carpool_visible_trips()
+returns table (
+  id uuid,
+  kind public.carpool_trip_kind,
+  vehicle_type public.carpool_vehicle_type,
+  car_icon text,
+  route_km numeric,
+  depart_at timestamptz,
+  status public.carpool_trip_status,
+  pickup_label text,
+  dest_label text,
+  pickup_lat double precision,
+  pickup_lng double precision,
+  dest_lat double precision,
+  dest_lng double precision,
+  trunk_w_cm numeric,
+  trunk_h_cm numeric,
+  trunk_l_cm numeric,
+  is_mine boolean,
+  hide_dest boolean,
+  pickup_approx boolean,
+  max_detour_km numeric,
+  owner_display_name text
+)
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+begin
+  if uid is null then
+    raise exception 'not authenticated';
+  end if;
+  return query
+  select t.id,
+         t.kind,
+         t.vehicle_type,
+         t.car_icon,
+         t.route_km,
+         t.depart_at,
+         t.status,
+         g.pickup_label,
+         g.dest_label,
+         g.pickup_lat,
+         g.pickup_lng,
+         g.dest_lat,
+         g.dest_lng,
+         t.trunk_w_cm,
+         t.trunk_h_cm,
+         t.trunk_l_cm,
+         (t.owner_id = uid),
+         g.hide_dest,
+         g.pickup_approx,
+         t.max_detour_km,
+         p.full_name
+    from public.carpool_trips t
+    join public.profiles p on p.id = t.owner_id
+    join lateral private.carpool_visible_geo(t.id) g on true
+   where t.owner_id = uid
+      or exists (
+        select 1 from public.carpool_bookings b
+         where b.trip_id = t.id and b.rider_id = uid
+      )
+      or (select private.is_admin());
+end;
+$$;
+
+comment on function public.carpool_visible_trips() is
+  'My Trips / history: viewer-masked origin/dest, is_mine, never owner_id or bearing.';
+
+revoke all on function public.carpool_visible_trips() from public, anon;
+grant execute on function public.carpool_visible_trips() to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- C2.5 rider drop-off privacy audit. No policy/RPC change: the existing

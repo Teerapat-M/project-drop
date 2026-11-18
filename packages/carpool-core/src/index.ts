@@ -58,6 +58,18 @@ export {
 } from './detour';
 
 export {
+  PRIVACY_OFFSET_KM_MIN,
+  PRIVACY_OFFSET_KM_MAX,
+  PRIVACY_OFFSET_KM,
+  PICKUP_REVEAL_BEFORE_MS,
+  offsetPoint,
+  stableOffset,
+  coarseAddress,
+  offsetKmFromTrue,
+  shouldRevealPickup,
+} from './privacy';
+
+export {
   SEARCH_RADIUS_KM_MIN,
   SEARCH_RADIUS_KM_DEFAULT,
   SEARCH_RADIUS_KM_MAX,

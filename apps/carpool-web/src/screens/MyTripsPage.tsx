@@ -29,13 +29,10 @@ export function MyTripsPage() {
     const supabase = getSupabase();
     if (!supabase || !user) return;
     void (async () => {
-      const { data: tripRows } = await supabase
-        .from('carpool_trips')
-        .select(
-          'id, kind, vehicle_type, car_icon, route_km, depart_at, status, pickup_label, dest_label, pickup_lat, pickup_lng, dest_lat, dest_lng, trunk_w_cm, trunk_h_cm, trunk_l_cm, owner_id',
-        )
-        .order('depart_at', { ascending: true });
-      const rows = (tripRows ?? []) as Array<TripCard & { owner_id?: string }>;
+      const { data: tripRows } = await supabase.rpc('carpool_visible_trips');
+      const rows = ((tripRows ?? []) as TripCard[]).sort(
+        (a, b) => new Date(a.depart_at).getTime() - new Date(b.depart_at).getTime(),
+      );
       const ids = rows.map((t) => t.id);
       const { data: books } = ids.length
         ? await supabase
@@ -61,7 +58,7 @@ export function MyTripsPage() {
       }
       setTrips(
         rows.map((t) => {
-          const role: TripRole = t.owner_id === user.id ? 'created' : 'booked';
+          const role: TripRole = t.is_mine ? 'created' : 'booked';
           const bookings = byTrip.get(t.id) ?? [];
           const seats = seatsByTrip.get(t.id) ?? [];
           let share = 0;

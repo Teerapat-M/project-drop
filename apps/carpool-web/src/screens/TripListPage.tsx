@@ -16,6 +16,7 @@ import { VEHICLE_LABEL } from '../lib/carIcons';
 import { estimateViewerFare } from '../lib/estimateFare';
 import { formatDepart, thb } from '../lib/format';
 import { formatRouteLine } from '../lib/placeLabel';
+import { maskTripForViewer } from '../lib/privacyMask';
 import type { PickedPlace } from '../maps/MapProvider';
 import { PlaceField } from '../maps/PlaceField';
 import { getSupabase } from '../supabase';
@@ -39,10 +40,13 @@ function dropoffQuery(place: PickedPlace | null): string {
 }
 
 function withDemoDistances(trips: TripCard[], applied: AppliedSearch): TripCard[] {
+  const masked = trips.map((trip) =>
+    maskTripForViewer(trip, { isOwner: trip.is_mine === true, isBookedRider: false }),
+  );
   const hasPoint = applied.pickup != null || applied.dest != null;
-  if (!hasPoint) return trips;
+  if (!hasPoint) return masked;
   const scored: TripCard[] = [];
-  for (const trip of trips) {
+  for (const trip of masked) {
     const match = matchSearchRoute({
       route: [
         { lat: trip.pickup_lat, lng: trip.pickup_lng },
@@ -267,6 +271,11 @@ function TripCardView({ trip, dropoff }: { trip: TripCard; dropoff: PickedPlace 
         {trip.kind === 'taxi' && trip.max_detour_km != null ? (
           <p className="muted" style={{ margin: 0 }} data-testid="max-detour-cap">
             ออกนอกเส้นทางได้สูงสุด {formatKm(trip.max_detour_km)} กม.
+          </p>
+        ) : null}
+        {trip.pickup_approx ? (
+          <p className="muted" style={{ margin: 0 }} data-testid="pickup-approx">
+            จุดขึ้นโดยประมาณ
           </p>
         ) : null}
         {distances ? (

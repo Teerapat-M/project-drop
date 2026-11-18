@@ -593,4 +593,26 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
     expect(testSql).toMatch(/discover excludes taxi when floor exceeds max_detour_km/);
     expect(testSql).toMatch(/book vs cancel same seat 15x no 40P01/);
   });
+
+  it('stores a per-trip privacy offset in private schema and masks non-owner geo', () => {
+    expect(c25Sql).toMatch(/add column if not exists hide_dest boolean not null default false/);
+    expect(c25Sql).toMatch(/create table if not exists private\.carpool_trip_offset/);
+    expect(c25Sql).toMatch(/revoke all on table private\.carpool_trip_offset/);
+    expect(c25Sql).toMatch(/alter table private\.carpool_trip_offset enable row level security/);
+    expect(c25Sql).toMatch(/private\.carpool_visible_geo/);
+    expect(c25Sql).toMatch(/interval '30 minutes'/);
+    expect(c25Sql).toMatch(/ซ่อนตำแหน่งปลายทางจริง/);
+    expect(c25Sql).toMatch(/revoke select on table public\.carpool_trips from authenticated;/);
+    expect(c25Sql).toMatch(/grant select \(\s*id, owner_id, kind, vehicle_type, car_icon,/);
+    expect(c25Sql).not.toMatch(/grant select \([^)]*pickup_lat/);
+    expect(c25Sql).toMatch(/create or replace function public\.carpool_visible_trips\(\)/);
+    expect(c25Sql).toMatch(/grant execute on function public\.carpool_visible_trips\(\) to authenticated, service_role;/);
+    expect(c25Sql).toMatch(/carpool-web never sets in_progress/);
+    expect(testSql).toMatch(/stranger preview pickup must be ~1 km from true/);
+    expect(testSql).toMatch(/authenticated cannot SELECT true pickup_lat/);
+    expect(testSql).toMatch(/dest offset only when hide_dest is on/);
+    expect(testSql).toMatch(/booked rider before reveal gets offset pickup/);
+    expect(testSql).toMatch(/booked rider after reveal gets true pickup/);
+    expect(testSql).toMatch(/probe discover cannot recover true point better than offset/);
+  });
 });

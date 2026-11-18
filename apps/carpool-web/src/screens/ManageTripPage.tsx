@@ -23,6 +23,7 @@ export function ManageTripPage() {
   const { demo } = useAuth();
   const [preview, setPreview] = useState<TripPreview | null>(demo ? demoPreview(id) : null);
   const [error, setError] = useState<string | null>(null);
+  const [hideDestBusy, setHideDestBusy] = useState(false);
 
   useEffect(() => {
     bindChat(id);
@@ -75,6 +76,27 @@ export function ManageTripPage() {
       })),
     [preview],
   );
+
+  const toggleHideDest = async (next: boolean) => {
+    const snapshot = preview?.hide_dest;
+    setPreview((prev) => (prev ? { ...prev, hide_dest: next } : prev));
+    if (demo) return;
+    const supabase = getSupabase();
+    if (!supabase) {
+      setPreview((prev) => (prev ? { ...prev, hide_dest: snapshot } : prev));
+      return;
+    }
+    setHideDestBusy(true);
+    const { error: updError } = await supabase
+      .from('carpool_trips')
+      .update({ hide_dest: next })
+      .eq('id', id);
+    setHideDestBusy(false);
+    if (updError) {
+      setPreview((prev) => (prev ? { ...prev, hide_dest: snapshot } : prev));
+      setError(thaiRpcError(updError.message, 'บันทึกไม่สำเร็จ'));
+    }
+  };
 
   const toggleOpen = async (position: SeatPosition, isOpen: boolean) => {
     const snapshot = preview?.seats ?? [];
@@ -160,6 +182,18 @@ export function ManageTripPage() {
       </article>
 
       {error ? <p style={{ color: 'var(--drop-danger)' }}>{error}</p> : null}
+      <label className="field">
+        <span className="row" style={{ alignItems: 'center', gap: 8 }}>
+          <input
+            data-testid="hide-dest"
+            type="checkbox"
+            checked={preview.hide_dest === true}
+            disabled={hideDestBusy}
+            onChange={(e) => void toggleHideDest(e.target.checked)}
+          />
+          ซ่อนตำแหน่งปลายทางจริง
+        </span>
+      </label>
       {overflow ? (
         <p data-testid="luggage-overflow" style={{ color: 'var(--drop-danger)' }}>
           ท้ายรถเต็ม

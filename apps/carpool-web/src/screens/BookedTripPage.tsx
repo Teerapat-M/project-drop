@@ -10,6 +10,7 @@ import { bindChat, openChat } from '../lib/chatEvents';
 import { fareForTrip } from '../lib/fareFromTrip';
 import { liters, thb } from '../lib/format';
 import { formatRouteLine } from '../lib/placeLabel';
+import { maskTripForViewer } from '../lib/privacyMask';
 import { SEAT_LABELS } from '../lib/seats';
 import { RouteMiniMap } from '../maps/RouteMiniMap';
 import { getSupabase } from '../supabase';
@@ -29,7 +30,12 @@ export function BookedTripPage() {
   useEffect(() => {
     if (demo) {
       const card = DEMO_MY_TRIPS.find((t) => t.id === id);
-      setPreview(demoPreview(id) ?? (card ? { ...card, seats: [], luggage: [] } : null));
+      const raw = demoPreview(id) ?? (card ? { ...card, seats: [], luggage: [] } : null);
+      setPreview(
+        raw
+          ? maskTripForViewer(raw, { isOwner: false, isBookedRider: true })
+          : raw,
+      );
       setBooking(DEMO_MY_BOOKING[id] ?? null);
       return;
     }
@@ -123,6 +129,14 @@ export function BookedTripPage() {
         <p>
           <strong>ที่นั่งของคุณ</strong> · {seatLabel}
         </p>
+        <p data-testid="pickup-approx">
+          {preview.pickup_approx
+            ? `จุดขึ้นโดยประมาณ · ${preview.pickup_label}`
+            : `จุดขึ้น · ${preview.pickup_label}`}
+        </p>
+        {preview.pickup_approx ? (
+          <p className="muted">จะแสดงจุดนัดจริงก่อนออกเดินทาง 30 นาที</p>
+        ) : null}
         {booking?.dest_label ? (
           <p data-testid="own-dropoff">
             จุดลงของคุณ · {booking.dest_label}
