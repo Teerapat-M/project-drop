@@ -127,6 +127,18 @@ begin
   if has_function_privilege('authenticated', 'private.carpool_is_participant(uuid, uuid)', 'EXECUTE') then
     raise exception 'authenticated must not EXECUTE two-arg private.carpool_is_participant';
   end if;
+  if has_function_privilege(
+       'authenticated',
+       'private.carpool_haversine_km(double precision, double precision, double precision, double precision)',
+       'EXECUTE'
+     )
+     or has_function_privilege(
+       'authenticated',
+       'private.carpool_detour_floor_km(uuid, double precision, double precision)',
+       'EXECUTE'
+     ) then
+    raise exception 'authenticated must not EXECUTE detour floor helpers';
+  end if;
   if has_function_privilege('anon', 'private.carpool_is_participant(uuid)', 'EXECUTE')
      or has_function_privilege('anon', 'private.carpool_is_trip_owner(uuid)', 'EXECUTE') then
     raise exception 'anon must not EXECUTE carpool policy helpers';
@@ -160,6 +172,12 @@ begin
   end if;
   if def !~ 'search_path' then
     raise exception 'carpool_book_seat must set search_path';
+  end if;
+  if def !~ 'carpool_detour_floor_km' then
+    raise exception 'carpool_book_seat must apply a server detour floor';
+  end if;
+  if def !~ 'greatest' then
+    raise exception 'carpool_book_seat must store greatest(floor, client detour)';
   end if;
 end $$;
 
@@ -489,10 +507,13 @@ begin
   select id into trip from tests.ids where k = 'trip';
   select id into uid from tests.ids where k = 'rider';
   rec := public.carpool_book_seat(
-    trip, 'front_passenger', 'ตลาดกลาง', 18.57, 99.01, 0, null, null, null
+    trip, 'front_passenger', 'ลำพูน', 18.574, 99.009, 0, null, null, null
   );
   if rec.rider_id is distinct from uid then
     raise exception 'book_seat rider_id mismatch';
+  end if;
+  if rec.detour_km is distinct from 0 then
+    raise exception 'no-detour rider should store 0, got %', rec.detour_km;
   end if;
   insert into tests.ids (k, id) values ('booking', rec.id);
 
@@ -527,6 +548,7 @@ begin
   end if;
   perform tests.ok('rider book_seat + select + message insert');
   perform tests.ok('rider reads stops; owner-only writes');
+  perform tests.ok('no-detour rider gets 0');
 end $$;
 commit;
 
@@ -627,6 +649,109 @@ select tests.expect_raise(
 );
 select tests.ok('stranger carpool_set_seat_open denied');
 commit;
+
+-- Detour floor: underreport is raised; honest larger value is kept; only that rider.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 40,
+    'เชียงใหม่', 18.800, 99.000,
+    'ลำพูน', 18.500, 99.000, now() + interval '2 days', 'open'
+  ) returning id into trip;
+  insert into tests.ids (k, id) values ('trip2', trip);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_bookings;
+begin
+  select id into trip from tests.ids where k = 'trip2';
+  rec := public.carpool_book_seat(
+    trip, 'front_passenger', 'อ้อม', 18.650, 99.400, 0, null, null, null
+  );
+  if rec.detour_km <= 0 then
+    raise exception 'underreported detour should be raised above 0, got %', rec.detour_km;
+  end if;
+  insert into tests.ids (k, id) values ('booking2', rec.id);
+end $$;
+commit;
+
+do $$
+declare
+  trip uuid;
+  rec_km numeric;
+  floor_km numeric;
+begin
+  select id into trip from tests.ids where k = 'trip2';
+  select b.detour_km into rec_km
+    from public.carpool_bookings b
+   where b.id = (select id from tests.ids where k = 'booking2');
+  floor_km := private.carpool_detour_floor_km(trip, 18.650, 99.400);
+  if rec_km is distinct from floor_km then
+    raise exception 'underreported detour %, expected floor %', rec_km, floor_km;
+  end if;
+  if floor_km <= 0 then
+    raise exception 'expected a positive detour floor, got %', floor_km;
+  end if;
+  perform tests.ok('underreported p_detour_km raised to floor');
+end $$;
+
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_bookings;
+begin
+  select id into trip from tests.ids where k = 'trip2';
+  rec := public.carpool_book_seat(
+    trip, 'rear_left', 'อ้อม', 18.650, 99.400, 999, null, null, null
+  );
+  if rec.detour_km is distinct from 999 then
+    raise exception 'honest detour 999 should be kept, got %', rec.detour_km;
+  end if;
+  insert into tests.ids (k, id) values ('booking3', rec.id);
+end $$;
+commit;
+
+do $$
+declare
+  under numeric;
+  honest numeric;
+begin
+  select b.detour_km into under
+    from public.carpool_bookings b
+   where b.id = (select id from tests.ids where k = 'booking2');
+  select b.detour_km into honest
+    from public.carpool_bookings b
+   where b.id = (select id from tests.ids where k = 'booking3');
+  if honest is distinct from 999 then
+    raise exception 'honest rider detour should stay 999, got %', honest;
+  end if;
+  if under >= 999 then
+    raise exception 'underreported rider should not receive the honest surcharge';
+  end if;
+  perform tests.ok('honest detour kept; charge only the requester');
+end $$;
 
 -- Discover/preview: rounded coords, no owner_id (stops follow origin/dest).
 begin;
@@ -771,7 +896,7 @@ declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 16 then
+  if n < 19 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

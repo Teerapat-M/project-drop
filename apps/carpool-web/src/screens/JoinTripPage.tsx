@@ -16,6 +16,7 @@ import { LuggageBlock } from '../components/LuggageBlock';
 import type { PickedPlace } from '../maps/MapProvider';
 import { PlaceField } from '../maps/PlaceField';
 import { RouteMiniMap } from '../maps/RouteMiniMap';
+import { parseDetourKm } from '../lib/detourInput';
 import { detourFromViaKm } from '../maps/routePoints';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
@@ -288,7 +289,7 @@ export function JoinTripPage() {
             value={detour}
             onChange={(e) => {
               setDetourEdited(true);
-              setDetour(Number(e.target.value));
+              setDetour((prev) => parseDetourKm(e.target.value, prev));
             }}
           />
         </label>
