@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import css from '../index.css?raw';
 import { mockMatchMedia } from '../test/matchMedia';
+import { detourFloorKm } from '@drop/carpool-core';
 import { createMockMapProvider, MOCK_PLACE } from '../test/mockMapProvider';
 import { MapsProvider } from './MapsProvider';
 import { PlacePicker } from './PlacePicker';
@@ -25,7 +26,7 @@ describe('PlacePicker', () => {
     expect(provider.load).toHaveBeenCalled();
     fireEvent.change(screen.getByTestId('place-search'), { target: { value: 'วโรรส' } });
     await waitFor(() => expect(screen.getByText(MOCK_PLACE.address)).toBeInTheDocument());
-    expect(provider.autocomplete).toHaveBeenCalledWith('วโรรส', 'session-1');
+    expect(provider.autocomplete).toHaveBeenCalledWith('วโรรส', 'session-1', undefined);
     fireEvent.click(screen.getByText(MOCK_PLACE.address));
     await waitFor(() => expect(provider.placeDetails).toHaveBeenCalledWith('p1', 'session-1'));
     fireEvent.click(screen.getByTestId('place-confirm'));
@@ -41,7 +42,7 @@ describe('PlacePicker', () => {
     fireEvent.change(screen.getByTestId('place-search'), { target: { value: 'วโรรส' } });
     expect(provider.autocomplete).not.toHaveBeenCalled();
     await waitFor(() => expect(provider.autocomplete).toHaveBeenCalledTimes(1));
-    expect(provider.autocomplete).toHaveBeenCalledWith('วโรรส', 'session-1');
+    expect(provider.autocomplete).toHaveBeenCalledWith('วโรรส', 'session-1', undefined);
   });
 
   it('ends the Places session when confirming a dropped pin without a prediction', async () => {
@@ -90,5 +91,46 @@ describe('PlacePicker', () => {
     expect(screen.getAllByTestId('place-picker').at(-1)).toHaveAttribute('data-mode', 'modal');
     expect(screen.getByTestId('place-picker-backdrop')).toBeInTheDocument();
     expect(css).toMatch(/\.place-picker-backdrop \.place-picker\s*\{[^}]*position:\s*relative/s);
+  });
+
+  it('fits the owner route bounds, not Chiang Mai, and blocks confirm above max detour', async () => {
+    mockMatchMedia(390);
+    const origin = { lat: 13.7563, lng: 100.5018 };
+    const dest = { lat: 14.35, lng: 100.57 };
+    const provider = createMockMapProvider();
+    const onPick = vi.fn();
+    render(
+      <MapsProvider provider={provider}>
+        <PlacePicker
+          title="จุดลงของคุณ"
+          initial={null}
+          routeOverlay={{
+            points: [origin, dest],
+            labels: ['1. กรุงเทพฯ', '2. อยุธยา'],
+          }}
+          maxDetourKm={5}
+          detourForPin={(pin) =>
+            detourFloorKm({
+              pickup: origin,
+              destination: dest,
+              riderDest: pin,
+            })
+          }
+          onPick={onPick}
+          onClose={() => undefined}
+        />
+      </MapsProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId('mock-map')).toBeInTheDocument());
+    expect(provider.lastFitBounds).toEqual([origin, dest]);
+    expect(provider.lastFitBounds?.[0]?.lat).not.toBeCloseTo(18.788, 1);
+
+    expect(screen.getByTestId('place-confirm')).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId('mock-map'));
+    await waitFor(() => expect(screen.getByTestId('max-detour-warning')).toBeInTheDocument());
+    expect(screen.getByTestId('max-detour-warning')).toHaveTextContent('ออกนอกเส้นทาง');
+    expect(screen.getByTestId('place-confirm')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('place-confirm'));
+    expect(onPick).not.toHaveBeenCalled();
   });
 });

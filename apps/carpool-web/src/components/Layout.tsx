@@ -56,6 +56,11 @@ export function Layout() {
         <NavLink to="/trips/new" className="nav-link tap-target">
           สร้างทริป
         </NavLink>
+        {user || demo ? (
+          <NavLink to="/my-trips" className="nav-link tap-target" data-testid="nav-my-trips">
+            ทริปของคุณ
+          </NavLink>
+        ) : null}
         <NavLink to="/history" className="nav-link tap-target">
           ประวัติทริป
         </NavLink>
@@ -66,7 +71,7 @@ export function Layout() {
         <button
           type="button"
           className="icon-btn tap-target"
-          aria-label="แชท"
+          aria-label="แชทกับเพื่อนร่วมทาง"
           onClick={() => setSheet(true)}
         >
           💬
@@ -92,6 +97,22 @@ export function Layout() {
 
       <Outlet />
 
+      <p className="muted geo-credit" data-testid="geo-credit">
+        ข้อมูลจังหวัด/อำเภอ:{' '}
+        <a
+          href="https://github.com/DevelopedbyWill/thailand-canonical-admin-names"
+          target="_blank"
+          rel="noreferrer"
+        >
+          thailand-canonical-admin-names
+        </a>{' '}
+        (
+        <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">
+          CC BY 4.0
+        </a>
+        )
+      </p>
+
       <nav className="bottom-nav" data-testid="bottom-nav" aria-label="นำทางมือถือ">
         <NavLink to="/" className="nav-link tap-target" end>
           หน้าแรก
@@ -99,6 +120,11 @@ export function Layout() {
         <NavLink to="/trips/new" className="nav-link tap-target">
           สร้าง
         </NavLink>
+        {user || demo ? (
+          <NavLink to="/my-trips" className="nav-link tap-target" data-testid="nav-my-trips-mobile">
+            ทริปของคุณ
+          </NavLink>
+        ) : null}
         <NavLink to="/history" className="nav-link tap-target">
           ประวัติ
         </NavLink>

@@ -28,11 +28,37 @@ export {
 export {
   MIN_SHORT_SIDE_FRAME_RATIO,
   CORNER_RADIUS_RATIO,
+  TAXI_TRUNK_PRESET,
   TrunkError,
   scaledTrunkSize,
+  luggageUsedVol,
+  remainingTrunkSpace,
   layoutTrunk,
   type LuggagePiece,
+  type TrunkDims,
+  type RemainingTrunkSpace,
   type TrunkInput,
   type TrunkRect,
   type TrunkLayout,
 } from './trunk';
+
+export {
+  BANGKOK_PROVINCE_CODE,
+  BANGKOK_CENTER,
+  THAI_PROVINCES,
+  provinceByCode,
+  type ThaiProvince,
+} from './thaiAdmin';
+
+export {
+  MAX_DETOUR_KM_MIN,
+  MAX_DETOUR_KM_DEFAULT,
+  MAX_DETOUR_KM_MAX,
+  roundKm,
+  formatKm,
+  clampMaxDetourKm,
+  parseMaxDetourKm,
+  detourFloorKm,
+  maxDetourExceeded,
+  maxDetourWarning,
+} from './detour';

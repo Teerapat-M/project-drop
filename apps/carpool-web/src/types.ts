@@ -33,7 +33,17 @@ export type TripCard = {
   bookable_seats: number;
   owner_display_name: string;
   owner_id?: string;
+  /** Server-side owner flag. Never send owner_id on public preview/list. */
+  is_mine?: boolean;
+  origin_province_code?: string | null;
+  dest_province_code?: string | null;
+  origin_district_code?: string | null;
+  dest_district_code?: string | null;
+  /** Taxi cap; null on private until we surface the field. */
+  max_detour_km?: number | null;
 };
+
+export type TripRole = 'created' | 'booked';
 
 export type TripStop = {
   seq: number;
@@ -42,9 +52,17 @@ export type TripStop = {
   lng: number;
 };
 
+export type PreviewLuggage = {
+  height_cm: number;
+  width_cm: number;
+  depth_cm: number;
+};
+
 export type TripPreview = Omit<TripCard, 'open_seats' | 'bookable_seats'> & {
   seats: SeatState[];
   stops?: TripStop[];
+  /** Booked luggage, anonymized, volume-desc. No rider ids. */
+  luggage?: PreviewLuggage[];
 };
 
 export type BookingRow = {

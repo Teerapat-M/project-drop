@@ -8,7 +8,7 @@ export function ChatBubble({ onClick }: Props) {
       type="button"
       className="chat-bubble tap-target"
       data-testid="chat-bubble"
-      aria-label="เปิดแชท"
+      aria-label="เปิดแชทกับเพื่อนร่วมทาง"
       onClick={onClick}
     >
       <img src="/assets/speech_balloon_3d.png" alt="" width={40} height={40} />

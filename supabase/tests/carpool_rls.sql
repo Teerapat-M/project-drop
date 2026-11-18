@@ -1,5 +1,7 @@
--- Catalog + behavioral RLS for 20261118100000_carpool.sql and
--- 20261118120000_carpool_trip_stops.sql.
+-- Catalog + behavioral RLS for 20261118100000_carpool.sql,
+-- 20261118120000_carpool_trip_stops.sql, and 20261118130000_carpool_taxi_trunk.sql.
+-- Taxi-trunk backfill (legacy 100×50×50) runs in run-carpool-rls.sh around
+-- that migration, via carpool_taxi_trunk_seed.sql / carpool_taxi_trunk_backfill.sql.
 -- CI: supabase/tests/run-carpool-rls.sh (shim + profiles + carpool on ephemeral Postgres).
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/carpool_rls.sql
 -- Recursion (42P17) or missing EXECUTE on policy helpers fails this file.
@@ -73,6 +75,10 @@ begin
      or has_function_privilege('authenticated', 'public.carpool_trip_stops_guard()', 'EXECUTE') then
     raise exception 'anon/authenticated must not EXECUTE public.carpool_trip_stops_guard()';
   end if;
+  if has_function_privilege('anon', 'public.carpool_trips_taxi_trunk()', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.carpool_trips_taxi_trunk()', 'EXECUTE') then
+    raise exception 'anon/authenticated must not EXECUTE public.carpool_trips_taxi_trunk()';
+  end if;
 end $$;
 
 -- Intentional RPCs stay executable by authenticated; anon has none.
@@ -82,7 +88,11 @@ declare
   claim_sig text := 'public.carpool_claim_owner_seat(uuid, public.carpool_seat_position, numeric, numeric, numeric)';
   set_sig text := 'public.carpool_set_seat_open(uuid, public.carpool_seat_position, boolean)';
 begin
-  if not has_function_privilege('authenticated', 'public.carpool_discover_trips(public.carpool_trip_kind)', 'EXECUTE') then
+  if not has_function_privilege(
+       'authenticated',
+       'public.carpool_discover_trips(public.carpool_trip_kind, text, text, text, text)',
+       'EXECUTE'
+     ) then
     raise exception 'authenticated must EXECUTE public.carpool_discover_trips';
   end if;
   if not has_function_privilege('authenticated', 'public.carpool_trip_preview(uuid)', 'EXECUTE') then
@@ -101,7 +111,11 @@ begin
     raise exception 'authenticated must EXECUTE public.carpool_set_seat_open';
   end if;
   if has_function_privilege('anon', book_sig, 'EXECUTE')
-     or has_function_privilege('anon', 'public.carpool_discover_trips(public.carpool_trip_kind)', 'EXECUTE') then
+     or has_function_privilege(
+          'anon',
+          'public.carpool_discover_trips(public.carpool_trip_kind, text, text, text, text)',
+          'EXECUTE'
+        ) then
     raise exception 'anon must not EXECUTE carpool RPCs';
   end if;
 end $$;
@@ -136,6 +150,11 @@ begin
        'authenticated',
        'private.carpool_detour_floor_km(uuid, double precision, double precision)',
        'EXECUTE'
+     )
+     or has_function_privilege(
+       'authenticated',
+       'private.carpool_enforce_max_detour(uuid, double precision, double precision, numeric)',
+       'EXECUTE'
      ) then
     raise exception 'authenticated must not EXECUTE detour floor helpers';
   end if;
@@ -151,6 +170,10 @@ begin
      or not has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_label', 'UPDATE') then
     raise exception 'authenticated must still UPDATE dest_* on carpool_bookings';
   end if;
+  if has_function_privilege('authenticated', 'private.carpool_taxi_trunk()', 'EXECUTE')
+     or has_function_privilege('anon', 'private.carpool_taxi_trunk()', 'EXECUTE') then
+    raise exception 'anon/authenticated must not EXECUTE private.carpool_taxi_trunk';
+  end if;
 end $$;
 
 -- Booking RPC: row lock, exact Thai conflict message, own-trip / not-open / closed.
@@ -158,6 +181,9 @@ do $$
 declare
   def text := pg_get_functiondef(
     'public.carpool_book_seat(uuid, public.carpool_seat_position, text, double precision, double precision, numeric, numeric, numeric, numeric)'::regprocedure
+  );
+  enforce text := pg_get_functiondef(
+    'private.carpool_enforce_max_detour(uuid, double precision, double precision, numeric)'::regprocedure
   );
 begin
   if def !~ 'for update' then
@@ -181,10 +207,13 @@ begin
   if def !~ 'search_path' then
     raise exception 'carpool_book_seat must set search_path';
   end if;
-  if def !~ 'carpool_detour_floor_km' then
+  if def !~ 'carpool_enforce_max_detour' then
     raise exception 'carpool_book_seat must apply a server detour floor';
   end if;
-  if def !~ 'greatest' then
+  if enforce !~ 'carpool_detour_floor_km' then
+    raise exception 'carpool_enforce_max_detour must call the haversine floor';
+  end if;
+  if enforce !~ 'greatest' then
     raise exception 'carpool_book_seat must store greatest(floor, client detour)';
   end if;
 end $$;
@@ -880,7 +909,654 @@ begin
   if disc ? 'stops' then
     raise exception 'discover list must not expose stops';
   end if;
+  if rec ? 'owner_id' or disc ? 'owner_id' then
+    raise exception 'preview/discover must not leak owner_id';
+  end if;
+  if coalesce((rec->>'is_mine')::boolean, true) then
+    raise exception 'stranger preview is_mine should be false';
+  end if;
+  if coalesce((disc->>'is_mine')::boolean, true) then
+    raise exception 'stranger discover is_mine should be false';
+  end if;
   perform tests.ok('discover/preview stay rounded with no owner id');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec jsonb;
+  disc jsonb;
+begin
+  select id into trip from tests.ids where k = 'trip';
+  rec := public.carpool_trip_preview(trip);
+  if rec ? 'owner_id' then
+    raise exception 'owner preview must not include owner_id';
+  end if;
+  if not coalesce((rec->>'is_mine')::boolean, false) then
+    raise exception 'owner preview is_mine should be true';
+  end if;
+  select to_jsonb(d) into disc
+    from public.carpool_discover_trips() d
+   where d.id = trip;
+  if not coalesce((disc->>'is_mine')::boolean, false) then
+    raise exception 'owner discover is_mine should be true';
+  end if;
+  perform tests.ok('is_mine true only for the owner');
+end $$;
+commit;
+
+-- Taxi trunk: trigger forces the preset; private dims stay; preview luggage
+-- is anonymized and ordered by volume (not owner-first).
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+  w numeric;
+  h numeric;
+  l numeric;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'taxi', 'sedan', 'taxi',
+    80, 99, 12, 12,
+    'กรุงเทพฯ', 13.75, 100.5,
+    'อยุธยา', 14.35, 100.57, now() + interval '2 day', 'open'
+  ) returning id, trunk_w_cm, trunk_h_cm, trunk_l_cm into trip, w, h, l;
+  if w <> 100 or h <> 40 or l <> 50 then
+    raise exception 'taxi insert must force 100×40×50, got %×%×%', w, h, l;
+  end if;
+  insert into tests.ids (k, id) values ('taxi_trip', trip);
+
+  update public.carpool_trips
+     set trunk_w_cm = 140, trunk_h_cm = 70, trunk_l_cm = 90
+   where id = trip
+  returning trunk_w_cm, trunk_h_cm, trunk_l_cm into w, h, l;
+  if w <> 100 or h <> 40 or l <> 50 then
+    raise exception 'taxi update must keep 100×40×50, got %×%×%', w, h, l;
+  end if;
+
+  perform tests.ok('taxi trunk insert/update forced to preset');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_bookings;
+begin
+  select id into trip from tests.ids where k = 'taxi_trip';
+  rec := public.carpool_claim_owner_seat(trip, 'front_passenger', 40, 30, 20);
+  if rec.luggage_h_cm <> 40 or rec.luggage_w_cm <> 30 or rec.luggage_d_cm <> 20 then
+    raise exception 'owner claim luggage mismatch';
+  end if;
+  perform tests.ok('taxi owner claim stores creator luggage');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_bookings;
+begin
+  select id into trip from tests.ids where k = 'taxi_trip';
+  rec := public.carpool_book_seat(
+    trip, 'rear_left', 'อยุธยา', 14.35, 100.57, 0, 50, 40, 25
+  );
+  if rec.luggage_w_cm <> 40 then
+    raise exception 'rider luggage mismatch';
+  end if;
+  perform tests.ok('taxi rider books with luggage');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec jsonb;
+  bags jsonb;
+begin
+  select id into trip from tests.ids where k = 'taxi_trip';
+  rec := public.carpool_trip_preview(trip);
+  if (rec->>'trunk_w_cm')::numeric <> 100
+     or (rec->>'trunk_h_cm')::numeric <> 40
+     or (rec->>'trunk_l_cm')::numeric <> 50 then
+    raise exception 'preview taxi trunk should be preset, got % % %',
+      rec->>'trunk_w_cm', rec->>'trunk_h_cm', rec->>'trunk_l_cm';
+  end if;
+  bags := rec->'luggage';
+  if jsonb_array_length(bags) <> 2 then
+    raise exception 'preview luggage count: %', bags;
+  end if;
+  -- Rider bag 50×40×25 (50 L) is larger than owner 40×30×20 (24 L). Volume-desc
+  -- must put the rider first; owner-first ordering would reverse this.
+  if (bags->0->>'height_cm')::numeric <> 50
+     or (bags->0->>'width_cm')::numeric <> 40
+     or (bags->0->>'depth_cm')::numeric <> 25 then
+    raise exception 'preview luggage must be volume-desc (larger bag first): %', bags->0;
+  end if;
+  if (bags->1->>'height_cm')::numeric <> 40
+     or (bags->1->>'width_cm')::numeric <> 30
+     or (bags->1->>'depth_cm')::numeric <> 20 then
+    raise exception 'preview luggage smaller bag second: %', bags->1;
+  end if;
+  if bags->0 ? 'rider_id' or bags->1 ? 'rider_id' then
+    raise exception 'preview luggage must not leak rider_id';
+  end if;
+  if rec ? 'owner_id' then
+    raise exception 'preview must not leak owner_id';
+  end if;
+  perform tests.ok('preview taxi luggage volume-desc no rider ids');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  w numeric;
+  h numeric;
+  l numeric;
+begin
+  select id into trip from tests.ids where k = 'trip';
+  select trunk_w_cm, trunk_h_cm, trunk_l_cm into w, h, l
+    from public.carpool_trips where id = trip;
+  if w <> 100 or h <> 50 or l <> 50 then
+    raise exception 'private trunk should stay 100×50×50, got %×%×%', w, h, l;
+  end if;
+  update public.carpool_trips
+     set trunk_w_cm = 140, trunk_h_cm = 40, trunk_l_cm = 150
+   where id = trip
+  returning trunk_w_cm, trunk_h_cm, trunk_l_cm into w, h, l;
+  if w <> 140 or h <> 40 or l <> 150 then
+    raise exception 'private trunk update should keep driver values, got %×%×%', w, h, l;
+  end if;
+  -- restore original so later tests still see 100×50×50
+  update public.carpool_trips
+     set trunk_w_cm = 100, trunk_h_cm = 50, trunk_l_cm = 50
+   where id = trip;
+  perform tests.ok('private trunk insert/update unchanged');
+end $$;
+commit;
+
+-- L2: numeric NaN detour insert/update is rejected by CHECK.
+-- Authenticated has no INSERT grant and cannot UPDATE detour_km, so this
+-- uses replica (skip trigger) as the table owner to hit the CHECK itself.
+do $$
+declare
+  trip uuid;
+  seat uuid;
+  rider uuid;
+  bid uuid;
+  denied_ins boolean := false;
+  denied_upd boolean := false;
+begin
+  select id into trip from tests.ids where k = 'taxi_trip';
+  select id into rider from tests.ids where k = 'stranger';
+  select s.id into seat
+    from public.carpool_seats s
+   where s.trip_id = trip and s.position = 'rear_right';
+  select b.id into bid
+    from public.carpool_bookings b
+   where b.trip_id = trip
+   limit 1;
+
+  perform set_config('session_replication_role', 'replica', true);
+  begin
+    insert into public.carpool_bookings (
+      trip_id, rider_id, seat_id, dest_label, dest_lat, dest_lng, detour_km
+    ) values (
+      trip, rider, seat, 'x', 14.35, 100.57, 'NaN'::numeric
+    );
+  exception
+    when check_violation then
+      denied_ins := true;
+  end;
+  begin
+    update public.carpool_bookings
+       set detour_km = 'NaN'::numeric
+     where id = bid;
+  exception
+    when check_violation then
+      denied_upd := true;
+  end;
+  perform set_config('session_replication_role', 'origin', true);
+
+  if not denied_ins then
+    raise exception 'NaN detour INSERT should fail CHECK';
+  end if;
+  if not denied_upd then
+    raise exception 'NaN detour UPDATE should fail CHECK';
+  end if;
+  perform tests.ok('NaN detour insert/update rejected by CHECK');
+end $$;
+
+-- L1: dest_* and luggage stay editable while open (schema has no scheduled
+-- status). Both are rejected once the trip is in_progress, and again when
+-- completed. #10 dest-recompute still runs on open dest_* edits.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 12,
+    'เชียงใหม่', 18.7888, 98.9861,
+    'ลำพูน', 18.574, 99.008, now() + interval '5 day', 'open'
+  ) returning id into trip;
+  insert into tests.ids (k, id) values ('freeze_trip', trip);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_bookings;
+begin
+  select id into trip from tests.ids where k = 'freeze_trip';
+  rec := public.carpool_book_seat(
+    trip, 'rear_middle', 'ลำพูน', 18.574, 99.008, 0, 40, 30, 20
+  );
+  insert into tests.ids (k, id) values ('freeze_booking', rec.id);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+  rec public.carpool_bookings;
+begin
+  select id into bid from tests.ids where k = 'freeze_booking';
+  update public.carpool_bookings
+     set dest_label = 'จุดใหม่', dest_lat = 18.600, dest_lng = 99.050
+   where id = bid
+  returning * into rec;
+  if rec.dest_label is distinct from 'จุดใหม่' then
+    raise exception 'open trip should allow dest_* edits, got %', rec.dest_label;
+  end if;
+  update public.carpool_bookings
+     set luggage_h_cm = 45, luggage_w_cm = 35, luggage_d_cm = 25
+   where id = bid
+  returning * into rec;
+  if rec.luggage_h_cm is distinct from 45
+     or rec.luggage_w_cm is distinct from 35
+     or rec.luggage_d_cm is distinct from 25 then
+    raise exception 'open trip should allow luggage edits, got %×%×%',
+      rec.luggage_h_cm, rec.luggage_w_cm, rec.luggage_d_cm;
+  end if;
+  perform tests.ok('dest/luggage edits allowed while trip is open');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+update public.carpool_trips
+   set status = 'in_progress'
+ where id = (select id from tests.ids where k = 'freeze_trip');
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+  denied boolean := false;
+begin
+  select id into bid from tests.ids where k = 'freeze_booking';
+  begin
+    update public.carpool_bookings
+       set dest_label = 'ห้าม', dest_lat = 18.1, dest_lng = 99.1
+     where id = bid;
+  exception
+    when raise_exception then
+      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+        raise;
+      end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'dest_* update should be rejected when in_progress';
+  end if;
+  perform tests.ok('dest_* change rejected when in_progress');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+  denied boolean := false;
+begin
+  select id into bid from tests.ids where k = 'freeze_booking';
+  begin
+    update public.carpool_bookings
+       set luggage_h_cm = 99, luggage_w_cm = 99, luggage_d_cm = 99
+     where id = bid;
+  exception
+    when raise_exception then
+      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+        raise;
+      end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'luggage update should be rejected when in_progress';
+  end if;
+  perform tests.ok('luggage change rejected when in_progress');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+update public.carpool_trips
+   set status = 'completed'
+ where id = (select id from tests.ids where k = 'freeze_trip');
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+  denied boolean := false;
+begin
+  select id into bid from tests.ids where k = 'freeze_booking';
+  begin
+    update public.carpool_bookings
+       set dest_label = 'ห้ามหลังจบ', dest_lat = 18.2, dest_lng = 99.2
+     where id = bid;
+  exception
+    when raise_exception then
+      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+        raise;
+      end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'dest_* update should be rejected when completed';
+  end if;
+  perform tests.ok('dest_* change rejected when completed');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+  denied boolean := false;
+begin
+  select id into bid from tests.ids where k = 'freeze_booking';
+  begin
+    update public.carpool_bookings
+       set luggage_h_cm = 11, luggage_w_cm = 11, luggage_d_cm = 11
+     where id = bid;
+  exception
+    when raise_exception then
+      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+        raise;
+      end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'luggage update should be rejected when completed';
+  end if;
+  perform tests.ok('luggage change rejected when completed');
+end $$;
+commit;
+
+-- L1 cancelled: dest_* / luggage frozen the same way.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 12,
+    'เชียงใหม่', 18.7888, 98.9861,
+    'ลำพูน', 18.574, 99.008, now() + interval '6 day', 'open'
+  ) returning id into trip;
+  insert into tests.ids (k, id) values ('freeze_cancel_trip', trip);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_bookings;
+begin
+  select id into trip from tests.ids where k = 'freeze_cancel_trip';
+  rec := public.carpool_book_seat(
+    trip, 'rear_middle', 'ลำพูน', 18.574, 99.008, 0, 40, 30, 20
+  );
+  insert into tests.ids (k, id) values ('freeze_cancel_booking', rec.id);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+update public.carpool_trips
+   set status = 'cancelled'
+ where id = (select id from tests.ids where k = 'freeze_cancel_trip');
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+  denied boolean := false;
+begin
+  select id into bid from tests.ids where k = 'freeze_cancel_booking';
+  begin
+    update public.carpool_bookings
+       set dest_label = 'ห้ามยกเลิก', dest_lat = 18.3, dest_lng = 99.3
+     where id = bid;
+  exception
+    when raise_exception then
+      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+        raise;
+      end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'dest_* update should be rejected when cancelled';
+  end if;
+  perform tests.ok('dest_* change rejected when cancelled');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+  denied boolean := false;
+begin
+  select id into bid from tests.ids where k = 'freeze_cancel_booking';
+  begin
+    update public.carpool_bookings
+       set luggage_h_cm = 12, luggage_w_cm = 12, luggage_d_cm = 12
+     where id = bid;
+  exception
+    when raise_exception then
+      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+        raise;
+      end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'luggage update should be rejected when cancelled';
+  end if;
+  perform tests.ok('luggage change rejected when cancelled');
+end $$;
+commit;
+
+-- Province/district pairing: matching TIS 1099 accepted; mismatch and
+-- district-without-province rejected.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+  denied boolean := false;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status,
+    origin_province_code, origin_district_code,
+    dest_province_code, dest_district_code
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 12,
+    'กรุงเทพฯ', 13.7563, 100.5018,
+    'อยุธยา', 14.35, 100.57, now() + interval '7 day', 'open',
+    '10', '1001', '14', '1401'
+  ) returning id into trip;
+  perform tests.ok('matching province/district pair accepted');
+
+  begin
+    update public.carpool_trips
+       set origin_district_code = '5001'
+     where id = trip;
+  exception
+    when check_violation then
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'mismatched origin district/province should fail CHECK';
+  end if;
+  perform tests.ok('mismatched district/province pair rejected');
+
+  denied := false;
+  begin
+    update public.carpool_trips
+       set dest_province_code = null, dest_district_code = '1401'
+     where id = trip;
+  exception
+    when check_violation then
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'district without province should fail CHECK';
+  end if;
+  perform tests.ok('district without province rejected');
+end $$;
+commit;
+
+-- My Trips: RLS lets a user see owned + booked rows only.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  n int;
+begin
+  select count(*) into n from public.carpool_trips;
+  if n < 1 then
+    raise exception 'owner should see at least their own trips, got %', n;
+  end if;
+  perform tests.ok('owner My Trips sees owned trips');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  n int;
+  trip uuid;
+begin
+  select id into trip from tests.ids where k = 'trip';
+  select count(*) into n from public.carpool_trips t where t.id = trip;
+  if n <> 1 then
+    raise exception 'booked rider should see the booked trip';
+  end if;
+  perform tests.ok('rider My Trips sees booked trips');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  n int;
+  trip uuid;
+begin
+  select id into trip from tests.ids where k = 'trip';
+  select count(*) into n from public.carpool_trips t where t.id = trip;
+  if n <> 0 then
+    raise exception 'stranger should not see another user trip row, got %', n;
+  end if;
+  perform tests.ok('stranger My Trips does not see others');
 end $$;
 commit;
 
@@ -972,12 +1648,101 @@ begin
   perform tests.ok('anon is denied stops');
 end $$;
 
+-- Max detour: taxi floor > cap rejected; on-route dest accepted; dest change
+-- past the cap rejected by the bookings guard. Preview exposes the cap, never owner_id.
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_bookings;
+  preview jsonb;
+begin
+  select id into trip from tests.ids where k = 'taxi_trip';
+  preview := public.carpool_trip_preview(trip);
+  if preview ? 'owner_id' then
+    raise exception 'taxi preview must not leak owner_id';
+  end if;
+  if (preview->>'max_detour_km')::numeric is distinct from 5 then
+    raise exception 'taxi preview max_detour_km should be 5, got %', preview->>'max_detour_km';
+  end if;
+  rec := public.carpool_book_seat(
+    trip, 'rear_middle', 'อยุธยา', 14.35, 100.57, 0, null, null, null
+  );
+  if rec.detour_km < 0 then
+    raise exception 'on-route taxi dest should store a non-negative detour, got %', rec.detour_km;
+  end if;
+  perform tests.ok('taxi book accepted when floor <= max_detour_km');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  denied boolean := false;
+begin
+  select id into trip from tests.ids where k = 'taxi_trip';
+  begin
+    perform public.carpool_book_seat(
+      trip, 'rear_right', 'เชียงใหม่', 18.788, 98.985, 0, null, null, null
+    );
+  exception
+    when raise_exception then
+      if sqlerrm not like 'จุดลงนี้ออกนอกเส้นทาง%' then
+        raise exception 'expected max-detour Thai raise, got %', sqlerrm;
+      end if;
+      if sqlerrm not like '%สูงสุด 5 กม.%' then
+        raise exception 'expected cap in message, got %', sqlerrm;
+      end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'taxi book with floor > max_detour_km should be rejected';
+  end if;
+  perform tests.ok('taxi book rejected when floor > max_detour_km');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+  denied boolean := false;
+begin
+  select b.id into bid
+    from public.carpool_bookings b
+   where b.trip_id = (select id from tests.ids where k = 'taxi_trip')
+     and b.rider_id = (select id from tests.ids where k = 'rider2');
+  begin
+    update public.carpool_bookings
+       set dest_label = 'เชียงใหม่', dest_lat = 18.788, dest_lng = 98.985
+     where id = bid;
+  exception
+    when raise_exception then
+      if sqlerrm not like 'จุดลงนี้ออกนอกเส้นทาง%' then
+        raise exception 'expected max-detour Thai raise on dest change, got %', sqlerrm;
+      end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'dest change with floor > max_detour_km should be rejected';
+  end if;
+  perform tests.ok('dest change exceeding max_detour_km rejected by guard');
+end $$;
+commit;
+
 do $$
 declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 22 then
+  if n < 45 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

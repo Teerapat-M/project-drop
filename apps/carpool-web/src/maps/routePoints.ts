@@ -1,4 +1,4 @@
-import { orderDropoffs, type GeoPoint } from '@drop/carpool-core';
+import { orderDropoffs, roundKm, type GeoPoint } from '@drop/carpool-core';
 import type { LatLng } from './MapProvider';
 
 export type NamedStop = { id: string; coord: LatLng; label: string };
@@ -65,5 +65,5 @@ export function waypointsFromOrdered(ordered: OrderedRoute): {
 /** Detour charged only to that requester via computeFare `detourKm`. */
 export function detourFromViaKm(viaKm: number, mainRouteKm: number): number {
   if (!Number.isFinite(viaKm) || !Number.isFinite(mainRouteKm)) return 0;
-  return Math.max(0, viaKm - mainRouteKm);
+  return roundKm(Math.max(0, viaKm - mainRouteKm));
 }

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { maxDetourExceeded, maxDetourWarning } from '@drop/carpool-core';
 import { useIsDesktop } from '../lib/media';
+import { defaultMapCenter } from './defaultCenter';
 import {
-  FALLBACK_ORIGIN,
   MIN_AUTOCOMPLETE_CHARS,
   type AutocompletePrediction,
   type LatLng,
@@ -10,23 +11,50 @@ import {
 import { MapView } from './MapView';
 import { useMapProvider } from './MapsProvider';
 
+export type RouteOverlay = {
+  points: readonly LatLng[];
+  polyline?: string;
+  labels?: string[];
+};
+
 type Props = {
   title: string;
   initial: PickedPlace | null;
+  bias?: LatLng;
+  centroid?: LatLng | null;
+  routeOverlay?: RouteOverlay;
+  maxDetourKm?: number | null;
+  detourForPin?: (pin: LatLng) => number;
   onPick: (place: PickedPlace) => void;
   onClose: () => void;
 };
 
-export function PlacePicker({ title, initial, onPick, onClose }: Props) {
+export function PlacePicker({
+  title,
+  initial,
+  bias,
+  centroid,
+  routeOverlay,
+  maxDetourKm,
+  detourForPin,
+  onPick,
+  onClose,
+}: Props) {
   const provider = useMapProvider();
   const desktop = useIsDesktop();
+  const routePoints = routeOverlay?.points ?? [];
+  const mapCenter = defaultMapCenter({
+    routePoints,
+    centroid: centroid ?? bias ?? null,
+  });
   const [query, setQuery] = useState(initial?.address ?? '');
   const [hits, setHits] = useState<AutocompletePrediction[]>([]);
-  const [pin, setPin] = useState<LatLng>(initial ?? FALLBACK_ORIGIN);
+  const [pin, setPin] = useState<LatLng>(initial ?? mapCenter);
   const [address, setAddress] = useState(initial?.address ?? '');
   const [busy, setBusy] = useState(false);
   const tokenRef = useRef(provider.newAutocompleteSession());
   const pickedPredictionRef = useRef(false);
+  const fitRoute = routePoints.length >= 2;
 
   useEffect(() => {
     void provider.load();
@@ -39,10 +67,10 @@ export function PlacePicker({ title, initial, onPick, onClose }: Props) {
       return;
     }
     const handle = window.setTimeout(() => {
-      void provider.autocomplete(q, tokenRef.current).then(setHits);
+      void provider.autocomplete(q, tokenRef.current, bias ?? centroid ?? undefined).then(setHits);
     }, 200);
     return () => window.clearTimeout(handle);
-  }, [provider, query]);
+  }, [provider, query, bias, centroid]);
 
   const applyCoord = async (coord: LatLng) => {
     pickedPredictionRef.current = false;
@@ -71,7 +99,12 @@ export function PlacePicker({ title, initial, onPick, onClose }: Props) {
     }
   };
 
+  const detourKm = detourForPin ? detourForPin(pin) : 0;
+  const overMax = maxDetourKm != null && maxDetourExceeded(detourKm, maxDetourKm);
+  const warning = overMax && maxDetourKm != null ? maxDetourWarning(detourKm, maxDetourKm) : null;
+
   const confirm = () => {
+    if (overMax) return;
     if (!pickedPredictionRef.current) {
       provider.endAutocompleteSession(tokenRef.current);
       tokenRef.current = provider.newAutocompleteSession();
@@ -82,6 +115,24 @@ export function PlacePicker({ title, initial, onPick, onClose }: Props) {
       address: address || query || `${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}`,
     });
   };
+
+  const routeMarkers =
+    routePoints.map((p, i) => ({
+      id: `route-${i}`,
+      position: p,
+      label: routeOverlay?.labels?.[i] || String(i + 1),
+    })) ?? [];
+
+  const markers = [
+    ...routeMarkers,
+    {
+      id: 'pin',
+      position: pin,
+      draggable: true,
+      label: 'จุดลงของคุณ',
+      onDragEnd: (coord: LatLng) => void applyCoord(coord),
+    },
+  ];
 
   const mode = desktop ? 'modal' : 'fullscreen';
   const body = (
@@ -119,23 +170,30 @@ export function PlacePicker({ title, initial, onPick, onClose }: Props) {
       ) : null}
       <MapView
         className="place-picker-map"
-        center={pin}
+        center={mapCenter}
+        path={fitRoute ? routePoints : undefined}
+        encodedPolyline={routeOverlay?.polyline}
         interactive
-        markers={[
-          {
-            id: 'pin',
-            position: pin,
-            draggable: true,
-            onDragEnd: (coord) => void applyCoord(coord),
-          },
-        ]}
+        fitToPath={fitRoute}
+        markers={markers}
         onClick={(coord) => void applyCoord(coord)}
       />
       <p className="muted place-picker-address" data-testid="place-address">
         {busy ? 'กำลังหาที่อยู่…' : address || 'แตะแผนที่หรือลากหมุด'}
       </p>
+      {warning ? (
+        <p className="join-hint" data-testid="max-detour-warning" role="alert">
+          {warning}
+        </p>
+      ) : null}
       <div className="sticky-bar place-picker-bar">
-        <button type="button" className="btn tap-target" data-testid="place-confirm" onClick={confirm}>
+        <button
+          type="button"
+          className="btn tap-target"
+          data-testid="place-confirm"
+          disabled={overMax}
+          onClick={confirm}
+        >
           ใช้ตำแหน่งนี้
         </button>
       </div>

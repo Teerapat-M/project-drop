@@ -1,11 +1,13 @@
 /**
  * เพื่อนร่วมทาง fare (Phase C1).
  *
- * Formula (taxi and private car share the same math):
+ * Formula:
  *   mainFare = mainRouteKm * rate
- *   split equally among seated occupants only (open AND booked).
+ *   Taxi: split equally among seated PASSENGERS only (open AND booked).
+ *     The taxi driver pays nothing and is not a payer.
+ *   Private car: split equally among seated occupants (open AND booked),
+ *     including the owner-driver (cost-sharing only, no wage).
  *   Closed or unbooked seats pay 0.
- *   Private-car owner-driver is one payer: cost-sharing only, no wage.
  *   Detour surcharge for a passenger-requested off-route stop:
  *     detourKm * 2 * rate, charged only to that passenger.
  *   Detour km are NOT part of mainRouteKm. Luggage does not affect fare.
@@ -35,7 +37,8 @@ export type SeatInput = {
   detourKm?: number;
   /**
    * Private-car owner who is driving. Counts as a seated occupant when
-   * open+booked; labelled cost-sharing / no wage in the result.
+   * open+booked on a private car; labelled cost-sharing / no wage.
+   * On a taxi this seat is never a payer.
    */
   role?: SeatRole;
 };
@@ -57,7 +60,7 @@ export type PersonFare = {
 export type ComputeFareInput = {
   mainRouteKm: number;
   seats: readonly SeatInput[];
-  /** Informational; payer set is derived from seats, not this flag. */
+  /** Taxi: passengers only. Private (default if omitted): driver counts. */
   vehicle?: VehicleKind;
   /** Override {@link RATE_THB_PER_KM}. */
   rateThbPerKm?: number;
@@ -94,8 +97,10 @@ function assertFiniteNonNegative(value: number, label: string): void {
   }
 }
 
-function isPayer(seat: SeatInput): boolean {
-  return seat.open && seat.booked;
+function isPayer(seat: SeatInput, vehicle?: VehicleKind): boolean {
+  if (!(seat.open && seat.booked)) return false;
+  if (vehicle === 'taxi' && seat.role === 'owner_driver') return false;
+  return true;
 }
 
 /**
@@ -133,7 +138,7 @@ export function computeFare(input: ComputeFareInput): FareResult {
     }
   }
 
-  const payers = input.seats.filter(isPayer);
+  const payers = input.seats.filter((s) => isPayer(s, input.vehicle));
   if (payers.length === 0) {
     throw new FareError('ZERO_PAYERS', 'need at least one seated occupant (open AND booked)');
   }
@@ -156,8 +161,9 @@ export function computeFare(input: ComputeFareInput): FareResult {
   const totalSatang = mainFareSatang + detourTotalSatang;
 
   const persons: PersonFare[] = input.seats.map((seat) => {
-    const ownerDriverCostSharing = seat.role === 'owner_driver';
-    if (!isPayer(seat)) {
+    const ownerDriverCostSharing =
+      seat.role === 'owner_driver' && input.vehicle !== 'taxi';
+    if (!isPayer(seat, input.vehicle)) {
       return {
         id: seat.id,
         amountThb: 0,

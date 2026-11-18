@@ -5,6 +5,7 @@ import { join } from 'node:path';
 const root = join(__dirname, '../../../../supabase');
 const sql = readFileSync(join(root, 'migrations/20261118100000_carpool.sql'), 'utf8');
 const stopsSql = readFileSync(join(root, 'migrations/20261118120000_carpool_trip_stops.sql'), 'utf8');
+const taxiTrunkSql = readFileSync(join(root, 'migrations/20261118130000_carpool_taxi_trunk.sql'), 'utf8');
 const testSql = readFileSync(join(root, 'tests/carpool_rls.sql'), 'utf8');
 const ridesSql = readFileSync(join(root, 'migrations/20261110180000_rides.sql'), 'utf8');
 const revokeSql = readFileSync(
@@ -177,6 +178,20 @@ describe('carpool SQL test file', () => {
     expect(testSql).toMatch(/no-detour rider gets 0/);
     expect(testSql).toMatch(/direct UPDATE detour_km is permission denied/);
     expect(testSql).toMatch(/dest change recomputes floor; charge only the requester/);
+    expect(testSql).toMatch(/taxi trunk insert\/update forced to preset/);
+    expect(testSql).toMatch(/preview taxi luggage volume-desc no rider ids/);
+    expect(testSql).toMatch(/private trunk insert\/update unchanged/);
+    expect(testSql).toMatch(/anon\/authenticated must not EXECUTE public\.carpool_trips_taxi_trunk/);
+    expect(testSql).toMatch(/NaN detour insert\/update rejected by CHECK/);
+    expect(testSql).toMatch(/dest\/luggage edits allowed while trip is open/);
+    expect(testSql).toMatch(/dest_\* change rejected when in_progress/);
+    expect(testSql).toMatch(/luggage change rejected when in_progress/);
+    expect(testSql).toMatch(/dest_\* change rejected when completed/);
+    expect(testSql).toMatch(/luggage change rejected when completed/);
+    expect(testSql).toMatch(/is_mine true only for the owner/);
+    expect(testSql).toMatch(/owner My Trips sees owned trips/);
+    expect(testSql).toMatch(/rider My Trips sees booked trips/);
+    expect(testSql).toMatch(/stranger My Trips does not see others/);
   });
 });
 
@@ -225,6 +240,7 @@ describe('carpool trip stops migration', () => {
     expect(book).toMatch(/set search_path = ''/);
   });
 
+
   it('replaces preview with rounded stop coords and no owner_id', () => {
     const preview =
       stopsSql.match(
@@ -235,5 +251,150 @@ describe('carpool trip stops migration', () => {
     expect(preview).not.toMatch(/'owner_id'/);
     expect(preview).not.toMatch(/t\.owner_id as/);
     expect(preview).toMatch(/'stops'/);
+  });
+});
+
+describe('carpool taxi trunk migration', () => {
+  it('is a new file after trip_stops and does not edit earlier carpool SQL', () => {
+    expect(sql).not.toMatch(/carpool_taxi_trunk/);
+    expect(stopsSql).not.toMatch(/carpool_trips_taxi_trunk/);
+    expect(taxiTrunkSql).toMatch(/create or replace function private\.carpool_taxi_trunk\(\)/);
+    expect(taxiTrunkSql).toMatch(/select 100::numeric, 40::numeric, 50::numeric/);
+    expect(taxiTrunkSql).toMatch(/carpool_trips_taxi_trunk_preset/);
+  });
+
+  it('backfills taxi trunks before the trigger and CHECK', () => {
+    const updateAt = taxiTrunkSql.indexOf('update public.carpool_trips t');
+    const triggerAt = taxiTrunkSql.indexOf('create trigger carpool_trips_taxi_trunk');
+    const checkAt = taxiTrunkSql.indexOf('carpool_trips_taxi_trunk_preset');
+    expect(updateAt).toBeGreaterThan(0);
+    expect(updateAt).toBeLessThan(triggerAt);
+    expect(updateAt).toBeLessThan(checkAt);
+    expect(taxiTrunkSql).toMatch(/t\.kind = 'taxi'/);
+  });
+
+  it('forces taxi dims via a trigger with no EXECUTE grant', () => {
+    expect(taxiTrunkSql).toMatch(/set search_path = ''/);
+    expect(taxiTrunkSql).toMatch(
+      /revoke execute on function public\.carpool_trips_taxi_trunk\(\) from public, anon, authenticated;/,
+    );
+    expect(taxiTrunkSql).toMatch(
+      /revoke all on function private\.carpool_taxi_trunk\(\) from public, anon, authenticated;/,
+    );
+    expect(taxiTrunkSql).not.toMatch(/grant execute on function public\.carpool_trips_taxi_trunk/);
+    expect(taxiTrunkSql).toMatch(/if new\.kind = 'taxi'/);
+    expect(taxiTrunkSql).toMatch(/kind <> 'taxi'/);
+  });
+
+  it('adds anonymized preview luggage ordered by volume, not owner', () => {
+    const preview =
+      taxiTrunkSql.match(
+        /create or replace function public\.carpool_trip_preview[\s\S]*?end;\n\$\$;/,
+      )?.[0] ?? '';
+    expect(preview).toMatch(/'luggage'/);
+    expect(preview).toMatch(
+      /order by\s+\(b\.luggage_h_cm \* b\.luggage_w_cm \* b\.luggage_d_cm\) desc/,
+    );
+    expect(preview).not.toMatch(/rider_id = t\.owner_id/);
+    expect(preview).not.toMatch(/b\.created_at/);
+    expect(preview).not.toMatch(/'rider_id'/);
+    expect(preview).not.toMatch(/'owner_id'/);
+    expect(preview).toMatch(/'is_mine'/);
+    expect(preview).toMatch(/'stops'/);
+  });
+
+  it('adds is_mine and province/district filters to discover without exposing owner_id', () => {
+    expect(taxiTrunkSql).toMatch(/drop function if exists public\.carpool_discover_trips/);
+    expect(taxiTrunkSql).toMatch(/p_origin_province_code text default null/);
+    expect(taxiTrunkSql).toMatch(/\(t\.owner_id = uid\) as is_mine/);
+    expect(taxiTrunkSql).not.toMatch(/t\.owner_id as/);
+    expect(taxiTrunkSql).toMatch(
+      /grant execute on function public\.carpool_discover_trips\(\s*public\.carpool_trip_kind, text, text, text, text\s*\) to authenticated, service_role;/,
+    );
+    expect(taxiTrunkSql).toMatch(/carpool_trips_origin_district_matches_province/);
+    expect(taxiTrunkSql).toMatch(/left\(origin_district_code, 2\) = origin_province_code/);
+    expect(taxiTrunkSql).toMatch(/left\(dest_district_code, 2\) = dest_province_code/);
+  });
+
+  it('adds NaN detour CHECK and freezes dest/luggage after the trip starts', () => {
+    const disableAt = taxiTrunkSql.indexOf('disable trigger carpool_bookings_guard');
+    const nanAt = taxiTrunkSql.indexOf("detour_km = 'NaN'");
+    const enableAt = taxiTrunkSql.indexOf('enable trigger carpool_bookings_guard');
+    const checkAt = taxiTrunkSql.indexOf('carpool_bookings_detour_not_nan');
+    expect(disableAt).toBeGreaterThan(0);
+    expect(nanAt).toBeGreaterThan(disableAt);
+    expect(enableAt).toBeGreaterThan(nanAt);
+    expect(checkAt).toBeGreaterThan(enableAt);
+    expect(taxiTrunkSql).not.toMatch(/session_replication_role/);
+    expect(taxiTrunkSql).not.toMatch(/^\s*begin\s*;/im);
+    expect(taxiTrunkSql).not.toMatch(/^\s*commit\s*;/im);
+    expect(taxiTrunkSql).toMatch(/check \(detour_km <> 'NaN'\)/);
+    expect(stopsSql).not.toMatch(/carpool_bookings_detour_not_nan/);
+    expect(stopsSql).not.toMatch(/cannot change drop-off or luggage after the trip has started/);
+    const guard =
+      taxiTrunkSql.match(
+        /create or replace function public\.carpool_bookings_guard[\s\S]*?end;\n\$\$;/,
+      )?.[0] ?? '';
+    expect(guard).toMatch(/in_progress', 'completed', 'cancelled'/);
+    expect(guard).toMatch(/cannot change drop-off or luggage after the trip has started/);
+    expect(guard).toMatch(/new\.detour_km := old\.detour_km/);
+    expect(guard).toMatch(/private\.carpool_enforce_max_detour/);
+    expect(guard).toMatch(/set search_path = ''/);
+    expect(taxiTrunkSql).toMatch(
+      /revoke execute on function public\.carpool_bookings_guard\(\) from public, anon, authenticated;/,
+    );
+    expect(taxiTrunkSql).not.toMatch(/add table public\.carpool_/);
+  });
+
+  it('adds taxi max_detour_km with default 5, range 1–30, and book_seat cap', () => {
+    const colAt = taxiTrunkSql.indexOf('add column if not exists max_detour_km');
+    const checkAt = taxiTrunkSql.indexOf('carpool_trips_max_detour_km');
+    expect(colAt).toBeGreaterThan(0);
+    expect(taxiTrunkSql).toMatch(/set max_detour_km = 5/);
+    expect(checkAt).toBeGreaterThan(colAt);
+    expect(taxiTrunkSql).toMatch(/max_detour_km >= 1/);
+    expect(taxiTrunkSql).toMatch(/max_detour_km <= 30/);
+    expect(taxiTrunkSql).toMatch(/'max_detour_km', t.max_detour_km/);
+    const book =
+      taxiTrunkSql.match(
+        /create or replace function public\.carpool_book_seat[\s\S]*?end;\n\$\$;/,
+      )?.[0] ?? '';
+    expect(book).toMatch(/private\.carpool_enforce_max_detour/);
+    expect(book).toMatch(/ไม่สามารถจองทริปของตนเองได้/);
+    expect(book).toMatch(/ที่นั่งนี้เพิ่งถูกจอง/);
+    expect(book).toMatch(/set search_path = ''/);
+    expect(taxiTrunkSql).toMatch(/จุดลงนี้ออกนอกเส้นทาง/);
+    expect(taxiTrunkSql).not.toMatch(/t\.owner_id as/);
+  });
+});
+
+describe('carpool taxi trunk backfill runner', () => {
+  const seedSql = readFileSync(join(root, 'tests/carpool_taxi_trunk_seed.sql'), 'utf8');
+  const backfillSql = readFileSync(join(root, 'tests/carpool_taxi_trunk_backfill.sql'), 'utf8');
+  const runner = readFileSync(join(root, 'tests/run-carpool-rls.sh'), 'utf8');
+
+  it('seeds a legacy taxi 100×50×50 and a private custom trunk before the migration', () => {
+    expect(seedSql).toMatch(/100, 50, 50/);
+    expect(seedSql).toMatch(/'taxi'/);
+    expect(seedSql).toMatch(/140, 40, 150/);
+    expect(seedSql).toMatch(/'private'/);
+    expect(seedSql).toMatch(/'NaN'::numeric/);
+    expect(seedSql).toMatch(/session_replication_role/);
+    expect(runner).toMatch(/carpool_taxi_trunk_seed\.sql/);
+    expect(runner.indexOf('carpool_taxi_trunk_seed.sql')).toBeLessThan(
+      runner.indexOf('20261118130000_carpool_taxi_trunk.sql'),
+    );
+  });
+
+  it('asserts backfill, private unchanged, and CHECK after the migration', () => {
+    expect(backfillSql).toMatch(/100×40×50/);
+    expect(backfillSql).toMatch(/140×40×150/);
+    expect(backfillSql).toMatch(/check_violation/);
+    expect(backfillSql).toMatch(/legacy NaN detour must backfill to 0/);
+    expect(backfillSql).toMatch(/carpool_bookings_detour_not_nan/);
+    expect(runner).toMatch(/carpool_taxi_trunk_backfill\.sql/);
+    expect(runner.indexOf('20261118130000_carpool_taxi_trunk.sql')).toBeLessThan(
+      runner.indexOf('carpool_taxi_trunk_backfill.sql'),
+    );
   });
 });

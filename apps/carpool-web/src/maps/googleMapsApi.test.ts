@@ -16,6 +16,7 @@ describe('Google Maps request shape + no-key fallback', () => {
     expect(body.regionCode).toBe('TH');
     expect(body.intermediates).toHaveLength(1);
     expect(kmFromMeters(12345)).toBe(12.3);
+    expect(kmFromMeters(100 + 200)).toBe(0.3);
   });
 
   it('treats a missing Maps key as unavailable (no throw)', async () => {

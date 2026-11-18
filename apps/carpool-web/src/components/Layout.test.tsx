@@ -26,8 +26,15 @@ describe('mobile-first layout', () => {
     const nav = screen.getByTestId('bottom-nav');
     expect(nav).toHaveTextContent('หน้าแรก');
     expect(nav).toHaveTextContent('สร้าง');
+    expect(nav).toHaveTextContent('ทริปของคุณ');
     expect(nav).toHaveTextContent('ประวัติ');
     expect(nav).toHaveTextContent('บัญชี');
+    const credit = screen.getByTestId('geo-credit');
+    expect(credit).toHaveTextContent('thailand-canonical-admin-names');
+    expect(credit).toHaveTextContent('CC BY 4.0');
+    expect(credit.querySelector('a')?.getAttribute('href')).toContain(
+      'thailand-canonical-admin-names',
+    );
     const taps = document.querySelectorAll('.tap-target');
     expect(taps.length).toBeGreaterThan(2);
     expect(css).toMatch(/--tap:\s*44px/);

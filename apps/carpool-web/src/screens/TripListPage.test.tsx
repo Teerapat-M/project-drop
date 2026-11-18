@@ -27,6 +27,14 @@ describe('trip cards at 390px', () => {
     expect(daeng.querySelector('[data-src="/assets/pickup_3d.png"]')).toBeTruthy();
   });
 
+  it('shows ทริปของคุณ and จัดการทริป on the owner card', () => {
+    renderList('/');
+    const mine = screen.getByTestId('trip-demo-mint');
+    expect(mine).toHaveTextContent('ทริปของคุณ');
+    expect(screen.getByTestId('manage-demo-mint')).toHaveTextContent('จัดการทริป');
+    expect(screen.getByTestId('manage-demo-mint')).toHaveAttribute('href', '/trips/demo-mint/manage');
+  });
+
   it('shows the taxi badge and taxi sedan on the taxi tab', () => {
     renderList('/?kind=taxi');
     expect(screen.getByTestId('taxi-badge')).toHaveTextContent('แท็กซี่');

@@ -79,6 +79,8 @@ Rounding: 10 km / 3 payers → `70` THB = 7000 satang. `7000 / 3 = 2333` rem `1`
 
 ## Trunk / ท้ายรถ
 
+Taxi-share trips use the exported `TAXI_TRUNK_PRESET` (100×40×50 cm = 200 L usable). Private-car trips keep driver-entered dimensions. Remaining space is `remainingTrunkSpace(trunk, luggage)` (sum of pieces; order does not matter). Overflow when used volume > capacity.
+
 **EN.** Trunk `W, H, L` (cm) drawn in a frame `frameW × frameH`.
 
 1. Uniform scale `s = min(frameW / W, frameH / H)`.

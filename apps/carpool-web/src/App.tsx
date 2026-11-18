@@ -10,6 +10,9 @@ import { JoinTripPage } from './screens/JoinTripPage';
 import { AccountPage } from './screens/AccountPage';
 import { HistoryPage } from './screens/HistoryPage';
 import { StubPage } from './screens/StubPage';
+import { BookedTripPage } from './screens/BookedTripPage';
+import { ManageTripPage } from './screens/ManageTripPage';
+import { MyTripsPage } from './screens/MyTripsPage';
 import { TripListPage } from './screens/TripListPage';
 
 function Gate({ children }: { children: ReactNode }) {
@@ -32,6 +35,9 @@ export function App() {
       >
         <Route path="/" element={<TripListPage />} />
         <Route path="/trips/new" element={<CreateTripPage />} />
+        <Route path="/my-trips" element={<MyTripsPage />} />
+        <Route path="/trips/:id/manage" element={<ManageTripPage />} />
+        <Route path="/trips/:id/booked" element={<BookedTripPage />} />
         <Route path="/trips/:id" element={<JoinTripPage />} />
         <Route path="/trips/:id/fare" element={<FareSummaryPage />} />
         <Route path="/trips/:id/order" element={<DropoffOrderPage />} />

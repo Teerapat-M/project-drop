@@ -2,8 +2,10 @@ import { describe, expect, it } from '@jest/globals';
 import {
   CORNER_RADIUS_RATIO,
   MIN_SHORT_SIDE_FRAME_RATIO,
+  TAXI_TRUNK_PRESET,
   TrunkError,
   layoutTrunk,
+  remainingTrunkSpace,
 } from './trunk';
 
 describe('layoutTrunk — empty / exact-full / overflow', () => {
@@ -115,5 +117,65 @@ describe('layoutTrunk — validation', () => {
         luggage: [{ riderId: 'A', heightCm: -1, widthCm: 1, depthCm: 1 }],
       }),
     ).toThrow(/heightCm/);
+  });
+});
+
+describe('TAXI_TRUNK_PRESET', () => {
+  it('is 100 × 40 × 50 cm = 200 L', () => {
+    expect(TAXI_TRUNK_PRESET).toEqual({
+      widthCm: 100,
+      heightCm: 40,
+      lengthCm: 50,
+      volumeLitres: 200,
+    });
+    expect(
+      (TAXI_TRUNK_PRESET.widthCm * TAXI_TRUNK_PRESET.heightCm * TAXI_TRUNK_PRESET.lengthCm) / 1000,
+    ).toBe(TAXI_TRUNK_PRESET.volumeLitres);
+  });
+});
+
+describe('remainingTrunkSpace', () => {
+  const creator = { riderId: 'creator', heightCm: 50, widthCm: 40, depthCm: 25 }; // 50 L
+  const booked = { riderId: 'booked', heightCm: 40, widthCm: 30, depthCm: 20 }; // 24 L
+  const joiner = { riderId: 'you', heightCm: 20, widthCm: 20, depthCm: 20 }; // 8 L
+  const capacity = 100 * 40 * 50; // 200_000
+
+  it('empty: remaining = capacity, no overflow', () => {
+    const space = remainingTrunkSpace(TAXI_TRUNK_PRESET, []);
+    expect(space.capacityVol).toBe(capacity);
+    expect(space.usedVol).toBe(0);
+    expect(space.remainingVol).toBe(capacity);
+    expect(space.remainingLitres).toBe(200);
+    expect(space.fillRatio).toBe(0);
+    expect(space.overflow).toBe(false);
+  });
+
+  it('sums every piece; order does not change remaining space', () => {
+    const a = remainingTrunkSpace(TAXI_TRUNK_PRESET, [creator, booked, joiner]);
+    const b = remainingTrunkSpace(TAXI_TRUNK_PRESET, [joiner, booked, creator]);
+    expect(a).toEqual(b);
+    expect(a.usedVol).toBe(50_000 + 24_000 + 8_000);
+    expect(a.remainingVol).toBe(capacity - 82_000);
+    expect(a.remainingLitres).toBe(118);
+    expect(a.overflow).toBe(false);
+  });
+
+  it('overflow when usedVol > capacity; remaining clamps at 0', () => {
+    const huge = { riderId: 'you', heightCm: 80, widthCm: 80, depthCm: 80 };
+    const space = remainingTrunkSpace(TAXI_TRUNK_PRESET, [creator, booked, huge]);
+    expect(space.usedVol).toBeGreaterThan(capacity);
+    expect(space.fillRatio).toBeGreaterThan(1);
+    expect(space.overflow).toBe(true);
+    expect(space.remainingVol).toBe(0);
+    expect(space.remainingLitres).toBe(0);
+  });
+
+  it('exact-full is not overflow', () => {
+    const fill = { riderId: 'creator', heightCm: 100, widthCm: 40, depthCm: 50 };
+    const space = remainingTrunkSpace(TAXI_TRUNK_PRESET, [fill]);
+    expect(space.usedVol).toBe(capacity);
+    expect(space.fillRatio).toBe(1);
+    expect(space.overflow).toBe(false);
+    expect(space.remainingVol).toBe(0);
   });
 });

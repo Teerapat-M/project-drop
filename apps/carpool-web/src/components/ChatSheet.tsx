@@ -105,12 +105,8 @@ export function ChatSheet({ open, tripId, onClose, onMinimize }: Props) {
     if (!error) setBody('');
   };
 
-  const title = preview
-    ? `${preview.owner_display_name} · ${preview.pickup_label} → ${preview.dest_label}`
-    : 'แชทกับคนขับ';
-
   return (
-    <div className="chat-sheet" data-testid="chat-sheet" role="dialog" aria-label="แชท">
+    <div className="chat-sheet" data-testid="chat-sheet" role="dialog" aria-label="แชทกับเพื่อนร่วมทาง">
       <div className="chat-sheet-head">
         <button className="nav-link tap-target" type="button" onClick={onClose}>
           ปิด
@@ -124,10 +120,10 @@ export function ChatSheet({ open, tripId, onClose, onMinimize }: Props) {
               data-testid="chat-car"
             />
           ) : null}
-          <span>{title}</span>
+          <span>แชทกับเพื่อนร่วมทาง</span>
           {preview ? (
             <span className="muted">
-              {formatDepart(preview.depart_at)}
+              {preview.pickup_label} → {preview.dest_label} · {formatDepart(preview.depart_at)}
             </span>
           ) : null}
         </div>
@@ -136,18 +132,24 @@ export function ChatSheet({ open, tripId, onClose, onMinimize }: Props) {
         </button>
       </div>
       <div className="chat-sheet-body" data-testid="chat-messages">
-        {messages.map((m) => (
-          <article
-            key={m.id}
-            className={`chat-msg ${m.mine ? 'mine' : 'theirs'}`}
-            data-testid={`chat-msg-${m.id}`}
-          >
-            <p className="muted" style={{ margin: 0 }}>
-              {m.sender_name} · {formatDepart(m.created_at)}
-            </p>
-            <p style={{ margin: '4px 0 0' }}>{m.body}</p>
-          </article>
-        ))}
+        {messages.length === 0 ? (
+          <p className="muted" data-testid="chat-empty">
+            ยังไม่มีข้อความกับเพื่อนร่วมทาง
+          </p>
+        ) : (
+          messages.map((m) => (
+            <article
+              key={m.id}
+              className={`chat-msg ${m.mine ? 'mine' : 'theirs'}`}
+              data-testid={`chat-msg-${m.id}`}
+            >
+              <p className="muted" style={{ margin: 0 }}>
+                {m.sender_name} · {formatDepart(m.created_at)}
+              </p>
+              <p style={{ margin: '4px 0 0' }}>{m.body}</p>
+            </article>
+          ))
+        )}
       </div>
       <form
         className="chat-composer"
@@ -158,8 +160,8 @@ export function ChatSheet({ open, tripId, onClose, onMinimize }: Props) {
       >
         <input
           className="tap-target"
-          placeholder="พิมพ์ข้อความ…"
-          aria-label="ข้อความ"
+          placeholder="พิมพ์ข้อความถึงเพื่อนร่วมทาง…"
+          aria-label="ข้อความถึงเพื่อนร่วมทาง"
           value={body}
           onChange={(e) => setBody(e.target.value)}
           maxLength={1000}

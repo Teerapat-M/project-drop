@@ -1,3 +1,4 @@
+import { roundKm } from '@drop/carpool-core';
 import type { LatLng } from './MapProvider';
 
 export const ROUTES_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes';
@@ -41,7 +42,7 @@ export function buildComputeRoutesBody(points: readonly LatLng[]): ComputeRoutes
 
 export function kmFromMeters(meters: number | undefined): number {
   if (typeof meters !== 'number' || !Number.isFinite(meters)) return 0;
-  return Math.round((meters / 1000) * 10) / 10;
+  return roundKm(meters / 1000);
 }
 
 export function secondsFromDuration(duration: string | undefined): number | undefined {

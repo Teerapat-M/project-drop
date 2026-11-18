@@ -1,4 +1,5 @@
-import type { ChatMessage, SavedAddress, SeatState, TripCard, TripPreview } from './types';
+import { TAXI_TRUNK_PRESET } from '@drop/carpool-core';
+import type { ChatMessage, SavedAddress, SeatState, TripCard, TripPreview, TripRole } from './types';
 
 const TAXI_ID = 'demo-taxi-12km';
 const PRIVATE_ID = 'demo-private-12km';
@@ -24,6 +25,9 @@ export const DEMO_TRIPS: TripCard[] = [
     open_seats: 2,
     bookable_seats: 4,
     owner_display_name: 'น้องมิ้นท์',
+    is_mine: true,
+    origin_province_code: '50',
+    dest_province_code: '51',
   },
   {
     id: 'demo-sam',
@@ -102,9 +106,10 @@ export const DEMO_TRIPS: TripCard[] = [
     pickup_lng: 100.5,
     dest_lat: 14.35,
     dest_lng: 100.57,
-    trunk_w_cm: 100,
-    trunk_h_cm: 50,
-    trunk_l_cm: 50,
+    trunk_w_cm: TAXI_TRUNK_PRESET.widthCm,
+    trunk_h_cm: TAXI_TRUNK_PRESET.heightCm,
+    trunk_l_cm: TAXI_TRUNK_PRESET.lengthCm,
+    max_detour_km: 5,
     open_seats: 2,
     bookable_seats: 3,
     owner_display_name: 'โก้',
@@ -129,6 +134,113 @@ export const DEMO_TRIPS: TripCard[] = [
     open_seats: 3,
     bookable_seats: 4,
     owner_display_name: 'คุณเอ',
+  },
+];
+
+export type MyTripDemo = TripCard & { role: TripRole; my_share_thb?: number };
+
+export const DEMO_MY_TRIPS: MyTripDemo[] = [
+  {
+    id: 'demo-mine-created',
+    role: 'created',
+    kind: 'taxi',
+    vehicle_type: 'sedan',
+    car_icon: 'taxi',
+    route_km: 12,
+    depart_at: '2026-12-01T08:00:00+07:00',
+    status: 'open',
+    pickup_label: 'กรุงเทพมหานคร',
+    dest_label: 'พระนครศรีอยุธยา',
+    pickup_lat: 13.7563,
+    pickup_lng: 100.5018,
+    dest_lat: 14.35,
+    dest_lng: 100.57,
+    trunk_w_cm: TAXI_TRUNK_PRESET.widthCm,
+    trunk_h_cm: TAXI_TRUNK_PRESET.heightCm,
+    trunk_l_cm: TAXI_TRUNK_PRESET.lengthCm,
+    open_seats: 2,
+    bookable_seats: 3,
+    owner_display_name: 'คุณ',
+    is_mine: true,
+    origin_province_code: '10',
+    dest_province_code: '14',
+    origin_district_code: '1001',
+    dest_district_code: '1401',
+  },
+  {
+    id: 'demo-mine-booked',
+    role: 'booked',
+    kind: 'private',
+    vehicle_type: 'sedan',
+    car_icon: 'sedan',
+    route_km: 32,
+    depart_at: '2026-12-10T09:30:00+07:00',
+    status: 'open',
+    pickup_label: 'เชียงใหม่',
+    dest_label: 'ลำพูน',
+    pickup_lat: 18.788,
+    pickup_lng: 98.985,
+    dest_lat: 18.574,
+    dest_lng: 99.009,
+    trunk_w_cm: 100,
+    trunk_h_cm: 50,
+    trunk_l_cm: 50,
+    open_seats: 2,
+    bookable_seats: 4,
+    owner_display_name: 'น้องมิ้นท์',
+    my_share_thb: 56,
+    origin_province_code: '50',
+    dest_province_code: '51',
+  },
+  {
+    id: 'demo-mine-past-created',
+    role: 'created',
+    kind: 'private',
+    vehicle_type: 'hatch',
+    car_icon: 'hatch',
+    route_km: 80,
+    depart_at: '2026-11-10T07:00:00+07:00',
+    status: 'completed',
+    pickup_label: 'กรุงเทพฯ',
+    dest_label: 'พัทยา',
+    pickup_lat: 13.747,
+    pickup_lng: 100.535,
+    dest_lat: 12.933,
+    dest_lng: 100.883,
+    trunk_w_cm: 100,
+    trunk_h_cm: 70,
+    trunk_l_cm: 40,
+    open_seats: 0,
+    bookable_seats: 3,
+    owner_display_name: 'คุณ',
+    is_mine: true,
+    origin_province_code: '10',
+    dest_province_code: '20',
+  },
+  {
+    id: 'demo-mine-past-booked',
+    role: 'booked',
+    kind: 'taxi',
+    vehicle_type: 'sedan',
+    car_icon: 'taxi',
+    route_km: 12,
+    depart_at: '2026-11-01T16:30:00+07:00',
+    status: 'completed',
+    pickup_label: 'กรุงเทพฯ',
+    dest_label: 'อยุธยา',
+    pickup_lat: 13.75,
+    pickup_lng: 100.5,
+    dest_lat: 14.35,
+    dest_lng: 100.57,
+    trunk_w_cm: TAXI_TRUNK_PRESET.widthCm,
+    trunk_h_cm: TAXI_TRUNK_PRESET.heightCm,
+    trunk_l_cm: TAXI_TRUNK_PRESET.lengthCm,
+    open_seats: 0,
+    bookable_seats: 3,
+    owner_display_name: 'โก้',
+    my_share_thb: 28,
+    origin_province_code: '10',
+    dest_province_code: '14',
   },
 ];
 
@@ -229,10 +341,21 @@ function threeSeats(card: TripCard): SeatState[] {
 }
 
 export function demoPreview(id: string): TripPreview | null {
-  const card = DEMO_TRIPS.find((t) => t.id === id) ?? DEMO_HISTORY.find((t) => t.id === id);
+  const card =
+    DEMO_TRIPS.find((t) => t.id === id) ??
+    DEMO_HISTORY.find((t) => t.id === id) ??
+    DEMO_MY_TRIPS.find((t) => t.id === id);
   if (!card) return null;
   const seats = card.vehicle_type === 'sedan' ? sedanSeats(card) : threeSeats(card);
-  return { ...card, seats, stops: [] };
+  // Booked bags only, volume-desc — not owner-first. Creator is not index 0.
+  const luggage =
+    card.kind === 'taxi'
+      ? [
+          { height_cm: 50, width_cm: 40, depth_cm: 25 },
+          { height_cm: 40, width_cm: 30, depth_cm: 20 },
+        ]
+      : [];
+  return { ...card, seats, stops: [], luggage };
 }
 
 export const FARE_TAXI_SEATS = [

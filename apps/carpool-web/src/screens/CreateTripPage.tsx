@@ -1,17 +1,30 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { RATE_THB_PER_KM } from '@drop/carpool-core';
+import {
+  BANGKOK_CENTER,
+  BANGKOK_PROVINCE_CODE,
+  MAX_DETOUR_KM_DEFAULT,
+  MAX_DETOUR_KM_MAX,
+  MAX_DETOUR_KM_MIN,
+  RATE_THB_PER_KM,
+  TAXI_TRUNK_PRESET,
+  parseMaxDetourKm,
+  remainingTrunkSpace,
+  roundKm,
+} from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { CarSeatMap } from '../components/CarSeatMap';
+import { GeoPlaceFields, type GeoPlaceValue } from '../components/GeoPlaceFields';
+import { LuggageBlock } from '../components/LuggageBlock';
 import { TaxiBadge } from '../components/TaxiBadge';
 import { previewMainFare } from '../lib/estimateFare';
 import { liters, thb } from '../lib/format';
 import { ICON_CHOICES, VEHICLE_LABEL } from '../lib/carIcons';
-import { FALLBACK_DEST, FALLBACK_ORIGIN, type PickedPlace } from '../maps/MapProvider';
+import { parseDetourKm } from '../lib/detourInput';
+import { FALLBACK_ORIGIN, type PickedPlace } from '../maps/MapProvider';
 import { PlaceField } from '../maps/PlaceField';
 import { RouteMiniMap } from '../maps/RouteMiniMap';
 import { orderedRoute, waypointsFromOrdered } from '../maps/routePoints';
-import { useMapProvider } from '../maps/MapsProvider';
 import { positionsFor, SEAT_LABELS } from '../lib/seats';
 import { thaiRpcError } from '../lib/seatRpc';
 import { getSupabase } from '../supabase';
@@ -24,9 +37,18 @@ const TRUNK = {
   sedan: { w: 100, h: 50, l: 50 },
   hatch: { w: 100, h: 70, l: 40 },
   pickup: { w: 140, h: 40, l: 150 },
-  taxiSmall: { w: 80, h: 40, l: 50 },
-  taxiMid: { w: 100, h: 50, l: 50 },
-  taxiOver: { w: 140, h: 70, l: 50 },
+};
+
+const TAXI_TRUNK = {
+  w: TAXI_TRUNK_PRESET.widthCm,
+  h: TAXI_TRUNK_PRESET.heightCm,
+  l: TAXI_TRUNK_PRESET.lengthCm,
+};
+
+const BANGKOK_ORIGIN: PickedPlace = {
+  lat: BANGKOK_CENTER.lat,
+  lng: BANGKOK_CENTER.lng,
+  address: 'กรุงเทพมหานคร',
 };
 
 export function CreateTripPage() {
@@ -34,13 +56,24 @@ export function CreateTripPage() {
   const taxi = params.get('kind') === 'taxi';
   const navigate = useNavigate();
   const { demo } = useAuth();
-  const maps = useMapProvider();
   const [vehicle, setVehicle] = useState<VehicleType>('sedan');
   const [icon, setIcon] = useState('sedan');
-  const [pickup, setPickup] = useState<PickedPlace | null>(maps.available ? null : FALLBACK_ORIGIN);
-  const [dest, setDest] = useState<PickedPlace | null>(maps.available ? null : FALLBACK_DEST);
+  const [originGeo, setOriginGeo] = useState<GeoPlaceValue>({
+    provinceCode: BANGKOK_PROVINCE_CODE,
+    districtCode: '',
+    place: BANGKOK_ORIGIN,
+  });
+  const [destGeo, setDestGeo] = useState<GeoPlaceValue>({
+    provinceCode: '',
+    districtCode: '',
+    place: null,
+  });
+  const pickup = originGeo.place;
+  const dest = destGeo.place;
   const [stops, setStops] = useState<StopPlace[]>([]);
   const [km, setKm] = useState(taxi ? 12 : 80);
+  const [maxDetour, setMaxDetour] = useState(MAX_DETOUR_KM_DEFAULT);
+  const [maxDetourError, setMaxDetourError] = useState<string | null>(null);
   const [depart, setDepart] = useState('2026-11-14T08:00');
   const [open, setOpen] = useState<Record<SeatPosition, boolean>>({
     front_passenger: true,
@@ -48,10 +81,15 @@ export function CreateTripPage() {
     rear_middle: true,
     rear_right: true,
   });
-  const [trunk, setTrunk] = useState(taxi ? TRUNK.taxiMid : TRUNK.sedan);
+  const [trunk, setTrunk] = useState(TRUNK.sedan);
   const [ownerSeat, setOwnerSeat] = useState<SeatPosition>('front_passenger');
+  const [bagH, setBagH] = useState(50);
+  const [bagW, setBagW] = useState(40);
+  const [bagD, setBagD] = useState(25);
+  const [noBags, setNoBags] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const shownTrunk = taxi ? TAXI_TRUNK : trunk;
 
   const positions = positionsFor(taxi ? 'sedan' : vehicle);
   const seats: SeatState[] = positions.map((p) => ({
@@ -63,8 +101,15 @@ export function CreateTripPage() {
   }));
 
   const openCount = positions.filter((p) => open[p]).length;
-  const vol = useMemo(() => liters(trunk.w, trunk.h, trunk.l), [trunk]);
+  const vol = useMemo(() => liters(shownTrunk.w, shownTrunk.h, shownTrunk.l), [shownTrunk]);
   const farePreview = useMemo(() => previewMainFare(km, taxi ? 'taxi' : 'private'), [km, taxi]);
+  const creatorLuggage = noBags
+    ? []
+    : [{ riderId: 'creator', heightCm: bagH, widthCm: bagW, depthCm: bagD }];
+  const overflow = taxi
+    ? remainingTrunkSpace(TAXI_TRUNK_PRESET, creatorLuggage).overflow
+    : false;
+  const bagL = noBags ? 0 : liters(bagW, bagH, bagD);
 
   const onVehicle = (v: VehicleType) => {
     setVehicle(v);
@@ -76,10 +121,16 @@ export function CreateTripPage() {
     setOpen((s) => ({ ...s, [p]: isOpen }));
   };
 
+  const canPublish =
+    Boolean(originGeo.provinceCode && originGeo.districtCode && pickup?.address?.trim()) &&
+    Boolean(destGeo.provinceCode && destGeo.districtCode && dest?.address?.trim()) &&
+    !overflow &&
+    !busy;
+
   const publish = async () => {
     setError(null);
-    if (maps.available && (!pickup || !dest)) {
-      setError('เลือกต้นทางและปลายทางบนแผนที่');
+    if (!canPublish) {
+      setError('เลือกจังหวัด อำเภอ/เขต และหมุดต้นทาง–ปลายทางก่อนเปิดทริป');
       return;
     }
     if (demo) {
@@ -97,7 +148,12 @@ export function CreateTripPage() {
       return;
     }
     const origin = pickup ?? FALLBACK_ORIGIN;
-    const destination = dest ?? FALLBACK_DEST;
+    const destination = dest;
+    if (!destination) {
+      setBusy(false);
+      setError('เลือกปลายทาง');
+      return;
+    }
     const { data, error: insError } = await supabase
       .from('carpool_trips')
       .insert({
@@ -105,16 +161,21 @@ export function CreateTripPage() {
         kind: taxi ? 'taxi' : 'private',
         vehicle_type: taxi ? 'sedan' : vehicle,
         car_icon: taxi ? 'taxi' : icon,
-        trunk_w_cm: trunk.w,
-        trunk_h_cm: trunk.h,
-        trunk_l_cm: trunk.l,
-        route_km: km,
+        trunk_w_cm: shownTrunk.w,
+        trunk_h_cm: shownTrunk.h,
+        trunk_l_cm: shownTrunk.l,
+        route_km: roundKm(km),
         pickup_label: origin.address,
         pickup_lat: origin.lat,
         pickup_lng: origin.lng,
         dest_label: destination.address,
         dest_lat: destination.lat,
         dest_lng: destination.lng,
+        origin_province_code: originGeo.provinceCode,
+        dest_province_code: destGeo.provinceCode,
+        origin_district_code: originGeo.districtCode,
+        dest_district_code: destGeo.districtCode,
+        max_detour_km: taxi ? maxDetour : null,
         depart_at: new Date(depart).toISOString(),
         status: 'open',
       })
@@ -172,6 +233,9 @@ export function CreateTripPage() {
       const { error: claimError } = await supabase.rpc('carpool_claim_owner_seat', {
         p_trip_id: id,
         p_position: ownerSeat,
+        p_luggage_h_cm: noBags ? null : bagH,
+        p_luggage_w_cm: noBags ? null : bagW,
+        p_luggage_d_cm: noBags ? null : bagD,
       });
       if (claimError) {
         setBusy(false);
@@ -194,7 +258,7 @@ export function CreateTripPage() {
       </div>
       <div className="create-grid">
         <div className="create-map">
-          <RouteMiniMap origin={pickup} stops={stops} destination={dest} onKm={setKm} />
+          <RouteMiniMap origin={pickup} stops={stops} destination={dest} onKm={(next) => setKm(roundKm(next))} />
         </div>
         <div className="stack create-form">
           {taxi ? (
@@ -211,19 +275,22 @@ export function CreateTripPage() {
             </div>
           ) : null}
 
-          <PlaceField
-            label="ต้นทาง"
-            testId="place-origin"
-            value={pickup}
-            fallback={FALLBACK_ORIGIN}
-            onChange={setPickup}
+          <GeoPlaceFields
+            placeLabel="ต้นทาง"
+            testIdPrefix="origin"
+            requireDistrict
+            allowEmptyProvince={false}
+            placeFallback={BANGKOK_ORIGIN}
+            value={originGeo}
+            onChange={setOriginGeo}
           />
-          <PlaceField
-            label="ปลายทาง"
-            testId="place-dest"
-            value={dest}
-            fallback={FALLBACK_DEST}
-            onChange={setDest}
+          <GeoPlaceFields
+            placeLabel="ปลายทาง"
+            testIdPrefix="dest"
+            requireDistrict
+            placePlaceholder="เลือกปลายทาง"
+            value={destGeo}
+            onChange={setDestGeo}
           />
           {stops.map((stop, i) => (
             <PlaceField
@@ -259,8 +326,40 @@ export function CreateTripPage() {
           <p className="muted">ที่นั่งที่เปิดให้จอง {openCount}/{positions.length} ที่</p>
           <label className="field">
             ระยะทางโดยประมาณ (กม.)
-            <input type="number" min={0} value={km} onChange={(e) => setKm(Number(e.target.value))} />
+            <input
+              type="number"
+              min={0}
+              step="0.1"
+              value={km}
+              onChange={(e) => setKm(parseDetourKm(e.target.value, km))}
+            />
           </label>
+          {taxi ? (
+            <label className="field">
+              ระยะออกนอกเส้นทางสูงสุด
+              <span className="km-suffix-row">
+                <input
+                  data-testid="max-detour-km"
+                  type="number"
+                  min={MAX_DETOUR_KM_MIN}
+                  max={MAX_DETOUR_KM_MAX}
+                  step={0.5}
+                  value={maxDetour}
+                  onChange={(e) => {
+                    const parsed = parseMaxDetourKm(e.target.value);
+                    setMaxDetour(parsed.value);
+                    setMaxDetourError(parsed.error);
+                  }}
+                />
+                <span className="km-suffix">กม.</span>
+              </span>
+              {maxDetourError ? (
+                <span className="field-error" data-testid="max-detour-error">
+                  {maxDetourError}
+                </span>
+              ) : null}
+            </label>
+          ) : null}
 
           <input
             className="hidden-rate"
@@ -341,35 +440,53 @@ export function CreateTripPage() {
             </label>
           ) : null}
 
-          <div className="row">
-            {(['w', 'h', 'l'] as const).map((k) => (
-              <label key={k} className="field" style={{ flex: 1 }}>
-                {k === 'w' ? 'กว้าง' : k === 'h' ? 'สูง' : 'ยาว'} (ซม.)
-                <input
-                  type="number"
-                  min={1}
-                  value={trunk[k]}
-                  onChange={(e) => setTrunk((t) => ({ ...t, [k]: Number(e.target.value) }))}
-                />
+          {!taxi ? (
+            <>
+              <div className="row" data-testid="trunk-capacity">
+                {(['w', 'h', 'l'] as const).map((k) => (
+                  <label key={k} className="field" style={{ flex: 1 }}>
+                    {k === 'w' ? 'กว้าง' : k === 'h' ? 'สูง' : 'ยาว'} (ซม.)
+                    <input
+                      type="number"
+                      min={1}
+                      value={trunk[k]}
+                      onChange={(e) => setTrunk((t) => ({ ...t, [k]: Number(e.target.value) }))}
+                    />
+                  </label>
+                ))}
+              </div>
+              <p className="muted">
+                = {trunk.w * trunk.h * trunk.l} ซม³ · {vol.toFixed(0)} ลิตร
+              </p>
+            </>
+          ) : (
+            <section className="stack" data-testid="creator-luggage">
+              <p className="muted">
+                ท้ายรถแท็กซี่คงที่ {TAXI_TRUNK.w}×{TAXI_TRUNK.h}×{TAXI_TRUNK.l} ซม. = {vol.toFixed(0)} ล.
+              </p>
+              <p className="muted">สัมภาระของคุณ {noBags ? 'ไม่มี' : `${bagW} × ${bagH} × ${bagD} ซม. = ${bagL.toFixed(0)} ลิตร`}</p>
+              <label className="row check-row tap-target" data-testid="no-bags">
+                <input type="checkbox" checked={noBags} onChange={(e) => setNoBags(e.target.checked)} />
+                ไม่มีสัมภาระ
               </label>
-            ))}
-          </div>
-          <p className="muted">
-            = {trunk.w * trunk.h * trunk.l} ซม³ · {vol.toFixed(0)} ลิตร
-          </p>
-          {taxi ? (
-            <div className="row">
-              <button type="button" className="chip tap-target" onClick={() => setTrunk(TRUNK.taxiSmall)}>
-                ท้ายเล็ก
-              </button>
-              <button type="button" className="chip tap-target" onClick={() => setTrunk(TRUNK.taxiMid)}>
-                ท้ายกลาง
-              </button>
-              <button type="button" className="chip tap-target" onClick={() => setTrunk(TRUNK.taxiOver)}>
-                ท้ายใหญ่ (ตัวอย่างสัมภาระล้น)
-              </button>
-            </div>
-          ) : null}
+              {!noBags ? (
+                <div className="row">
+                  <label className="field">
+                    สูง
+                    <input type="number" min={0} value={bagH} onChange={(e) => setBagH(Number(e.target.value))} />
+                  </label>
+                  <label className="field">
+                    กว้าง
+                    <input type="number" min={0} value={bagW} onChange={(e) => setBagW(Number(e.target.value))} />
+                  </label>
+                  <label className="field">
+                    ลึก
+                    <input type="number" min={0} value={bagD} onChange={(e) => setBagD(Number(e.target.value))} />
+                  </label>
+                </div>
+              ) : null}
+            </section>
+          )}
         </div>
         <div className="stack create-seats">
           <CarSeatMap
@@ -379,15 +496,31 @@ export function CreateTripPage() {
             onToggleOpen={toggleSeat}
             ownPosition={taxi ? ownerSeat : null}
             driverLabel={taxi ? 'คนขับแท็กซี่' : 'คุณ'}
-            trunk={trunk}
+            trunk={shownTrunk}
+            luggage={taxi ? creatorLuggage : []}
           />
         </div>
       </div>
 
+      {taxi ? (
+        <LuggageBlock
+          widthCm={TAXI_TRUNK.w}
+          heightCm={TAXI_TRUNK.h}
+          lengthCm={TAXI_TRUNK.l}
+          luggage={creatorLuggage}
+        />
+      ) : null}
+
       {error ? <p style={{ color: 'var(--drop-danger)' }}>{error}</p> : null}
 
       <div className="sticky-bar">
-        <button className="btn tap-target" type="button" disabled={busy} onClick={() => void publish()}>
+        <button
+          className="btn tap-target"
+          type="button"
+          data-testid="create-submit"
+          disabled={!canPublish}
+          onClick={() => void publish()}
+        >
           เปิดทริป
         </button>
       </div>

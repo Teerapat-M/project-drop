@@ -1,7 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useEffect, useId, useMemo, useState } from 'react';
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { LuggagePiece } from '@drop/carpool-core';
-import { layoutTrunk } from '@drop/carpool-core';
+import {
+  detourFloorKm,
+  formatKm,
+  maxDetourExceeded,
+  maxDetourWarning,
+  remainingTrunkSpace,
+} from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { TaxiBadge } from '../components/TaxiBadge';
 import { demoPreview } from '../fixtures';
@@ -9,14 +15,15 @@ import { bindChat, openChat } from '../lib/chatEvents';
 import { VEHICLE_LABEL } from '../lib/carIcons';
 import { estimateViewerFareFromSeats } from '../lib/estimateFare';
 import { liters, thb } from '../lib/format';
+import { firstJoinBlocker, type JoinRouteStatus } from '../lib/joinRequirements';
 import { SEAT_LABELS } from '../lib/seats';
-import { thaiRpcError, withSeatOpen } from '../lib/seatRpc';
 import { SeatPicker } from '../components/SeatPicker';
 import { LuggageBlock } from '../components/LuggageBlock';
 import type { PickedPlace } from '../maps/MapProvider';
 import { PlaceField } from '../maps/PlaceField';
 import { RouteMiniMap } from '../maps/RouteMiniMap';
 import { parseDetourKm } from '../lib/detourInput';
+import { pointSetKey, readRouteCache } from '../maps/routeCache';
 import { detourFromViaKm } from '../maps/routePoints';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
@@ -28,13 +35,16 @@ export function JoinTripPage() {
   const { id = '' } = useParams();
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const { demo, user } = useAuth();
+  const { demo, user, configured } = useAuth();
+  const joinHintId = useId();
   const [preview, setPreview] = useState<TripPreview | null>(demo ? demoPreview(id) : null);
   const [selected, setSelected] = useState<SeatPosition | null>(null);
-  const [dest, setDest] = useState('ตลาดกลาง');
+  const [dest, setDest] = useState('');
   const [destPlace, setDestPlace] = useState<PickedPlace | null>(null);
   const [detour, setDetour] = useState(0);
   const [detourEdited, setDetourEdited] = useState(false);
+  const [viaKm, setViaKm] = useState<number | null>(null);
+  const [routeStatus, setRouteStatus] = useState<JoinRouteStatus>('idle');
   const [h, setH] = useState(50);
   const [w, setW] = useState(40);
   const [d, setD] = useState(25);
@@ -42,7 +52,7 @@ export function JoinTripPage() {
   const [agree, setAgree] = useState(false);
   const [error, setError] = useState<string | null>(params.get('conflict') === '1' ? BOOKING_CONFLICT : null);
   const [busy, setBusy] = useState(false);
-  const [ownerMode, setOwnerMode] = useState(params.get('owner') === '1');
+  const ownerQuery = params.get('owner') === '1';
 
   useEffect(() => {
     bindChat(id);
@@ -58,14 +68,6 @@ export function JoinTripPage() {
     void supabase.rpc('carpool_trip_preview', { p_trip_id: id }).then(({ data }) => {
       setPreview(data as TripPreview);
     });
-    void supabase
-      .from('carpool_trips')
-      .select('owner_id')
-      .eq('id', id)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data?.owner_id && user?.id && data.owner_id === user.id) setOwnerMode(true);
-      });
     const channel = supabase
       .channel(`seats:${id}`)
       .on(
@@ -91,43 +93,36 @@ export function JoinTripPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [demo, id, user?.id]);
+  }, [demo, id]);
 
-  const luggage: LuggagePiece[] = noBags
+  const yours: LuggagePiece[] = noBags
     ? []
     : [{ riderId: 'you', heightCm: h, widthCm: w, depthCm: d }];
-  const overflow = useMemo(() => {
-    if (!preview || noBags) return false;
-    return layoutTrunk({
-      widthCm: preview.trunk_w_cm,
-      heightCm: preview.trunk_h_cm,
-      lengthCm: preview.trunk_l_cm,
-      frameWidth: 240,
-      frameHeight: 140,
-      luggage,
-    }).overflow;
-  }, [preview, h, w, d, noBags, luggage]);
-
-  const toggleOpen = async (position: SeatPosition, isOpen: boolean) => {
-    const snapshot = preview?.seats ?? [];
-    setPreview((prev) => (prev ? { ...prev, seats: withSeatOpen(prev.seats, position, isOpen) } : prev));
-    if (demo) return;
-    const supabase = getSupabase();
-    if (!supabase) {
-      setPreview((prev) => (prev ? { ...prev, seats: snapshot } : prev));
-      setError(thaiRpcError('not authenticated'));
-      return;
-    }
-    const { error: rpcError } = await supabase.rpc('carpool_set_seat_open', {
-      p_trip_id: id,
-      p_position: position,
-      p_is_open: isOpen,
-    });
-    if (rpcError) {
-      setPreview((prev) => (prev ? { ...prev, seats: snapshot } : prev));
-      setError(thaiRpcError(rpcError.message, 'ปิดที่นั่งไม่สำเร็จ'));
-    }
-  };
+  // Preview bags are the booked set (anonymized, volume-desc). Creator luggage
+  // is in that set via their booking — not by array position. The join form is
+  // only this viewer's bags; skip it in owner mode so we do not double-count.
+  const bookedLuggage: LuggagePiece[] = useMemo(
+    () =>
+      (preview?.luggage ?? []).map((row, i) => ({
+        riderId: `booked-${i}`,
+        heightCm: row.height_cm,
+        widthCm: row.width_cm,
+        depthCm: row.depth_cm,
+      })),
+    [preview],
+  );
+  const mine = preview?.is_mine === true || ownerQuery;
+  const luggage = [...bookedLuggage, ...(mine ? [] : yours)];
+  const overflow = preview
+    ? remainingTrunkSpace(
+        {
+          widthCm: preview.trunk_w_cm,
+          heightCm: preview.trunk_h_cm,
+          lengthCm: preview.trunk_l_cm,
+        },
+        luggage,
+      ).overflow
+    : false;
 
   if (!preview) {
     return (
@@ -138,8 +133,56 @@ export function JoinTripPage() {
     );
   }
 
+  if (preview.is_mine === true || ownerQuery) {
+    return <Navigate to={`/trips/${id}/manage`} replace />;
+  }
+
   const taxi = preview.kind === 'taxi';
   const full = preview.status === 'full' || preview.seats.every((s) => !s.is_open || s.is_booked);
+  const tripOpen = preview.status === 'open' && !full;
+  const destPinned = destPlace != null && dest.trim().length > 0;
+  const offTripDest =
+    destPlace != null &&
+    (destPlace.lat !== preview.dest_lat || destPlace.lng !== preview.dest_lng);
+  const ownerPoints = [
+    { lat: preview.pickup_lat, lng: preview.pickup_lng },
+    ...(preview.stops ?? []).map((s) => ({ lat: s.lat, lng: s.lng })),
+    { lat: preview.dest_lat, lng: preview.dest_lng },
+  ];
+  const ownerLabels = [
+    preview.pickup_label,
+    ...(preview.stops ?? []).map((s, i) => s.address || `จุดแวะ ${i + 1}`),
+    preview.dest_label,
+  ].map((label, i) => `${i + 1}. ${label}`);
+  const ownerRoute = readRouteCache(pointSetKey(ownerPoints));
+  const floorFor = (pin: { lat: number; lng: number }) =>
+    detourFloorKm({
+      pickup: { lat: preview.pickup_lat, lng: preview.pickup_lng },
+      destination: { lat: preview.dest_lat, lng: preview.dest_lng },
+      riderDest: pin,
+      stops: (preview.stops ?? []).map((s) => ({ lat: s.lat, lng: s.lng })),
+    });
+  const haversineDetour = destPlace ? floorFor(destPlace) : 0;
+  const roadDetour = viaKm != null ? detourFromViaKm(viaKm, preview.route_km) : 0;
+  const checkDetour = !offTripDest
+    ? 0
+    : routeStatus === 'ready'
+      ? roadDetour
+      : haversineDetour;
+  const cap = preview.max_detour_km ?? null;
+  const overMax = maxDetourExceeded(checkDetour, cap);
+  const blocker = firstJoinBlocker({
+    authenticated: demo || Boolean(user) || !configured,
+    tripOpen,
+    seatSelected: selected != null,
+    destPinned,
+    routeStatus: destPinned && offTripDest ? routeStatus : destPinned ? 'ready' : 'idle',
+    maxDetourOk: !overMax,
+    maxDetourHint: overMax && cap != null ? maxDetourWarning(checkDetour, cap) : undefined,
+    trunkOk: !overflow,
+    riskAccepted: agree,
+  });
+  const joinDisabled = busy || blocker != null;
   const est = estimateViewerFareFromSeats({
     mainRouteKm: preview.route_km,
     kind: preview.kind,
@@ -153,6 +196,10 @@ export function JoinTripPage() {
     setError(null);
     if (!selected) {
       setError('เลือกที่นั่งก่อน');
+      return;
+    }
+    if (!destPlace) {
+      setError('ปักหมุดปลายทางของคุณ');
       return;
     }
     if (demo) {
@@ -192,7 +239,12 @@ export function JoinTripPage() {
           ←
         </Link>
         <h1 className="page-title">{full ? 'ทริปเต็มแล้ว' : taxi ? 'ยืนยันร่วมทริปแท็กซี่' : 'ยืนยันร่วมทริป'}</h1>
-        <button type="button" className="nav-link tap-target" onClick={() => openChat(id)}>
+        <button
+          type="button"
+          className="nav-link tap-target"
+          aria-label="แชทกับเพื่อนร่วมทาง"
+          onClick={() => openChat(id)}
+        >
           แชท
         </button>
       </div>
@@ -207,7 +259,7 @@ export function JoinTripPage() {
             คนขับ {preview.owner_display_name} · {VEHICLE_LABEL[preview.vehicle_type]}
           </p>
           <p className="muted" style={{ margin: 0 }}>
-            {preview.route_km} กม. · ประมาณ {thb(est.amountThb)} ฿ เมื่อมี {est.payerCount} คน · ตัวอย่าง
+            {formatKm(preview.route_km)} กม. · ประมาณ {thb(est.amountThb)} ฿ เมื่อมี {est.payerCount} คน · ตัวอย่าง
           </p>
         </div>
       </article>
@@ -228,11 +280,10 @@ export function JoinTripPage() {
           setSelected(p);
           setError(null);
         }}
-        onToggleOpen={ownerMode ? toggleOpen : undefined}
         ownPosition={selected}
         driverLabel={taxi ? 'คนขับแท็กซี่' : preview.owner_display_name}
         trunk={{ w: preview.trunk_w_cm, h: preview.trunk_h_cm, l: preview.trunk_l_cm }}
-        luggage={noBags ? [] : luggage}
+        luggage={luggage}
       />
 
       <div className="join-map-grid">
@@ -259,9 +310,11 @@ export function JoinTripPage() {
               lng: preview.dest_lng,
               address: preview.dest_label,
             }}
-            onKm={(viaKm) => {
+            onKm={(km, meta) => {
+              setRouteStatus(meta?.fallback ? 'fallback' : 'ready');
+              setViaKm(meta?.fallback ? null : km);
               if (detourEdited) return;
-              setDetour(detourFromViaKm(viaKm, preview.route_km));
+              setDetour(meta?.fallback ? 0 : detourFromViaKm(km, preview.route_km));
             }}
           />
         </div>
@@ -273,10 +326,22 @@ export function JoinTripPage() {
           label="จุดลงของคุณ"
           testId="place-rider-stop"
           value={destPlace}
-          fallback={{ lat: preview.dest_lat, lng: preview.dest_lng, address: dest }}
+          fallback={{ lat: preview.dest_lat, lng: preview.dest_lng, address: '' }}
+          placeholder="ปักหมุดจุดลงของคุณ"
+          routeOverlay={{
+            points: ownerPoints,
+            polyline: ownerRoute?.encodedPolyline,
+            labels: ownerLabels,
+          }}
+          maxDetourKm={cap}
+          detourForPin={floorFor}
           onChange={(place) => {
+            const offTrip =
+              place.lat !== preview.dest_lat || place.lng !== preview.dest_lng;
             setDestPlace(place);
             setDest(place.address);
+            setRouteStatus(offTrip ? 'pending' : 'ready');
+            if (!offTrip && !detourEdited) setDetour(0);
           }}
         />
         <label className="field">
@@ -293,6 +358,11 @@ export function JoinTripPage() {
             }}
           />
         </label>
+        {routeStatus === 'fallback' ? (
+          <p className="muted" data-testid="detour-fallback-note">
+            ระบบจะคำนวณระยะอ้อมให้
+          </p>
+        ) : null}
         <p className="muted">สัมภาระของคุณ {noBags ? 'ไม่มี' : `${w} × ${h} × ${d} ซม. = ${bagL.toFixed(0)} ลิตร`}</p>
       </section>
       </div>
@@ -301,7 +371,7 @@ export function JoinTripPage() {
         widthCm={preview.trunk_w_cm}
         heightCm={preview.trunk_h_cm}
         lengthCm={preview.trunk_l_cm}
-        luggage={noBags ? [] : luggage}
+        luggage={luggage}
       />
 
       <label className="row check-row tap-target" data-testid="no-bags">
@@ -331,11 +401,17 @@ export function JoinTripPage() {
       </label>
 
       <div className="sticky-bar">
+        {blocker ? (
+          <p className="muted join-hint" id={joinHintId} data-testid="join-hint">
+            {blocker.hint}
+          </p>
+        ) : null}
         <button
           className="btn tap-target"
           type="button"
           data-testid="join-submit"
-          disabled={busy || ownerMode || !agree || !selected || overflow || full}
+          disabled={joinDisabled}
+          aria-describedby={blocker ? joinHintId : undefined}
           onClick={() => void join()}
         >
           {full ? 'ร่วมทริปไม่ได้ · ที่นั่งเต็มแล้ว' : 'ร่วมทริป'}
