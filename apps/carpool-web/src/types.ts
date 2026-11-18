@@ -35,8 +35,16 @@ export type TripCard = {
   owner_id?: string;
 };
 
+export type TripStop = {
+  seq: number;
+  address: string;
+  lat: number;
+  lng: number;
+};
+
 export type TripPreview = Omit<TripCard, 'open_seats' | 'bookable_seats'> & {
   seats: SeatState[];
+  stops?: TripStop[];
 };
 
 export type BookingRow = {

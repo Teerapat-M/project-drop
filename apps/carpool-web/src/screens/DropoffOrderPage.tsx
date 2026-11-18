@@ -61,6 +61,8 @@ export function DropoffOrderPage() {
       return;
     }
     if (!preview) return;
+    const saved = preview.stops ?? [];
+    const lastWay = saved.at(-1);
     const riders = bookings.map((b) => ({
       id: b.id,
       coord: { lat: b.dest_lat, lng: b.dest_lng },
@@ -70,7 +72,9 @@ export function DropoffOrderPage() {
       return;
     }
     void orderDropoffs({
-      pickup: { lat: preview.pickup_lat, lng: preview.pickup_lng },
+      pickup: lastWay
+        ? { lat: lastWay.lat, lng: lastWay.lng }
+        : { lat: preview.pickup_lat, lng: preview.pickup_lng },
       riders,
     }).then(setOrder);
   }, [bookings, canonicalDemo, demo, preview]);
@@ -113,6 +117,7 @@ export function DropoffOrderPage() {
           <DropoffOrder
             result={order}
             pickupLabel={preview?.pickup_label ?? 'เซ็นทรัลเฟสติวัล'}
+            waypoints={(preview?.stops ?? []).map((s) => ({ id: `w${s.seq}`, label: s.address }))}
             stops={stops}
             driverView={driverView}
             youId={canonicalDemo || demo ? 'B' : null}

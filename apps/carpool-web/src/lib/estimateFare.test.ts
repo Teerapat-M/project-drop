@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { estimateViewerFare, estimateViewerFareFromSeats } from './estimateFare';
+import { estimateViewerFare, estimateViewerFareFromSeats, previewMainFare } from './estimateFare';
 
 describe('estimateViewerFare (computeFare, viewer occupies one more seat)', () => {
   it('uses satang so 10 km / 1 payer is 70.00 not 69.99', () => {
@@ -55,6 +55,12 @@ describe('estimateViewerFare (computeFare, viewer occupies one more seat)', () =
     });
     expect(est.payerCount).toBe(4);
     expect(est.amountThb).toBe(56);
+  });
+
+  it('previewMainFare is computeFare on mini-map km (luggage is not an argument)', () => {
+    expect(previewMainFare(12, 'taxi').mainFareThb).toBe(84);
+    expect(previewMainFare(12, 'private').mainFareThb).toBe(84);
+    expect(previewMainFare.length).toBe(2);
   });
 
   it('builds booked count from open+booked seats, ignoring empty open ones', () => {

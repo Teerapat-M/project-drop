@@ -20,4 +20,17 @@ describe('DropoffOrder', () => {
     expect(screen.getByTestId('stop-B')).toHaveTextContent('2. ส่ง ตลาด (อ้อม)');
     expect(screen.getByTestId('stop-C')).toHaveTextContent('3. ส่ง ตลาดลำพูน');
   });
+
+  it('rebuilds the main path as origin → saved stops → rider drop-offs', () => {
+    render(
+      <DropoffOrder
+        result={{ order: ['A'], totalDistance: 1 }}
+        pickupLabel="เชียงใหม่"
+        waypoints={[{ id: 'w1', label: 'แวะตลาด' }]}
+        stops={[{ id: 'A', label: 'ตลาดกลาง' }]}
+      />,
+    );
+    expect(screen.getByTestId('order-chain')).toHaveTextContent('รับ → แวะตลาด → 1 ตลาดกลาง');
+    expect(screen.getByTestId('stop-way-w1')).toHaveTextContent('แวะ แวะตลาด');
+  });
 });
