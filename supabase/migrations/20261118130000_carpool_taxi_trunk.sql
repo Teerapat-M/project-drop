@@ -212,10 +212,17 @@ grant execute on function public.carpool_trip_preview(uuid) to authenticated, se
 -- Javis PR #10 L2: numeric NaN passes CHECK (detour_km >= 0) because
 -- PostgreSQL treats numeric NaN as greater than every non-NaN value.
 -- Backfill first so existing rows cannot violate the new CHECK.
+-- carpool_bookings_guard restores OLD.detour_km when dest_* is unchanged,
+-- so a plain UPDATE would leave NaN in place. Replica role skips the
+-- trigger (same pattern as the seed that inserts the legacy NaN row).
 -- ---------------------------------------------------------------------------
+begin;
+select set_config('session_replication_role', 'replica', true);
 update public.carpool_bookings
    set detour_km = 0
  where detour_km = 'NaN';
+select set_config('session_replication_role', 'origin', true);
+commit;
 
 alter table public.carpool_bookings
   drop constraint if exists carpool_bookings_detour_not_nan;

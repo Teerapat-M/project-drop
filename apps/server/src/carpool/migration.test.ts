@@ -314,9 +314,11 @@ describe('carpool taxi trunk migration', () => {
   });
 
   it('adds NaN detour CHECK and freezes dest/luggage after the trip starts', () => {
+    const replicaAt = taxiTrunkSql.indexOf("session_replication_role', 'replica'");
     const nanAt = taxiTrunkSql.indexOf("detour_km = 'NaN'");
     const checkAt = taxiTrunkSql.indexOf('carpool_bookings_detour_not_nan');
-    expect(nanAt).toBeGreaterThan(0);
+    expect(replicaAt).toBeGreaterThan(0);
+    expect(nanAt).toBeGreaterThan(replicaAt);
     expect(checkAt).toBeGreaterThan(nanAt);
     expect(taxiTrunkSql).toMatch(/check \(detour_km <> 'NaN'\)/);
     expect(stopsSql).not.toMatch(/carpool_bookings_detour_not_nan/);
