@@ -39,7 +39,7 @@ export type TripCard = {
   dest_province_code?: string | null;
   origin_district_code?: string | null;
   dest_district_code?: string | null;
-  /** Taxi cap; null on private until we surface the field. */
+  /** Taxi cap from discover/preview; null on private. List cards show this. */
   max_detour_km?: number | null;
 };
 
