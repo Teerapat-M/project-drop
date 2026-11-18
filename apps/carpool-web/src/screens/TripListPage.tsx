@@ -202,6 +202,11 @@ function TripCardView({ trip }: { trip: TripCard }) {
         <p className="muted" style={{ margin: 0 }}>
           {trip.owner_display_name} · {VEHICLE_LABEL[trip.vehicle_type]} · {formatKm(trip.route_km)} กม.
         </p>
+        {trip.kind === 'taxi' && trip.max_detour_km != null ? (
+          <p className="muted" style={{ margin: 0 }} data-testid="max-detour-cap">
+            ออกนอกเส้นทางได้สูงสุด {formatKm(trip.max_detour_km)} กม.
+          </p>
+        ) : null}
         <p>
           ประมาณ {thb(est.amountThb)} ฿ เมื่อมี {est.payerCount} คน · ตัวอย่าง
         </p>

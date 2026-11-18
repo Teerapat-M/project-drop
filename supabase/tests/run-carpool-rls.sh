@@ -20,4 +20,5 @@ psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/migrations/20261118120000_carpool_tri
 psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/carpool_taxi_trunk_seed.sql"
 psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/migrations/20261118130000_carpool_taxi_trunk.sql"
 psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/carpool_taxi_trunk_backfill.sql"
+psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/migrations/20261118140000_carpool_c24_lows.sql"
 psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/carpool_rls.sql"

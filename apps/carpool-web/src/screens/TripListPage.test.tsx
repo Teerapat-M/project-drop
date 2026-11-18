@@ -41,4 +41,17 @@ describe('trip cards at 390px', () => {
     const taxi = screen.getByTestId('trip-demo-taxi-12km');
     expect(taxi.querySelector('[data-src="/assets/taxi_sedan.png"]')).toBeTruthy();
   });
+
+  it('shows the taxi max-detour cap on list cards', () => {
+    renderList('/?kind=taxi');
+    const taxi = screen.getByTestId('trip-demo-taxi-12km');
+    expect(taxi).toHaveTextContent('ออกนอกเส้นทางได้สูงสุด 5 กม.');
+    expect(screen.getByTestId('max-detour-cap')).toHaveTextContent('ออกนอกเส้นทางได้สูงสุด 5 กม.');
+  });
+
+  it('hides the max-detour cap on private cards', () => {
+    renderList('/');
+    expect(screen.queryByTestId('max-detour-cap')).toBeNull();
+    expect(screen.getByTestId('trip-demo-mint')).not.toHaveTextContent('ออกนอกเส้นทางได้สูงสุด');
+  });
 });

@@ -6,6 +6,7 @@ const root = join(__dirname, '../../../../supabase');
 const sql = readFileSync(join(root, 'migrations/20261118100000_carpool.sql'), 'utf8');
 const stopsSql = readFileSync(join(root, 'migrations/20261118120000_carpool_trip_stops.sql'), 'utf8');
 const taxiTrunkSql = readFileSync(join(root, 'migrations/20261118130000_carpool_taxi_trunk.sql'), 'utf8');
+const c24LowsSql = readFileSync(join(root, 'migrations/20261118140000_carpool_c24_lows.sql'), 'utf8');
 const testSql = readFileSync(join(root, 'tests/carpool_rls.sql'), 'utf8');
 const ridesSql = readFileSync(join(root, 'migrations/20261110180000_rides.sql'), 'utf8');
 const revokeSql = readFileSync(
@@ -188,6 +189,13 @@ describe('carpool SQL test file', () => {
     expect(testSql).toMatch(/luggage change rejected when in_progress/);
     expect(testSql).toMatch(/dest_\* change rejected when completed/);
     expect(testSql).toMatch(/luggage change rejected when completed/);
+    expect(testSql).toMatch(/ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว/);
+    expect(testSql).toMatch(/discover returns max_detour_km and no owner_id/);
+    expect(testSql).toMatch(/lowering cap below active booking floor rejected/);
+    expect(testSql).toMatch(/lowering cap to >= max active floor allowed/);
+    expect(testSql).toMatch(/raising cap allowed/);
+    expect(testSql).toMatch(/lowering below stored overreport allowed when floor fits/);
+    expect(testSql).toMatch(/cancelled bookings ignored when lowering cap/);
     expect(testSql).toMatch(/is_mine true only for the owner/);
     expect(testSql).toMatch(/owner My Trips sees owned trips/);
     expect(testSql).toMatch(/rider My Trips sees booked trips/);
@@ -395,6 +403,76 @@ describe('carpool taxi trunk backfill runner', () => {
     expect(runner).toMatch(/carpool_taxi_trunk_backfill\.sql/);
     expect(runner.indexOf('20261118130000_carpool_taxi_trunk.sql')).toBeLessThan(
       runner.indexOf('carpool_taxi_trunk_backfill.sql'),
+    );
+    expect(runner).toMatch(/20261118140000_carpool_c24_lows\.sql/);
+    expect(runner.indexOf('carpool_taxi_trunk_backfill.sql')).toBeLessThan(
+      runner.indexOf('20261118140000_carpool_c24_lows.sql'),
+    );
+  });
+});
+
+describe('carpool C2.4 lows migration', () => {
+  it('is a new file after taxi_trunk and does not edit earlier carpool SQL', () => {
+    expect(sql).not.toMatch(/carpool_c24_lows/);
+    expect(stopsSql).not.toMatch(/max_detour_km numeric\n\)/);
+    expect(taxiTrunkSql).not.toMatch(/ลดระยะออกนอกเส้นทางสูงสุดไม่ได้/);
+    expect(c24LowsSql).toMatch(/drop function if exists public\.carpool_discover_trips/);
+    expect(c24LowsSql).not.toMatch(/^\s*begin\s*;/im);
+    expect(c24LowsSql).not.toMatch(/^\s*commit\s*;/im);
+    expect(c24LowsSql).not.toMatch(/add table public\.carpool_/);
+  });
+
+  it('adds max_detour_km to discover without exposing owner_id and re-grants EXECUTE', () => {
+    expect(c24LowsSql).toMatch(/t\.max_detour_km/);
+    expect(c24LowsSql).toMatch(/\(t\.owner_id = uid\) as is_mine/);
+    expect(c24LowsSql).not.toMatch(/t\.owner_id as/);
+    expect(c24LowsSql).toMatch(/p_origin_province_code text default null/);
+    expect(c24LowsSql).toMatch(
+      /grant execute on function public\.carpool_discover_trips\(\s*public\.carpool_trip_kind, text, text, text, text\s*\) to authenticated, service_role;/,
+    );
+    expect(c24LowsSql).toMatch(
+      /revoke all on function public\.carpool_discover_trips\(\s*public\.carpool_trip_kind, text, text, text, text\s*\) from public, anon;/,
+    );
+  });
+
+  it('blocks lowering max_detour_km against the haversine floor, not stored detour_km', () => {
+    const guard =
+      c24LowsSql.match(
+        /create or replace function public\.carpool_trips_guard[\s\S]*?end;\n\$\$;/,
+      )?.[0] ?? '';
+    expect(guard).toMatch(/set search_path = ''/);
+    expect(guard).toMatch(/cannot change owner_id/);
+    expect(guard).toMatch(/cannot change trip kind/);
+    expect(guard).toMatch(/cannot change vehicle_type/);
+    expect(guard).toMatch(/invalid carpool status transition/);
+    expect(guard).toMatch(/private\.carpool_detour_floor_km/);
+    expect(guard).toMatch(/ลดระยะออกนอกเส้นทางสูงสุดไม่ได้ มีผู้โดยสารที่จองไว้ออกนอกเส้นทาง/);
+    expect(guard).not.toMatch(/b\.detour_km/);
+    expect(c24LowsSql).toMatch(
+      /revoke execute on function public\.carpool_trips_guard\(\) from public, anon, authenticated;/,
+    );
+    expect(c24LowsSql).not.toMatch(/grant execute on function public\.carpool_trips_guard/);
+  });
+
+  it('translates bookings_guard RAISE strings to Thai and keeps freeze/floor logic', () => {
+    const guard =
+      c24LowsSql.match(
+        /create or replace function public\.carpool_bookings_guard[\s\S]*?end;\n\$\$;/,
+      )?.[0] ?? '';
+    expect(guard).toMatch(/set search_path = ''/);
+    expect(guard).toMatch(/in_progress', 'completed', 'cancelled'/);
+    expect(guard).toMatch(/ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว/);
+    expect(guard).toMatch(/เฉพาะผู้โดยสารที่ยกเลิกการจองได้/);
+    expect(guard).toMatch(/ไม่สามารถโอนการจองได้/);
+    expect(guard).toMatch(/เฉพาะผู้โดยสารที่แก้ไขการจองได้/);
+    expect(guard).not.toMatch(/cannot change drop-off or luggage after the trip has started/);
+    expect(guard).not.toMatch(/only the rider can cancel their booking/);
+    expect(guard).not.toMatch(/cannot reassign a booking/);
+    expect(guard).not.toMatch(/only the rider can edit their booking/);
+    expect(guard).toMatch(/private\.carpool_enforce_max_detour/);
+    expect(guard).toMatch(/new\.detour_km := old\.detour_km/);
+    expect(c24LowsSql).toMatch(
+      /revoke execute on function public\.carpool_bookings_guard\(\) from public, anon, authenticated;/,
     );
   });
 });

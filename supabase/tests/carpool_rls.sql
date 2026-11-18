@@ -1,5 +1,6 @@
 -- Catalog + behavioral RLS for 20261118100000_carpool.sql,
--- 20261118120000_carpool_trip_stops.sql, and 20261118130000_carpool_taxi_trunk.sql.
+-- 20261118120000_carpool_trip_stops.sql, 20261118130000_carpool_taxi_trunk.sql,
+-- and 20261118140000_carpool_c24_lows.sql.
 -- Taxi-trunk backfill (legacy 100×50×50) runs in run-carpool-rls.sh around
 -- that migration, via carpool_taxi_trunk_seed.sql / carpool_taxi_trunk_backfill.sql.
 -- CI: supabase/tests/run-carpool-rls.sh (shim + profiles + carpool on ephemeral Postgres).
@@ -215,6 +216,53 @@ begin
   end if;
   if enforce !~ 'greatest' then
     raise exception 'carpool_book_seat must store greatest(floor, client detour)';
+  end if;
+end $$;
+
+-- C2.4: bookings_guard RAISE is Thai; discover returns max_detour_km, never owner_id.
+do $$
+declare
+  guard text := pg_get_functiondef('public.carpool_bookings_guard()'::regprocedure);
+  trips_guard text := pg_get_functiondef('public.carpool_trips_guard()'::regprocedure);
+  discover text := pg_get_functiondef(
+    'public.carpool_discover_trips(public.carpool_trip_kind, text, text, text, text)'::regprocedure
+  );
+begin
+  if guard ~ 'cannot change drop-off or luggage after the trip has started'
+     or guard ~ 'only the rider can cancel their booking'
+     or guard ~ 'cannot reassign a booking'
+     or guard ~ 'only the rider can edit their booking' then
+    raise exception 'carpool_bookings_guard must not raise English';
+  end if;
+  if guard !~ 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว' then
+    raise exception 'carpool_bookings_guard missing Thai freeze message';
+  end if;
+  if guard !~ 'เฉพาะผู้โดยสารที่ยกเลิกการจองได้' then
+    raise exception 'carpool_bookings_guard missing Thai cancel message';
+  end if;
+  if guard !~ 'ไม่สามารถโอนการจองได้' then
+    raise exception 'carpool_bookings_guard missing Thai reassign message';
+  end if;
+  if guard !~ 'เฉพาะผู้โดยสารที่แก้ไขการจองได้' then
+    raise exception 'carpool_bookings_guard missing Thai edit message';
+  end if;
+  if discover !~ 't.max_detour_km' then
+    raise exception 'carpool_discover_trips must return max_detour_km';
+  end if;
+  if discover ~ 't.owner_id as' or discover ~ '''owner_id''' then
+    raise exception 'carpool_discover_trips must not return owner_id';
+  end if;
+  if discover !~ 'is_mine' then
+    raise exception 'carpool_discover_trips must keep is_mine';
+  end if;
+  if discover !~ 'p_origin_province_code' then
+    raise exception 'carpool_discover_trips must keep geo filters';
+  end if;
+  if trips_guard !~ 'ลดระยะออกนอกเส้นทางสูงสุดไม่ได้' then
+    raise exception 'carpool_trips_guard must block lowering max_detour_km in Thai';
+  end if;
+  if trips_guard !~ 'carpool_detour_floor_km' then
+    raise exception 'carpool_trips_guard L3 must compare the haversine floor';
   end if;
 end $$;
 
@@ -1249,7 +1297,7 @@ begin
      where id = bid;
   exception
     when raise_exception then
-      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+      if sqlerrm is distinct from 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว' then
         raise;
       end if;
       denied := true;
@@ -1276,7 +1324,7 @@ begin
      where id = bid;
   exception
     when raise_exception then
-      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+      if sqlerrm is distinct from 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว' then
         raise;
       end if;
       denied := true;
@@ -1311,7 +1359,7 @@ begin
      where id = bid;
   exception
     when raise_exception then
-      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+      if sqlerrm is distinct from 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว' then
         raise;
       end if;
       denied := true;
@@ -1338,7 +1386,7 @@ begin
      where id = bid;
   exception
     when raise_exception then
-      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+      if sqlerrm is distinct from 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว' then
         raise;
       end if;
       denied := true;
@@ -1414,7 +1462,7 @@ begin
      where id = bid;
   exception
     when raise_exception then
-      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+      if sqlerrm is distinct from 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว' then
         raise;
       end if;
       denied := true;
@@ -1441,7 +1489,7 @@ begin
      where id = bid;
   exception
     when raise_exception then
-      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+      if sqlerrm is distinct from 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว' then
         raise;
       end if;
       denied := true;
@@ -1737,12 +1785,251 @@ begin
 end $$;
 commit;
 
+-- L1: discover returns max_detour_km, still no owner_id, geo filters kept.
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  disc jsonb;
+  filtered int;
+begin
+  select id into trip from tests.ids where k = 'taxi_trip';
+  select to_jsonb(d) into disc
+    from public.carpool_discover_trips() d
+   where d.id = trip;
+  if disc is null then
+    raise exception 'discover should return the open taxi trip';
+  end if;
+  if disc ? 'owner_id' then
+    raise exception 'discover must not leak owner_id';
+  end if;
+  if not disc ? 'max_detour_km' then
+    raise exception 'discover must return max_detour_km';
+  end if;
+  if (disc->>'max_detour_km')::numeric is distinct from 5 then
+    raise exception 'discover taxi max_detour_km should be 5, got %', disc->>'max_detour_km';
+  end if;
+  if coalesce((disc->>'is_mine')::boolean, true) then
+    raise exception 'stranger discover is_mine should be false';
+  end if;
+  select count(*) into filtered
+    from public.carpool_discover_trips(
+      'taxi',
+      '10',
+      null,
+      null,
+      null
+    ) d
+   where d.id = trip;
+  if filtered <> 0 then
+    raise exception 'discover geo filter should hide taxi_trip with null origin province';
+  end if;
+  perform tests.ok('discover returns max_detour_km and no owner_id');
+end $$;
+commit;
+
+-- L3: lowering max_detour_km below an active booking's haversine floor is
+-- rejected. Compare the floor (not stored detour_km) so an L2 overreport
+-- cannot pin the cap. Cancel deletes the booking row (no status column).
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status,
+    max_detour_km
+  ) values (
+    uid, 'taxi', 'sedan', 'taxi',
+    100, 40, 50, 12,
+    'กรุงเทพฯ', 13.75, 100.5,
+    'อยุธยา', 14.35, 100.57, now() + interval '8 day', 'open',
+    10
+  ) returning id into trip;
+  insert into tests.ids (k, id) values ('l3_trip', trip);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_bookings;
+begin
+  select id into trip from tests.ids where k = 'l3_trip';
+  -- Off-origin dest: floor is a few km; client overreports (L2 intended).
+  rec := public.carpool_book_seat(
+    trip, 'rear_middle', 'จุดอ้อม', 13.75, 100.54, 9, null, null, null
+  );
+  if rec.detour_km is distinct from 9 then
+    raise exception 'L2 overreport should keep client 9, got %', rec.detour_km;
+  end if;
+  insert into tests.ids (k, id) values ('l3_booking', rec.id);
+end $$;
+commit;
+
+do $$
+declare
+  trip uuid;
+  floor_km numeric;
+  stored numeric;
+begin
+  select id into trip from tests.ids where k = 'l3_trip';
+  floor_km := private.carpool_detour_floor_km(trip, 13.75, 100.54);
+  select b.detour_km into stored
+    from public.carpool_bookings b
+   where b.id = (select id from tests.ids where k = 'l3_booking');
+  if floor_km <= 1 or floor_km >= 5 then
+    raise exception 'L3 fixture floor should be in (1, 5), got %', floor_km;
+  end if;
+  if stored is distinct from 9 then
+    raise exception 'L3 stored detour should be 9, got %', stored;
+  end if;
+end $$;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  cap numeric;
+  denied boolean := false;
+begin
+  select id into trip from tests.ids where k = 'l3_trip';
+  begin
+    update public.carpool_trips
+       set max_detour_km = 1
+     where id = trip;
+  exception
+    when raise_exception then
+      if sqlerrm not like 'ลดระยะออกนอกเส้นทางสูงสุดไม่ได้ มีผู้โดยสารที่จองไว้ออกนอกเส้นทาง%' then
+        raise exception 'expected L3 Thai raise, got %', sqlerrm;
+      end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'lowering max_detour_km below active floor should be rejected';
+  end if;
+  select t.max_detour_km into cap from public.carpool_trips t where t.id = trip;
+  if cap is distinct from 10 then
+    raise exception 'rejected lower should leave cap at 10, got %', cap;
+  end if;
+  perform tests.ok('lowering cap below active booking floor rejected');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  cap numeric;
+begin
+  select id into trip from tests.ids where k = 'l3_trip';
+  update public.carpool_trips
+     set max_detour_km = 5
+   where id = trip
+  returning max_detour_km into cap;
+  if cap is distinct from 5 then
+    raise exception 'lowering to 5 (>= floor, < stored 9) should be allowed, got %', cap;
+  end if;
+  perform tests.ok('lowering cap to >= max active floor allowed');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  cap numeric;
+begin
+  select id into trip from tests.ids where k = 'l3_trip';
+  update public.carpool_trips
+     set max_detour_km = 20
+   where id = trip
+  returning max_detour_km into cap;
+  if cap is distinct from 20 then
+    raise exception 'raising max_detour_km should be allowed, got %', cap;
+  end if;
+  perform tests.ok('raising cap allowed');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  cap numeric;
+begin
+  select id into trip from tests.ids where k = 'l3_trip';
+  -- Stored detour_km is 9 (overreport). Floor is in (1, 5). Lowering to 8
+  -- is below stored and still >= floor — L3 checks the floor.
+  update public.carpool_trips
+     set max_detour_km = 8
+   where id = trip
+  returning max_detour_km into cap;
+  if cap is distinct from 8 then
+    raise exception 'lowering below stored overreport but >= floor should be allowed, got %', cap;
+  end if;
+  perform tests.ok('lowering below stored overreport allowed when floor fits');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+begin
+  select id into trip from tests.ids where k = 'l3_trip';
+  perform public.carpool_cancel_booking(trip);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  cap numeric;
+begin
+  select id into trip from tests.ids where k = 'l3_trip';
+  update public.carpool_trips
+     set max_detour_km = 1
+   where id = trip
+  returning max_detour_km into cap;
+  if cap is distinct from 1 then
+    raise exception 'after cancel, lowering to 1 should be allowed, got %', cap;
+  end if;
+  perform tests.ok('cancelled bookings ignored when lowering cap');
+end $$;
+commit;
+
 do $$
 declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 45 then
+  if n < 51 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;
