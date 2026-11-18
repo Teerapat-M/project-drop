@@ -7,9 +7,10 @@ import { mockMatchMedia } from '../test/matchMedia';
 import { createMockMapProvider } from '../test/mockMapProvider';
 import { CreateTripPage } from './CreateTripPage';
 
-const { tripsInsert, stopsInsert } = vi.hoisted(() => ({
+const { tripsInsert, stopsInsert, rpcCalls } = vi.hoisted(() => ({
   tripsInsert: [] as unknown[],
   stopsInsert: [] as unknown[],
+  rpcCalls: [] as { name: string; args: unknown }[],
 }));
 
 vi.mock('../supabase', () => ({
@@ -37,7 +38,10 @@ vi.mock('../supabase', () => ({
         });
       },
     }),
-    rpc: async () => ({ error: null }),
+    rpc: async (name: string, args: unknown) => {
+      rpcCalls.push({ name, args });
+      return { error: null };
+    },
   }),
 }));
 
@@ -45,6 +49,7 @@ describe('CreateTripPage persist stops', () => {
   beforeEach(() => {
     tripsInsert.length = 0;
     stopsInsert.length = 0;
+    rpcCalls.length = 0;
   });
 
   it('saves จุดแวะ in ordered seq after origin → dest', async () => {
@@ -83,5 +88,56 @@ describe('CreateTripPage persist stops', () => {
         address: expect.any(String),
       }),
     ]);
+  });
+
+  it('persists the fixed taxi trunk and the creator luggage only', async () => {
+    mockMatchMedia(390);
+    render(
+      <AuthProvider>
+        <MapsProvider provider={createMockMapProvider()}>
+          <MemoryRouter initialEntries={['/trips/new?kind=taxi']}>
+            <Routes>
+              <Route path="/trips/new" element={<CreateTripPage />} />
+              <Route path="/trips/:id/fare" element={<p>fare</p>} />
+            </Routes>
+          </MemoryRouter>
+        </MapsProvider>
+      </AuthProvider>,
+    );
+
+    fireEvent.click(await screen.findByTestId('place-origin'));
+    fireEvent.click(screen.getByTestId('place-confirm'));
+    fireEvent.click(screen.getByTestId('place-dest'));
+    fireEvent.click(screen.getByTestId('place-confirm'));
+    fireEvent.change(screen.getByLabelText('สูง'), { target: { value: '50' } });
+    fireEvent.change(screen.getByLabelText('กว้าง'), { target: { value: '40' } });
+    fireEvent.change(screen.getByLabelText('ลึก'), { target: { value: '25' } });
+    fireEvent.click(screen.getByRole('button', { name: 'เปิดทริป' }));
+
+    await waitFor(() => expect(tripsInsert.length).toBe(1));
+    expect(tripsInsert[0]).toEqual(
+      expect.objectContaining({
+        kind: 'taxi',
+        trunk_w_cm: 100,
+        trunk_h_cm: 40,
+        trunk_l_cm: 50,
+      }),
+    );
+    await waitFor(() =>
+      expect(rpcCalls.some((c) => c.name === 'carpool_claim_owner_seat')).toBe(true),
+    );
+    expect(rpcCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'carpool_claim_owner_seat',
+          args: expect.objectContaining({
+            p_trip_id: 'trip-1',
+            p_luggage_h_cm: 50,
+            p_luggage_w_cm: 40,
+            p_luggage_d_cm: 25,
+          }),
+        }),
+      ]),
+    );
   });
 });

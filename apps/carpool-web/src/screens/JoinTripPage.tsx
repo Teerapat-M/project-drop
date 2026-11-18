@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { LuggagePiece } from '@drop/carpool-core';
-import { layoutTrunk } from '@drop/carpool-core';
+import { remainingTrunkSpace } from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { TaxiBadge } from '../components/TaxiBadge';
 import { demoPreview } from '../fixtures';
@@ -92,20 +92,30 @@ export function JoinTripPage() {
     };
   }, [demo, id, user?.id]);
 
-  const luggage: LuggagePiece[] = noBags
+  const yours: LuggagePiece[] = noBags
     ? []
     : [{ riderId: 'you', heightCm: h, widthCm: w, depthCm: d }];
-  const overflow = useMemo(() => {
-    if (!preview || noBags) return false;
-    return layoutTrunk({
-      widthCm: preview.trunk_w_cm,
-      heightCm: preview.trunk_h_cm,
-      lengthCm: preview.trunk_l_cm,
-      frameWidth: 240,
-      frameHeight: 140,
-      luggage,
-    }).overflow;
-  }, [preview, h, w, d, noBags, luggage]);
+  const bookedLuggage: LuggagePiece[] = useMemo(
+    () =>
+      (preview?.luggage ?? []).map((row, i) => ({
+        riderId: `booked-${i}`,
+        heightCm: row.height_cm,
+        widthCm: row.width_cm,
+        depthCm: row.depth_cm,
+      })),
+    [preview],
+  );
+  const luggage = [...bookedLuggage, ...yours];
+  const overflow = preview
+    ? remainingTrunkSpace(
+        {
+          widthCm: preview.trunk_w_cm,
+          heightCm: preview.trunk_h_cm,
+          lengthCm: preview.trunk_l_cm,
+        },
+        luggage,
+      ).overflow
+    : false;
 
   const toggleOpen = async (position: SeatPosition, isOpen: boolean) => {
     const snapshot = preview?.seats ?? [];
@@ -231,7 +241,7 @@ export function JoinTripPage() {
         ownPosition={selected}
         driverLabel={taxi ? 'คนขับแท็กซี่' : preview.owner_display_name}
         trunk={{ w: preview.trunk_w_cm, h: preview.trunk_h_cm, l: preview.trunk_l_cm }}
-        luggage={noBags ? [] : luggage}
+        luggage={luggage}
       />
 
       <div className="join-map-grid">
@@ -300,7 +310,7 @@ export function JoinTripPage() {
         widthCm={preview.trunk_w_cm}
         heightCm={preview.trunk_h_cm}
         lengthCm={preview.trunk_l_cm}
-        luggage={noBags ? [] : luggage}
+        luggage={luggage}
       />
 
       <label className="row check-row tap-target" data-testid="no-bags">

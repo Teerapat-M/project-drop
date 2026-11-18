@@ -5,6 +5,7 @@ import { join } from 'node:path';
 const root = join(__dirname, '../../../../supabase');
 const sql = readFileSync(join(root, 'migrations/20261118100000_carpool.sql'), 'utf8');
 const stopsSql = readFileSync(join(root, 'migrations/20261118120000_carpool_trip_stops.sql'), 'utf8');
+const taxiTrunkSql = readFileSync(join(root, 'migrations/20261118130000_carpool_taxi_trunk.sql'), 'utf8');
 const testSql = readFileSync(join(root, 'tests/carpool_rls.sql'), 'utf8');
 const ridesSql = readFileSync(join(root, 'migrations/20261110180000_rides.sql'), 'utf8');
 const revokeSql = readFileSync(
@@ -172,6 +173,10 @@ describe('carpool SQL test file', () => {
     expect(testSql).toMatch(/stranger cannot write stops/);
     expect(testSql).toMatch(/discover\/preview stay rounded with no owner id/);
     expect(testSql).toMatch(/anon is denied stops/);
+    expect(testSql).toMatch(/taxi trunk insert\/update forced to preset/);
+    expect(testSql).toMatch(/preview taxi luggage creator-first no rider ids/);
+    expect(testSql).toMatch(/private trunk insert\/update unchanged/);
+    expect(testSql).toMatch(/anon\/authenticated must not EXECUTE public\.carpool_trips_taxi_trunk/);
   });
 });
 
@@ -202,6 +207,41 @@ describe('carpool trip stops migration', () => {
     expect(preview).toMatch(/pg_catalog\.round\(st\.lng::numeric, 3\)/);
     expect(preview).not.toMatch(/'owner_id'/);
     expect(preview).not.toMatch(/t\.owner_id as/);
+    expect(preview).toMatch(/'stops'/);
+  });
+});
+
+describe('carpool taxi trunk migration', () => {
+  it('is a new file after trip_stops and does not edit earlier carpool SQL', () => {
+    expect(sql).not.toMatch(/carpool_taxi_trunk/);
+    expect(stopsSql).not.toMatch(/carpool_trips_taxi_trunk/);
+    expect(taxiTrunkSql).toMatch(/create or replace function private\.carpool_taxi_trunk\(\)/);
+    expect(taxiTrunkSql).toMatch(/select 100::numeric, 40::numeric, 50::numeric/);
+    expect(taxiTrunkSql).toMatch(/carpool_trips_taxi_trunk_preset/);
+  });
+
+  it('forces taxi dims via a trigger with no EXECUTE grant', () => {
+    expect(taxiTrunkSql).toMatch(/set search_path = ''/);
+    expect(taxiTrunkSql).toMatch(
+      /revoke execute on function public\.carpool_trips_taxi_trunk\(\) from public, anon, authenticated;/,
+    );
+    expect(taxiTrunkSql).toMatch(
+      /revoke all on function private\.carpool_taxi_trunk\(\) from public, anon, authenticated;/,
+    );
+    expect(taxiTrunkSql).not.toMatch(/grant execute on function public\.carpool_trips_taxi_trunk/);
+    expect(taxiTrunkSql).toMatch(/if new\.kind = 'taxi'/);
+    expect(taxiTrunkSql).toMatch(/kind <> 'taxi'/);
+  });
+
+  it('adds anonymized preview luggage with creator first', () => {
+    const preview =
+      taxiTrunkSql.match(
+        /create or replace function public\.carpool_trip_preview[\s\S]*?end;\n\$\$;/,
+      )?.[0] ?? '';
+    expect(preview).toMatch(/'luggage'/);
+    expect(preview).toMatch(/order by \(b\.rider_id = t\.owner_id\) desc, b\.created_at, b\.id/);
+    expect(preview).not.toMatch(/'rider_id'/);
+    expect(preview).not.toMatch(/'owner_id'/);
     expect(preview).toMatch(/'stops'/);
   });
 });

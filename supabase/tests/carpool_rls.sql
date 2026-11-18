@@ -1,5 +1,5 @@
--- Catalog + behavioral RLS for 20261118100000_carpool.sql and
--- 20261118120000_carpool_trip_stops.sql.
+-- Catalog + behavioral RLS for 20261118100000_carpool.sql,
+-- 20261118120000_carpool_trip_stops.sql, and 20261118130000_carpool_taxi_trunk.sql.
 -- CI: supabase/tests/run-carpool-rls.sh (shim + profiles + carpool on ephemeral Postgres).
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/carpool_rls.sql
 -- Recursion (42P17) or missing EXECUTE on policy helpers fails this file.
@@ -73,6 +73,10 @@ begin
      or has_function_privilege('authenticated', 'public.carpool_trip_stops_guard()', 'EXECUTE') then
     raise exception 'anon/authenticated must not EXECUTE public.carpool_trip_stops_guard()';
   end if;
+  if has_function_privilege('anon', 'public.carpool_trips_taxi_trunk()', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.carpool_trips_taxi_trunk()', 'EXECUTE') then
+    raise exception 'anon/authenticated must not EXECUTE public.carpool_trips_taxi_trunk()';
+  end if;
 end $$;
 
 -- Intentional RPCs stay executable by authenticated; anon has none.
@@ -130,6 +134,10 @@ begin
   if has_function_privilege('anon', 'private.carpool_is_participant(uuid)', 'EXECUTE')
      or has_function_privilege('anon', 'private.carpool_is_trip_owner(uuid)', 'EXECUTE') then
     raise exception 'anon must not EXECUTE carpool policy helpers';
+  end if;
+  if has_function_privilege('authenticated', 'private.carpool_taxi_trunk()', 'EXECUTE')
+     or has_function_privilege('anon', 'private.carpool_taxi_trunk()', 'EXECUTE') then
+    raise exception 'anon/authenticated must not EXECUTE private.carpool_taxi_trunk';
   end if;
 end $$;
 
@@ -678,6 +686,156 @@ begin
 end $$;
 commit;
 
+-- Taxi trunk: trigger forces the preset; private dims stay; preview luggage
+-- is anonymized with creator first.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+  w numeric;
+  h numeric;
+  l numeric;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'taxi', 'sedan', 'taxi',
+    80, 99, 12, 12,
+    'กรุงเทพฯ', 13.75, 100.5,
+    'อยุธยา', 14.35, 100.57, now() + interval '2 day', 'open'
+  ) returning id, trunk_w_cm, trunk_h_cm, trunk_l_cm into trip, w, h, l;
+  if w <> 100 or h <> 40 or l <> 50 then
+    raise exception 'taxi insert must force 100×40×50, got %×%×%', w, h, l;
+  end if;
+  insert into tests.ids (k, id) values ('taxi_trip', trip);
+
+  update public.carpool_trips
+     set trunk_w_cm = 140, trunk_h_cm = 70, trunk_l_cm = 90
+   where id = trip
+  returning trunk_w_cm, trunk_h_cm, trunk_l_cm into w, h, l;
+  if w <> 100 or h <> 40 or l <> 50 then
+    raise exception 'taxi update must keep 100×40×50, got %×%×%', w, h, l;
+  end if;
+
+  perform tests.ok('taxi trunk insert/update forced to preset');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_bookings;
+begin
+  select id into trip from tests.ids where k = 'taxi_trip';
+  rec := public.carpool_claim_owner_seat(trip, 'front_passenger', 50, 40, 25);
+  if rec.luggage_h_cm <> 50 or rec.luggage_w_cm <> 40 or rec.luggage_d_cm <> 25 then
+    raise exception 'owner claim luggage mismatch';
+  end if;
+  perform tests.ok('taxi owner claim stores creator luggage');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_bookings;
+begin
+  select id into trip from tests.ids where k = 'taxi_trip';
+  rec := public.carpool_book_seat(
+    trip, 'rear_left', 'อยุธยา', 14.35, 100.57, 0, 40, 30, 20
+  );
+  if rec.luggage_w_cm <> 30 then
+    raise exception 'rider luggage mismatch';
+  end if;
+  perform tests.ok('taxi rider books with luggage');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec jsonb;
+  bags jsonb;
+begin
+  select id into trip from tests.ids where k = 'taxi_trip';
+  rec := public.carpool_trip_preview(trip);
+  if (rec->>'trunk_w_cm')::numeric <> 100
+     or (rec->>'trunk_h_cm')::numeric <> 40
+     or (rec->>'trunk_l_cm')::numeric <> 50 then
+    raise exception 'preview taxi trunk should be preset, got % % %',
+      rec->>'trunk_w_cm', rec->>'trunk_h_cm', rec->>'trunk_l_cm';
+  end if;
+  bags := rec->'luggage';
+  if jsonb_array_length(bags) <> 2 then
+    raise exception 'preview luggage count: %', bags;
+  end if;
+  if (bags->0->>'height_cm')::numeric <> 50
+     or (bags->0->>'width_cm')::numeric <> 40
+     or (bags->0->>'depth_cm')::numeric <> 25 then
+    raise exception 'creator luggage must be first: %', bags->0;
+  end if;
+  if (bags->1->>'height_cm')::numeric <> 40
+     or (bags->1->>'width_cm')::numeric <> 30
+     or (bags->1->>'depth_cm')::numeric <> 20 then
+    raise exception 'booked rider luggage second: %', bags->1;
+  end if;
+  if bags->0 ? 'rider_id' or bags->1 ? 'rider_id' then
+    raise exception 'preview luggage must not leak rider_id';
+  end if;
+  if rec ? 'owner_id' then
+    raise exception 'preview must not leak owner_id';
+  end if;
+  perform tests.ok('preview taxi luggage creator-first no rider ids');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  w numeric;
+  h numeric;
+  l numeric;
+begin
+  select id into trip from tests.ids where k = 'trip';
+  select trunk_w_cm, trunk_h_cm, trunk_l_cm into w, h, l
+    from public.carpool_trips where id = trip;
+  if w <> 100 or h <> 50 or l <> 50 then
+    raise exception 'private trunk should stay 100×50×50, got %×%×%', w, h, l;
+  end if;
+  update public.carpool_trips
+     set trunk_w_cm = 140, trunk_h_cm = 40, trunk_l_cm = 150
+   where id = trip
+  returning trunk_w_cm, trunk_h_cm, trunk_l_cm into w, h, l;
+  if w <> 140 or h <> 40 or l <> 150 then
+    raise exception 'private trunk update should keep driver values, got %×%×%', w, h, l;
+  end if;
+  -- restore original so later tests still see 100×50×50
+  update public.carpool_trips
+     set trunk_w_cm = 100, trunk_h_cm = 50, trunk_l_cm = 50
+   where id = trip;
+  perform tests.ok('private trunk insert/update unchanged');
+end $$;
+commit;
+
 -- Non-open trip.
 begin;
 select tests.login(id) from tests.ids where k = 'owner';
@@ -771,7 +929,7 @@ declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 16 then
+  if n < 21 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

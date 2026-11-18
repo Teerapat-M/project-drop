@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { RATE_THB_PER_KM } from '@drop/carpool-core';
+import { RATE_THB_PER_KM, TAXI_TRUNK_PRESET, remainingTrunkSpace } from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { CarSeatMap } from '../components/CarSeatMap';
+import { LuggageBlock } from '../components/LuggageBlock';
 import { TaxiBadge } from '../components/TaxiBadge';
 import { previewMainFare } from '../lib/estimateFare';
 import { liters, thb } from '../lib/format';
@@ -24,9 +25,12 @@ const TRUNK = {
   sedan: { w: 100, h: 50, l: 50 },
   hatch: { w: 100, h: 70, l: 40 },
   pickup: { w: 140, h: 40, l: 150 },
-  taxiSmall: { w: 80, h: 40, l: 50 },
-  taxiMid: { w: 100, h: 50, l: 50 },
-  taxiOver: { w: 140, h: 70, l: 50 },
+};
+
+const TAXI_TRUNK = {
+  w: TAXI_TRUNK_PRESET.widthCm,
+  h: TAXI_TRUNK_PRESET.heightCm,
+  l: TAXI_TRUNK_PRESET.lengthCm,
 };
 
 export function CreateTripPage() {
@@ -48,10 +52,15 @@ export function CreateTripPage() {
     rear_middle: true,
     rear_right: true,
   });
-  const [trunk, setTrunk] = useState(taxi ? TRUNK.taxiMid : TRUNK.sedan);
+  const [trunk, setTrunk] = useState(TRUNK.sedan);
   const [ownerSeat, setOwnerSeat] = useState<SeatPosition>('front_passenger');
+  const [bagH, setBagH] = useState(50);
+  const [bagW, setBagW] = useState(40);
+  const [bagD, setBagD] = useState(25);
+  const [noBags, setNoBags] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const shownTrunk = taxi ? TAXI_TRUNK : trunk;
 
   const positions = positionsFor(taxi ? 'sedan' : vehicle);
   const seats: SeatState[] = positions.map((p) => ({
@@ -63,8 +72,15 @@ export function CreateTripPage() {
   }));
 
   const openCount = positions.filter((p) => open[p]).length;
-  const vol = useMemo(() => liters(trunk.w, trunk.h, trunk.l), [trunk]);
+  const vol = useMemo(() => liters(shownTrunk.w, shownTrunk.h, shownTrunk.l), [shownTrunk]);
   const farePreview = useMemo(() => previewMainFare(km, taxi ? 'taxi' : 'private'), [km, taxi]);
+  const creatorLuggage = noBags
+    ? []
+    : [{ riderId: 'creator', heightCm: bagH, widthCm: bagW, depthCm: bagD }];
+  const overflow = taxi
+    ? remainingTrunkSpace(TAXI_TRUNK_PRESET, creatorLuggage).overflow
+    : false;
+  const bagL = noBags ? 0 : liters(bagW, bagH, bagD);
 
   const onVehicle = (v: VehicleType) => {
     setVehicle(v);
@@ -105,9 +121,9 @@ export function CreateTripPage() {
         kind: taxi ? 'taxi' : 'private',
         vehicle_type: taxi ? 'sedan' : vehicle,
         car_icon: taxi ? 'taxi' : icon,
-        trunk_w_cm: trunk.w,
-        trunk_h_cm: trunk.h,
-        trunk_l_cm: trunk.l,
+        trunk_w_cm: shownTrunk.w,
+        trunk_h_cm: shownTrunk.h,
+        trunk_l_cm: shownTrunk.l,
         route_km: km,
         pickup_label: origin.address,
         pickup_lat: origin.lat,
@@ -172,6 +188,9 @@ export function CreateTripPage() {
       const { error: claimError } = await supabase.rpc('carpool_claim_owner_seat', {
         p_trip_id: id,
         p_position: ownerSeat,
+        p_luggage_h_cm: noBags ? null : bagH,
+        p_luggage_w_cm: noBags ? null : bagW,
+        p_luggage_d_cm: noBags ? null : bagD,
       });
       if (claimError) {
         setBusy(false);
@@ -341,35 +360,53 @@ export function CreateTripPage() {
             </label>
           ) : null}
 
-          <div className="row">
-            {(['w', 'h', 'l'] as const).map((k) => (
-              <label key={k} className="field" style={{ flex: 1 }}>
-                {k === 'w' ? 'กว้าง' : k === 'h' ? 'สูง' : 'ยาว'} (ซม.)
-                <input
-                  type="number"
-                  min={1}
-                  value={trunk[k]}
-                  onChange={(e) => setTrunk((t) => ({ ...t, [k]: Number(e.target.value) }))}
-                />
+          {!taxi ? (
+            <>
+              <div className="row" data-testid="trunk-capacity">
+                {(['w', 'h', 'l'] as const).map((k) => (
+                  <label key={k} className="field" style={{ flex: 1 }}>
+                    {k === 'w' ? 'กว้าง' : k === 'h' ? 'สูง' : 'ยาว'} (ซม.)
+                    <input
+                      type="number"
+                      min={1}
+                      value={trunk[k]}
+                      onChange={(e) => setTrunk((t) => ({ ...t, [k]: Number(e.target.value) }))}
+                    />
+                  </label>
+                ))}
+              </div>
+              <p className="muted">
+                = {trunk.w * trunk.h * trunk.l} ซม³ · {vol.toFixed(0)} ลิตร
+              </p>
+            </>
+          ) : (
+            <section className="stack" data-testid="creator-luggage">
+              <p className="muted">
+                ท้ายรถแท็กซี่คงที่ {TAXI_TRUNK.w}×{TAXI_TRUNK.h}×{TAXI_TRUNK.l} ซม. = {vol.toFixed(0)} ล.
+              </p>
+              <p className="muted">สัมภาระของคุณ {noBags ? 'ไม่มี' : `${bagW} × ${bagH} × ${bagD} ซม. = ${bagL.toFixed(0)} ลิตร`}</p>
+              <label className="row check-row tap-target" data-testid="no-bags">
+                <input type="checkbox" checked={noBags} onChange={(e) => setNoBags(e.target.checked)} />
+                ไม่มีสัมภาระ
               </label>
-            ))}
-          </div>
-          <p className="muted">
-            = {trunk.w * trunk.h * trunk.l} ซม³ · {vol.toFixed(0)} ลิตร
-          </p>
-          {taxi ? (
-            <div className="row">
-              <button type="button" className="chip tap-target" onClick={() => setTrunk(TRUNK.taxiSmall)}>
-                ท้ายเล็ก
-              </button>
-              <button type="button" className="chip tap-target" onClick={() => setTrunk(TRUNK.taxiMid)}>
-                ท้ายกลาง
-              </button>
-              <button type="button" className="chip tap-target" onClick={() => setTrunk(TRUNK.taxiOver)}>
-                ท้ายใหญ่ (ตัวอย่างสัมภาระล้น)
-              </button>
-            </div>
-          ) : null}
+              {!noBags ? (
+                <div className="row">
+                  <label className="field">
+                    สูง
+                    <input type="number" min={0} value={bagH} onChange={(e) => setBagH(Number(e.target.value))} />
+                  </label>
+                  <label className="field">
+                    กว้าง
+                    <input type="number" min={0} value={bagW} onChange={(e) => setBagW(Number(e.target.value))} />
+                  </label>
+                  <label className="field">
+                    ลึก
+                    <input type="number" min={0} value={bagD} onChange={(e) => setBagD(Number(e.target.value))} />
+                  </label>
+                </div>
+              ) : null}
+            </section>
+          )}
         </div>
         <div className="stack create-seats">
           <CarSeatMap
@@ -379,15 +416,31 @@ export function CreateTripPage() {
             onToggleOpen={toggleSeat}
             ownPosition={taxi ? ownerSeat : null}
             driverLabel={taxi ? 'คนขับแท็กซี่' : 'คุณ'}
-            trunk={trunk}
+            trunk={shownTrunk}
+            luggage={taxi ? creatorLuggage : []}
           />
         </div>
       </div>
 
+      {taxi ? (
+        <LuggageBlock
+          widthCm={TAXI_TRUNK.w}
+          heightCm={TAXI_TRUNK.h}
+          lengthCm={TAXI_TRUNK.l}
+          luggage={creatorLuggage}
+        />
+      ) : null}
+
       {error ? <p style={{ color: 'var(--drop-danger)' }}>{error}</p> : null}
 
       <div className="sticky-bar">
-        <button className="btn tap-target" type="button" disabled={busy} onClick={() => void publish()}>
+        <button
+          className="btn tap-target"
+          type="button"
+          data-testid="create-submit"
+          disabled={busy || overflow}
+          onClick={() => void publish()}
+        >
           เปิดทริป
         </button>
       </div>

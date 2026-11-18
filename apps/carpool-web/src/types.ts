@@ -42,9 +42,17 @@ export type TripStop = {
   lng: number;
 };
 
+export type PreviewLuggage = {
+  height_cm: number;
+  width_cm: number;
+  depth_cm: number;
+};
+
 export type TripPreview = Omit<TripCard, 'open_seats' | 'bookable_seats'> & {
   seats: SeatState[];
   stops?: TripStop[];
+  /** Booked luggage, creator first, no rider ids. */
+  luggage?: PreviewLuggage[];
 };
 
 export type BookingRow = {

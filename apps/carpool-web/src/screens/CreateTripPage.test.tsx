@@ -86,6 +86,47 @@ describe('CreateTripPage maps', () => {
     expect(css).toMatch(/@media \(min-width: 768px\)/);
   });
 
+  it('hides trunk capacity on taxi create and only takes the creator luggage', () => {
+    mockMatchMedia(390);
+    renderCreate({ path: '/trips/new?kind=taxi' });
+    expect(screen.queryByTestId('trunk-capacity')).toBeNull();
+    expect(screen.queryByLabelText('กว้าง (ซม.)')).toBeNull();
+    expect(screen.queryByLabelText('สูง (ซม.)')).toBeNull();
+    expect(screen.queryByLabelText('ยาว (ซม.)')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'ท้ายเล็ก' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'ท้ายกลาง' })).toBeNull();
+    expect(screen.getByTestId('creator-luggage')).toBeInTheDocument();
+    expect(screen.getByTestId('no-bags')).toHaveTextContent('ไม่มีสัมภาระ');
+    expect(screen.getByLabelText('สูง')).toBeInTheDocument();
+    expect(screen.getByLabelText('กว้าง')).toBeInTheDocument();
+    expect(screen.getByLabelText('ลึก')).toBeInTheDocument();
+    expect(screen.getByTestId('trunk-label')).toHaveTextContent('ท้ายรถ 100×40×50 ซม. = 200 ล.');
+    expect(screen.getByTestId('create-submit')).not.toBeDisabled();
+  });
+
+  it('disables taxi create when creator luggage overflows the fixed trunk', () => {
+    mockMatchMedia(390);
+    renderCreate({ path: '/trips/new?kind=taxi' });
+    fireEvent.change(screen.getByLabelText('สูง'), { target: { value: '80' } });
+    fireEvent.change(screen.getByLabelText('กว้าง'), { target: { value: '80' } });
+    fireEvent.change(screen.getByLabelText('ลึก'), { target: { value: '80' } });
+    expect(screen.getByTestId('luggage-overflow')).toBeInTheDocument();
+    expect(screen.getByTestId('create-submit')).toBeDisabled();
+    expect(screen.getByTestId('trunk-fill')).toHaveAttribute('data-overflow', 'true');
+  });
+
+  it('keeps private-car trunk capacity inputs', () => {
+    mockMatchMedia(390);
+    renderCreate();
+    expect(screen.getByTestId('trunk-capacity')).toBeInTheDocument();
+    expect(screen.getByLabelText('กว้าง (ซม.)')).toHaveValue(100);
+    expect(screen.getByLabelText('สูง (ซม.)')).toHaveValue(50);
+    expect(screen.getByLabelText('ยาว (ซม.)')).toHaveValue(50);
+    expect(screen.queryByTestId('creator-luggage')).toBeNull();
+    fireEvent.change(screen.getByLabelText('กว้าง (ซม.)'), { target: { value: '140' } });
+    expect(screen.getByLabelText('กว้าง (ซม.)')).toHaveValue(140);
+  });
+
   it('writes the picked address, not the demo Chiang Mai label', async () => {
     mockMatchMedia(1024);
     const provider = renderCreate();

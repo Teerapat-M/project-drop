@@ -165,4 +165,48 @@ describe('JoinTripPage', () => {
     expect(screen.getByTestId('place-picker')).toHaveAttribute('data-mode', 'fullscreen');
     expect(provider.load).toHaveBeenCalled();
   });
+
+  it('subtracts creator and booked luggage from the fixed taxi trunk', async () => {
+    mockMatchMedia(390);
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
+    renderJoin('/trips/demo-taxi-12km');
+    expect(await screen.findByTestId('trunk-label')).toHaveTextContent('ท้ายรถ 100×40×50 ซม. = 200 ล.');
+    // creator 50 L + booked 24 L + joiner default 50 L = 124 L → 76 L left
+    expect(screen.getByTestId('trunk-remain')).toHaveTextContent('เหลือ 76 ลิตร');
+    expect(screen.getByTestId('trunk-fill')).toHaveAttribute('data-overflow', 'false');
+    fireEvent.click(screen.getByTestId('seat-rear_middle'));
+    fireEvent.click(screen.getByLabelText(/ร่วมทริปด้วยความเสี่ยง/));
+    expect(screen.getByTestId('join-submit')).not.toBeDisabled();
+  });
+
+  it('turns red and disables join when luggage overflows the taxi trunk', async () => {
+    mockMatchMedia(390);
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
+    renderJoin('/trips/demo-taxi-12km');
+    await screen.findByTestId('trunk-remain');
+    fireEvent.click(screen.getByTestId('seat-rear_middle'));
+    fireEvent.click(screen.getByLabelText(/ร่วมทริปด้วยความเสี่ยง/));
+    expect(screen.getByTestId('join-submit')).not.toBeDisabled();
+    fireEvent.change(screen.getByLabelText('สูง'), { target: { value: '80' } });
+    fireEvent.change(screen.getByLabelText('กว้าง'), { target: { value: '80' } });
+    fireEvent.change(screen.getByLabelText('ลึก'), { target: { value: '80' } });
+    expect(screen.getByTestId('luggage-overflow')).toBeInTheDocument();
+    expect(screen.getByTestId('trunk-fill')).toHaveAttribute('data-overflow', 'true');
+    expect(screen.getByTestId('join-submit')).toBeDisabled();
+  });
+
+  it('uses the private-car driver-entered trunk on join', async () => {
+    mockMatchMedia(390);
+    rpc.mockImplementation((name: string) => {
+      if (name === 'carpool_trip_preview') {
+        return Promise.resolve({ data: demoPreview('demo-private-12km') });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    renderJoin('/trips/demo-private-12km');
+    expect(await screen.findByTestId('trunk-label')).toHaveTextContent('ท้ายรถ 100×50×50 ซม. = 250 ล.');
+    // no booked luggage; joiner default 50 L → 200 L left
+    expect(screen.getByTestId('trunk-remain')).toHaveTextContent('เหลือ 200 ลิตร');
+    expect(screen.getByTestId('trunk-fill')).toHaveAttribute('data-overflow', 'false');
+  });
 });

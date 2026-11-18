@@ -1,3 +1,4 @@
+import { TAXI_TRUNK_PRESET } from '@drop/carpool-core';
 import type { ChatMessage, SavedAddress, SeatState, TripCard, TripPreview } from './types';
 
 const TAXI_ID = 'demo-taxi-12km';
@@ -102,9 +103,9 @@ export const DEMO_TRIPS: TripCard[] = [
     pickup_lng: 100.5,
     dest_lat: 14.35,
     dest_lng: 100.57,
-    trunk_w_cm: 100,
-    trunk_h_cm: 50,
-    trunk_l_cm: 50,
+    trunk_w_cm: TAXI_TRUNK_PRESET.widthCm,
+    trunk_h_cm: TAXI_TRUNK_PRESET.heightCm,
+    trunk_l_cm: TAXI_TRUNK_PRESET.lengthCm,
     open_seats: 2,
     bookable_seats: 3,
     owner_display_name: 'โก้',
@@ -232,7 +233,14 @@ export function demoPreview(id: string): TripPreview | null {
   const card = DEMO_TRIPS.find((t) => t.id === id) ?? DEMO_HISTORY.find((t) => t.id === id);
   if (!card) return null;
   const seats = card.vehicle_type === 'sedan' ? sedanSeats(card) : threeSeats(card);
-  return { ...card, seats, stops: [] };
+  const luggage =
+    card.kind === 'taxi'
+      ? [
+          { height_cm: 50, width_cm: 40, depth_cm: 25 },
+          { height_cm: 40, width_cm: 30, depth_cm: 20 },
+        ]
+      : [];
+  return { ...card, seats, stops: [], luggage };
 }
 
 export const FARE_TAXI_SEATS = [
