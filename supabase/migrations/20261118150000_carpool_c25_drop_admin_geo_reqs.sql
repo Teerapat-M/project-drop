@@ -13,8 +13,13 @@
 --
 -- Discover: DROP + CREATE. Province/district params stay in the signature
 -- with NULL defaults (accepted, ignored) so old clients keep working.
--- New optional nearby-point params. Vertex haversine (not segment).
--- Taxi dest radius = least(search radius, max_detour_km).
+-- New optional nearby-point params. Vertex haversine (not segment) on
+-- coords rounded to 3 decimals; returned km snapped to 0.5.
+-- extra_km dest component + taxi exclude use carpool_detour_floor_km
+-- (same as book_seat). Lat/lng NaN/out-of-range raises Thai. Radius 1–30.
+-- Lock order for trip+seat: trip FOR UPDATE first, then seat
+-- (cancel_booking, claim_owner_seat, set_seat_open, refresh_status,
+-- book_seat). Do not lock the trip from seats_guard.
 --
 -- L3 LOW (a): skip the cap-lowering floor check when the trip itself is
 -- cancelled or completed. Remaining bookings on an open/full/in_progress
@@ -48,6 +53,43 @@ alter table public.carpool_trips
 -- Route vertices + nearby-point match. Point-to-vertex haversine.
 -- Helpers live in private, search_path '', no EXECUTE for clients.
 -- ---------------------------------------------------------------------------
+-- M1: round every search coordinate to 3 decimals (~111 m) before
+-- haversine so returned distances cannot trilaterate stored points
+-- (often an owner's home) to meter-level. Returned km are then snapped
+-- to 0.5 km. L3: no GiST/sp-gist spatial index for now (PostGIS is not
+-- enabled); bbox + vertex scan only.
+-- TODO: add a spatial index (or grid prefilter) if discover volume needs it.
+
+create or replace function private.carpool_round_deg(p double precision)
+returns double precision
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select case
+    when p is null then null
+    else pg_catalog.round(p::numeric, 3)::double precision
+  end;
+$$;
+
+revoke all on function private.carpool_round_deg(double precision) from public, anon, authenticated;
+
+create or replace function private.carpool_round_km_half(p numeric)
+returns numeric
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select case
+    when p is null then null
+    else pg_catalog.round(p * 2) / 2
+  end;
+$$;
+
+revoke all on function private.carpool_round_km_half(numeric) from public, anon, authenticated;
+
 create or replace function private.carpool_route_vertices(p_trip_id uuid)
 returns table (idx integer, lat double precision, lng double precision)
 language sql
@@ -55,25 +97,29 @@ stable
 security definer
 set search_path = ''
 as $$
-  select 0, t.pickup_lat, t.pickup_lng
+  select 0,
+         private.carpool_round_deg(t.pickup_lat),
+         private.carpool_round_deg(t.pickup_lng)
     from public.carpool_trips t
    where t.id = p_trip_id
   union all
-  select s.seq, s.lat, s.lng
+  select s.seq,
+         private.carpool_round_deg(s.lat),
+         private.carpool_round_deg(s.lng)
     from public.carpool_trip_stops s
    where s.trip_id = p_trip_id
   union all
   select coalesce((
            select max(s.seq) from public.carpool_trip_stops s where s.trip_id = p_trip_id
          ), 0) + 1,
-         t.dest_lat,
-         t.dest_lng
+         private.carpool_round_deg(t.dest_lat),
+         private.carpool_round_deg(t.dest_lng)
     from public.carpool_trips t
    where t.id = p_trip_id;
 $$;
 
 comment on function private.carpool_route_vertices(uuid) is
-  'Ordered route vertices: origin (idx 0), stops by seq, destination. Internal.';
+  'Ordered route vertices rounded to 3 decimals: origin (idx 0), stops by seq, destination. Internal.';
 
 revoke all on function private.carpool_route_vertices(uuid) from public, anon, authenticated;
 
@@ -101,10 +147,14 @@ declare
   has_pickup boolean := (p_pickup_lat is not null and p_pickup_lng is not null);
   has_dest boolean := (p_dest_lat is not null and p_dest_lng is not null);
   v_radius numeric;
-  dest_radius numeric;
+  pickup_lat double precision;
+  pickup_lng double precision;
+  dest_lat double precision;
+  dest_lng double precision;
   i_p integer := 0;
   d_p double precision;
   d_d double precision;
+  floor_km numeric;
   dist double precision;
   r record;
   lat_pad double precision;
@@ -118,11 +168,24 @@ begin
     return;
   end if;
 
-  v_radius := least(greatest(coalesce(p_radius_km, 5), 1), 30);
+  -- Radius 1–30 km, default 5. NaN/non-finite falls back to 5.
+  v_radius := 5;
+  if p_radius_km is not null and p_radius_km >= 1 and p_radius_km <= 30 then
+    v_radius := p_radius_km;
+  elsif p_radius_km is not null and p_radius_km < 1 then
+    v_radius := 1;
+  elsif p_radius_km is not null and p_radius_km > 30 then
+    v_radius := 30;
+  end if;
+
+  pickup_lat := private.carpool_round_deg(p_pickup_lat);
+  pickup_lng := private.carpool_round_deg(p_pickup_lng);
+  dest_lat := private.carpool_round_deg(p_dest_lat);
+  dest_lng := private.carpool_round_deg(p_dest_lng);
 
   if has_pickup then
     lat_pad := v_radius / 111.0 + 0.01;
-    lng_pad := v_radius / (111.0 * greatest(0.2, pg_catalog.cos(pg_catalog.radians(p_pickup_lat)))) + 0.01;
+    lng_pad := v_radius / (111.0 * greatest(0.2, pg_catalog.cos(pg_catalog.radians(pickup_lat)))) + 0.01;
     d_p := null;
     i_p := null;
     for r in
@@ -130,10 +193,10 @@ begin
         from private.carpool_route_vertices(p_trip_id) v
        order by v.idx
     loop
-      if abs(r.lat - p_pickup_lat) > lat_pad or abs(r.lng - p_pickup_lng) > lng_pad then
+      if abs(r.lat - pickup_lat) > lat_pad or abs(r.lng - pickup_lng) > lng_pad then
         continue;
       end if;
-      dist := private.carpool_haversine_km(p_pickup_lat, p_pickup_lng, r.lat, r.lng);
+      dist := private.carpool_haversine_km(pickup_lat, pickup_lng, r.lat, r.lng);
       if d_p is null or dist < d_p then
         d_p := dist;
         i_p := r.idx;
@@ -145,7 +208,7 @@ begin
           from private.carpool_route_vertices(p_trip_id) v
          order by v.idx
       loop
-        dist := private.carpool_haversine_km(p_pickup_lat, p_pickup_lng, r.lat, r.lng);
+        dist := private.carpool_haversine_km(pickup_lat, pickup_lng, r.lat, r.lng);
         if d_p is null or dist < d_p then
           d_p := dist;
           i_p := r.idx;
@@ -158,12 +221,8 @@ begin
   end if;
 
   if has_dest then
-    dest_radius := v_radius;
-    if p_kind = 'taxi' and p_max_detour_km is not null then
-      dest_radius := least(v_radius, p_max_detour_km);
-    end if;
-    lat_pad := dest_radius / 111.0 + 0.01;
-    lng_pad := dest_radius / (111.0 * greatest(0.2, pg_catalog.cos(pg_catalog.radians(p_dest_lat)))) + 0.01;
+    lat_pad := v_radius / 111.0 + 0.01;
+    lng_pad := v_radius / (111.0 * greatest(0.2, pg_catalog.cos(pg_catalog.radians(dest_lat)))) + 0.01;
     d_d := null;
     for r in
       select v.idx, v.lat, v.lng
@@ -171,10 +230,10 @@ begin
        where v.idx >= i_p
        order by v.idx
     loop
-      if abs(r.lat - p_dest_lat) > lat_pad or abs(r.lng - p_dest_lng) > lng_pad then
+      if abs(r.lat - dest_lat) > lat_pad or abs(r.lng - dest_lng) > lng_pad then
         continue;
       end if;
-      dist := private.carpool_haversine_km(p_dest_lat, p_dest_lng, r.lat, r.lng);
+      dist := private.carpool_haversine_km(dest_lat, dest_lng, r.lat, r.lng);
       if d_d is null or dist < d_d then
         d_d := dist;
       end if;
@@ -186,20 +245,34 @@ begin
          where v.idx >= i_p
          order by v.idx
       loop
-        dist := private.carpool_haversine_km(p_dest_lat, p_dest_lng, r.lat, r.lng);
+        dist := private.carpool_haversine_km(dest_lat, dest_lng, r.lat, r.lng);
         if d_d is null or dist < d_d then
           d_d := dist;
         end if;
       end loop;
     end if;
-    if d_d is null or d_d > dest_radius then
+    if d_d is null or d_d > v_radius then
+      return;
+    end if;
+    -- L1: same floor book_seat will enforce. Do not list a taxi the cap
+    -- would reject. extra_km uses this floor for the dest component.
+    floor_km := private.carpool_detour_floor_km(p_trip_id, p_dest_lat, p_dest_lng);
+    if p_kind = 'taxi' and p_max_detour_km is not null and floor_km > p_max_detour_km then
       return;
     end if;
   end if;
 
-  pickup_distance_km := case when has_pickup then pg_catalog.round(d_p::numeric, 3) else null end;
-  dest_distance_km := case when has_dest then pg_catalog.round(d_d::numeric, 3) else null end;
-  extra_km := pg_catalog.round((coalesce(d_p, 0) + coalesce(d_d, 0))::numeric, 3);
+  pickup_distance_km := case
+    when has_pickup then private.carpool_round_km_half(d_p::numeric)
+    else null
+  end;
+  dest_distance_km := case
+    when has_dest then private.carpool_round_km_half(d_d::numeric)
+    else null
+  end;
+  extra_km := private.carpool_round_km_half(
+    (coalesce(d_p, 0) + coalesce(floor_km, 0))::numeric
+  );
   return next;
 end;
 $$;
@@ -208,7 +281,7 @@ comment on function private.carpool_search_distances(
   uuid, public.carpool_trip_kind, numeric,
   double precision, double precision, double precision, double precision, numeric
 ) is
-  'Point-to-vertex haversine match. Pickup i_p; dest idx >= i_p. Taxi dest radius = least(search, max_detour_km). Internal.';
+  'Point-to-vertex haversine on 3-decimal coords; km snapped to 0.5. Pickup i_p; dest idx >= i_p. extra_km dest component = carpool_detour_floor_km; taxi excluded when floor > max_detour_km. Internal.';
 
 revoke all on function private.carpool_search_distances(
   uuid, public.carpool_trip_kind, numeric,
@@ -278,6 +351,24 @@ declare
 begin
   if uid is null then
     raise exception 'not authenticated';
+  end if;
+
+  -- L2: NaN / out-of-range lat/lng. Radius stays clamped 1–30 in the helper.
+  if (p_pickup_lat is not null or p_pickup_lng is not null)
+     and (
+       p_pickup_lat is null or p_pickup_lng is null
+       or p_pickup_lat not between -90 and 90
+       or p_pickup_lng not between -180 and 180
+     ) then
+    raise exception 'พิกัดไม่ถูกต้อง ละติจูดต้องอยู่ระหว่าง -90 ถึง 90 และลองจิจูดระหว่าง -180 ถึง 180';
+  end if;
+  if (p_dest_lat is not null or p_dest_lng is not null)
+     and (
+       p_dest_lat is null or p_dest_lng is null
+       or p_dest_lat not between -90 and 90
+       or p_dest_lng not between -180 and 180
+     ) then
+    raise exception 'พิกัดไม่ถูกต้อง ละติจูดต้องอยู่ระหว่าง -90 ถึง 90 และลองจิจูดระหว่าง -180 ถึง 180';
   end if;
 
   -- p_origin/dest_province/district_code are accepted (NULL default) for
@@ -616,6 +707,243 @@ revoke all on function public.carpool_book_seat(
 grant execute on function public.carpool_book_seat(
   uuid, public.carpool_seat_position, text, double precision, double precision,
   numeric, numeric, numeric, numeric
+) to authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- M2 deadlock: every path that touches trip + seat locks trip then seat.
+-- cancel_booking previously UPDATEd the seat then refresh_status UPDATEd
+-- the trip (opposite of book_seat). claim_owner_seat and set_seat_open
+-- locked the seat (or updated it) before refresh_status took the trip.
+-- refresh_status now SELECTs the trip FOR UPDATE first so a nested call
+-- from a holder of the trip lock is a no-op re-lock.
+-- seats_guard only READs trip.owner_id (no lock) while the seat row is
+-- already locked by UPDATE — it must not SELECT the trip FOR UPDATE.
+-- trips_seed_seats runs AFTER INSERT on the trip (trip already locked).
+-- ---------------------------------------------------------------------------
+create or replace function private.carpool_refresh_status(p_trip_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  st public.carpool_trip_status;
+  leftover int;
+begin
+  -- Trip first. Callers that already hold this row re-lock in-session.
+  select t.status into st from public.carpool_trips t where t.id = p_trip_id for update;
+  if st is null or st in ('completed', 'cancelled', 'in_progress') then
+    return;
+  end if;
+  select count(*)::int into leftover
+    from public.carpool_seats s
+   where s.trip_id = p_trip_id
+     and s.is_open = true
+     and s.is_booked = false;
+  if leftover = 0 then
+    update public.carpool_trips
+       set status = 'full', updated_at = pg_catalog.now()
+     where id = p_trip_id and status in ('open', 'full');
+  else
+    update public.carpool_trips
+       set status = 'open', updated_at = pg_catalog.now()
+     where id = p_trip_id and status in ('open', 'full');
+  end if;
+end;
+$$;
+
+revoke all on function private.carpool_refresh_status(uuid) from public, anon, authenticated;
+
+create or replace function public.carpool_cancel_booking(p_trip_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+  rec public.carpool_bookings%rowtype;
+  trip public.carpool_trips%rowtype;
+begin
+  if uid is null then
+    raise exception 'not authenticated';
+  end if;
+  select * into trip
+    from public.carpool_trips t
+   where t.id = p_trip_id
+   for update;
+  if not found then
+    raise exception 'trip not found';
+  end if;
+  if trip.status is distinct from 'open' and trip.status is distinct from 'full' then
+    raise exception 'cannot cancel booking on this trip';
+  end if;
+  select * into rec
+    from public.carpool_bookings b
+   where b.trip_id = p_trip_id and b.rider_id = uid;
+  if not found then
+    raise exception 'booking not found';
+  end if;
+
+  perform 1 from public.carpool_seats s where s.id = rec.seat_id for update;
+
+  delete from public.carpool_bookings b where b.id = rec.id;
+  update public.carpool_seats s
+     set is_booked = false, booked_at = null
+   where s.id = rec.seat_id;
+  perform private.carpool_refresh_status(p_trip_id);
+end;
+$$;
+
+comment on function public.carpool_cancel_booking(uuid) is
+  'Cancel own booking. Locks trip then seat FOR UPDATE, then DELETE + unbook. Trigger-only bookings_guard on DELETE.';
+
+revoke all on function public.carpool_cancel_booking(uuid) from public, anon;
+grant execute on function public.carpool_cancel_booking(uuid) to authenticated, service_role;
+
+create or replace function public.carpool_claim_owner_seat(
+  p_trip_id uuid,
+  p_position public.carpool_seat_position,
+  p_luggage_h_cm numeric default null,
+  p_luggage_w_cm numeric default null,
+  p_luggage_d_cm numeric default null
+)
+returns public.carpool_bookings
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+  trip public.carpool_trips%rowtype;
+  seat public.carpool_seats%rowtype;
+  rec public.carpool_bookings;
+begin
+  if uid is null then
+    raise exception 'not authenticated';
+  end if;
+  select * into trip
+    from public.carpool_trips t
+   where t.id = p_trip_id
+   for update;
+  if not found then
+    raise exception 'trip not found';
+  end if;
+  if trip.owner_id is distinct from uid then
+    raise exception 'only the trip owner';
+  end if;
+  if trip.kind is distinct from 'taxi' then
+    raise exception 'owner seat claim is taxi only';
+  end if;
+  if trip.status is distinct from 'open' then
+    raise exception 'ทริปนี้ไม่ได้เปิดรับจอง';
+  end if;
+  if exists (
+    select 1 from public.carpool_bookings b
+     where b.trip_id = p_trip_id and b.rider_id = uid
+  ) then
+    raise exception 'คุณจองทริปนี้แล้ว';
+  end if;
+
+  select * into seat
+    from public.carpool_seats s
+   where s.trip_id = p_trip_id and s.position = p_position
+   for update;
+  if not found then
+    raise exception 'seat not found';
+  end if;
+  if seat.is_open is distinct from true then
+    raise exception 'ที่นั่งนี้ปิดอยู่';
+  end if;
+  if seat.is_booked then
+    raise exception 'ที่นั่งนี้เพิ่งถูกจอง';
+  end if;
+
+  update public.carpool_seats s
+     set is_booked = true, booked_at = pg_catalog.now()
+   where s.id = seat.id and s.is_open = true and s.is_booked = false
+  returning * into seat;
+  if not found then
+    raise exception 'ที่นั่งนี้เพิ่งถูกจอง';
+  end if;
+
+  insert into public.carpool_bookings (
+    trip_id, rider_id, seat_id,
+    dest_label, dest_lat, dest_lng, detour_km,
+    luggage_h_cm, luggage_w_cm, luggage_d_cm
+  ) values (
+    p_trip_id, uid, seat.id,
+    trip.dest_label, trip.dest_lat, trip.dest_lng, 0,
+    p_luggage_h_cm, p_luggage_w_cm, p_luggage_d_cm
+  ) returning * into rec;
+
+  perform private.carpool_refresh_status(p_trip_id);
+  return rec;
+end;
+$$;
+
+comment on function public.carpool_claim_owner_seat(
+  uuid, public.carpool_seat_position, numeric, numeric, numeric
+) is
+  'Taxi owner books own passenger seat. Locks trip then seat FOR UPDATE.';
+
+revoke all on function public.carpool_claim_owner_seat(
+  uuid, public.carpool_seat_position, numeric, numeric, numeric
+) from public, anon;
+grant execute on function public.carpool_claim_owner_seat(
+  uuid, public.carpool_seat_position, numeric, numeric, numeric
+) to authenticated, service_role;
+
+create or replace function public.carpool_set_seat_open(
+  p_trip_id uuid,
+  p_position public.carpool_seat_position,
+  p_is_open boolean
+)
+returns public.carpool_seats
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+  trip public.carpool_trips%rowtype;
+  rec public.carpool_seats;
+begin
+  if uid is null then
+    raise exception 'not authenticated';
+  end if;
+  select * into trip
+    from public.carpool_trips t
+   where t.id = p_trip_id
+   for update;
+  if trip.owner_id is distinct from uid then
+    raise exception 'only the trip owner';
+  end if;
+
+  update public.carpool_seats s
+     set is_open = p_is_open
+   where s.trip_id = p_trip_id
+     and s.position = p_position
+     and s.is_booked = false
+  returning * into rec;
+  if not found then
+    raise exception 'cannot open/close a booked seat';
+  end if;
+  perform private.carpool_refresh_status(p_trip_id);
+  return rec;
+end;
+$$;
+
+comment on function public.carpool_set_seat_open(
+  uuid, public.carpool_seat_position, boolean
+) is
+  'Owner toggles is_open. Locks trip then updates seat, then refresh_status.';
+
+revoke all on function public.carpool_set_seat_open(
+  uuid, public.carpool_seat_position, boolean
+) from public, anon;
+grant execute on function public.carpool_set_seat_open(
+  uuid, public.carpool_seat_position, boolean
 ) to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------

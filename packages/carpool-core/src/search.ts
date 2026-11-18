@@ -1,5 +1,5 @@
 import { haversineMeters, type GeoPoint } from './dropoffOrder';
-import { roundKm } from './detour';
+import { detourFloorKm } from './detour';
 
 /**
  * Nearby-point trip search radius (Bell).
@@ -10,11 +10,27 @@ export const SEARCH_RADIUS_KM_MIN = 1;
 export const SEARCH_RADIUS_KM_DEFAULT = 5;
 export const SEARCH_RADIUS_KM_MAX = 30;
 
+/** ~111 m. Matches private.carpool_round_deg / discover returned coords. */
+export function roundCoord(n: number): number {
+  if (!Number.isFinite(n)) return n;
+  return Math.round(n * 1000) / 1000;
+}
+
+/** 0.5 km steps. Matches private.carpool_round_km_half. */
+export function roundKmHalf(km: number): number {
+  if (!Number.isFinite(km)) return 0;
+  return Math.round(km * 2) / 2;
+}
+
 export function clampSearchRadiusKm(raw: number, fallback = SEARCH_RADIUS_KM_DEFAULT): number {
   if (!Number.isFinite(raw)) return fallback;
   if (raw < SEARCH_RADIUS_KM_MIN) return SEARCH_RADIUS_KM_MIN;
   if (raw > SEARCH_RADIUS_KM_MAX) return SEARCH_RADIUS_KM_MAX;
-  return roundKm(raw);
+  return roundKmHalf(raw);
+}
+
+function roundPoint(p: GeoPoint): GeoPoint {
+  return { lat: roundCoord(p.lat), lng: roundCoord(p.lng) };
 }
 
 export type NearestVertex = {
@@ -34,11 +50,12 @@ export function nearestRouteVertex(
   route: readonly GeoPoint[],
   fromIndex = 0,
 ): NearestVertex | null {
+  const probe = roundPoint(point);
   let best: NearestVertex | null = null;
   for (let i = Math.max(0, fromIndex); i < route.length; i++) {
     const vertex = route[i];
     if (!vertex) continue;
-    const km = haversineMeters(point, vertex) / 1000;
+    const km = haversineMeters(probe, roundPoint(vertex)) / 1000;
     if (!best || km < best.km) best = { index: i, km };
   }
   return best;
@@ -46,10 +63,12 @@ export function nearestRouteVertex(
 
 /**
  * Client/demo copy of private.carpool_search_distances: min haversine to
- * ordered route vertices (origin → stops in seq → dest). Pickup records i_p;
- * dest only considers vertices with index >= i_p. Taxi dest radius is
- * least(search radius, max_detour_km). Returns null when the trip is out of
- * range. No points → include with null distances.
+ * ordered route vertices (origin → stops in seq → dest) on 3-decimal coords.
+ * Pickup records i_p; dest only considers vertices with index >= i_p.
+ * Distances snap to 0.5 km. extra_km dest component is detourFloorKm (same
+ * as book_seat). Taxi excluded when that floor exceeds max_detour_km.
+ * Returns null when the trip is out of range. No points → include with
+ * null distances.
  */
 export function matchSearchRoute(input: {
   route: readonly GeoPoint[];
@@ -73,20 +92,34 @@ export function matchSearchRoute(input: {
     const nearest = nearestRouteVertex(input.pickup, input.route, 0);
     if (!nearest || nearest.km > radius) return null;
     iP = nearest.index;
-    pickupKm = roundKm(nearest.km);
+    pickupKm = roundKmHalf(nearest.km);
   }
 
   let destKm: number | null = null;
+  let destFloor = 0;
   if (hasDest && input.dest) {
-    const destRadius =
-      input.taxiMaxDetourKm != null && Number.isFinite(input.taxiMaxDetourKm)
-        ? Math.min(radius, input.taxiMaxDetourKm)
-        : radius;
     const nearest = nearestRouteVertex(input.dest, input.route, iP);
-    if (!nearest || nearest.km > destRadius) return null;
-    destKm = roundKm(nearest.km);
+    if (!nearest || nearest.km > radius) return null;
+    destKm = roundKmHalf(nearest.km);
+    const origin = input.route[0];
+    const tripDest = input.route[input.route.length - 1];
+    if (origin && tripDest) {
+      destFloor = detourFloorKm({
+        pickup: origin,
+        destination: tripDest,
+        riderDest: input.dest,
+        stops: input.route.slice(1, -1),
+      });
+      if (
+        input.taxiMaxDetourKm != null &&
+        Number.isFinite(input.taxiMaxDetourKm) &&
+        destFloor > input.taxiMaxDetourKm
+      ) {
+        return null;
+      }
+    }
   }
 
-  const extra = roundKm((pickupKm ?? 0) + (destKm ?? 0));
+  const extra = roundKmHalf((pickupKm ?? 0) + (hasDest ? destFloor : 0));
   return { pickupDistanceKm: pickupKm, destDistanceKm: destKm, extraKm: extra };
 }

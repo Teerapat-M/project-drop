@@ -6,6 +6,8 @@ import {
   clampSearchRadiusKm,
   matchSearchRoute,
   nearestRouteVertex,
+  roundCoord,
+  roundKmHalf,
 } from './search';
 
 const origin = { lat: 13.75, lng: 100.5 };
@@ -27,6 +29,16 @@ describe('search radius constants', () => {
   });
 });
 
+describe('rounding', () => {
+  it('snaps coords to 3 decimals and km to 0.5', () => {
+    expect(roundCoord(13.75634)).toBe(13.756);
+    expect(roundKmHalf(0.24)).toBe(0);
+    expect(roundKmHalf(0.25)).toBe(0.5);
+    expect(roundKmHalf(1.24)).toBe(1);
+    expect(roundKmHalf(1.26)).toBe(1.5);
+  });
+});
+
 describe('nearestRouteVertex', () => {
   it('picks the closest vertex and can start at an index', () => {
     const nearOrigin = nearestRouteVertex({ lat: 13.751, lng: 100.501 }, route);
@@ -45,7 +57,7 @@ describe('matchSearchRoute', () => {
     });
   });
 
-  it('matches pickup only and dest only', () => {
+  it('matches pickup only and dest only with 0.5 km distances', () => {
     const pickup = matchSearchRoute({
       route,
       pickup: { lat: 13.751, lng: 100.501 },
@@ -54,6 +66,7 @@ describe('matchSearchRoute', () => {
     expect(pickup?.pickupDistanceKm).not.toBeNull();
     expect(pickup?.destDistanceKm).toBeNull();
     expect(pickup?.extraKm).toBe(pickup?.pickupDistanceKm);
+    expect(((pickup?.pickupDistanceKm ?? 0) * 2) % 1).toBe(0);
 
     const drop = matchSearchRoute({
       route,
@@ -62,10 +75,11 @@ describe('matchSearchRoute', () => {
     });
     expect(drop?.pickupDistanceKm).toBeNull();
     expect(drop?.destDistanceKm).not.toBeNull();
-    expect(drop?.extraKm).toBe(drop?.destDistanceKm);
+    expect(((drop?.destDistanceKm ?? 0) * 2) % 1).toBe(0);
+    expect(((drop?.extraKm ?? 0) * 2) % 1).toBe(0);
   });
 
-  it('matches both points and sums extra_km', () => {
+  it('matches both points and snaps extra_km to 0.5', () => {
     const both = matchSearchRoute({
       route,
       pickup: { lat: 13.751, lng: 100.501 },
@@ -74,7 +88,7 @@ describe('matchSearchRoute', () => {
     });
     expect(both?.pickupDistanceKm).not.toBeNull();
     expect(both?.destDistanceKm).not.toBeNull();
-    expect(both?.extraKm).toBeCloseTo((both?.pickupDistanceKm ?? 0) + (both?.destDistanceKm ?? 0));
+    expect(((both?.extraKm ?? 0) * 2) % 1).toBe(0);
   });
 
   it('rejects a point outside the radius', () => {
@@ -103,7 +117,7 @@ describe('matchSearchRoute', () => {
     expect(viaStop?.pickupDistanceKm).toBeLessThan(1);
   });
 
-  it('tightens the dest radius to the taxi cap', () => {
+  it('excludes a taxi dest whose detour floor exceeds the cap', () => {
     const offDest = { lat: 14.35, lng: 100.61 };
     const open = matchSearchRoute({
       route,
@@ -118,5 +132,25 @@ describe('matchSearchRoute', () => {
       taxiMaxDetourKm: 1,
     });
     expect(taxi).toBeNull();
+  });
+
+  it('does not leak meter-level distances across a probe grid', () => {
+    const stored = { lat: 13.75634, lng: 100.50187 };
+    const distances = new Set<number>();
+    for (let i = -10; i <= 10; i++) {
+      for (let j = -10; j <= 10; j++) {
+        const match = matchSearchRoute({
+          route: [stored, dest],
+          pickup: { lat: stored.lat + i * 0.0001, lng: stored.lng + j * 0.0001 },
+          radiusKm: 5,
+        });
+        expect(match).not.toBeNull();
+        expect(match?.pickupDistanceKm).not.toBeNull();
+        expect(((match?.pickupDistanceKm ?? 0) * 2) % 1).toBe(0);
+        distances.add(match?.pickupDistanceKm ?? -1);
+      }
+    }
+    expect(distances.size).toBeLessThanOrEqual(2);
+    expect([...distances].every((km) => km === 0 || km === 0.5)).toBe(true);
   });
 });

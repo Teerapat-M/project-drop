@@ -62,6 +62,8 @@ export {
   SEARCH_RADIUS_KM_DEFAULT,
   SEARCH_RADIUS_KM_MAX,
   clampSearchRadiusKm,
+  roundCoord,
+  roundKmHalf,
   nearestRouteVertex,
   matchSearchRoute,
   type NearestVertex,

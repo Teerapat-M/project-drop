@@ -70,6 +70,11 @@ describe('trip cards at 390px', () => {
     expect(radius).toHaveValue('5');
     expect(radius).toHaveClass('tap-target');
     expect(screen.getByTestId('search-radius-label')).toHaveTextContent('5 กม.');
+    expect(screen.getByTestId('search-radius-hint')).toHaveTextContent('จำกัด 1–30 กม.');
+    fireEvent.change(radius, { target: { value: '0' } });
+    expect(screen.getByTestId('search-radius-label')).toHaveTextContent('1 กม.');
+    fireEvent.change(radius, { target: { value: '40' } });
+    expect(screen.getByTestId('search-radius-label')).toHaveTextContent('30 กม.');
   });
 
   it('shows pickup and dest distances on cards after a nearby search', async () => {

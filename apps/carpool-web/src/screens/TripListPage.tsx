@@ -149,6 +149,9 @@ export function TripListPage() {
               {formatKm(radiusKm)} กม.
             </span>
           </span>
+          <span className="muted" data-testid="search-radius-hint">
+            จำกัด {SEARCH_RADIUS_KM_MIN}–{SEARCH_RADIUS_KM_MAX} กม.
+          </span>
         </label>
         <button className="btn tap-target" type="submit">
           ค้นหา
