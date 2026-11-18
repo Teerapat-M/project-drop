@@ -82,7 +82,7 @@ describe('computeFare — taxi passenger counts (driver never pays)', () => {
     [2, 42],
     [3, 28],
     [4, 21],
-  ] as const)('%s passenger(s) split %s THB with no detour', (n, share) => {
+  ])('%s passenger(s) split %s THB with no detour', (n: number, share: number) => {
     const seats = [
       driver,
       ...Array.from({ length: n }, (_, i) => passenger(String.fromCharCode(65 + i))),
@@ -136,7 +136,7 @@ describe('computeFare — private car + owner-driver', () => {
     [1, 42],
     [2, 28],
     [3, 21],
-  ] as const)('driver plus %s rider(s) → %s THB each on the main fare', (n, share) => {
+  ])('driver plus %s rider(s) → %s THB each on the main fare', (n: number, share: number) => {
     const seats = [
       { id: 'driver', open: true, booked: true, role: 'owner_driver' as const },
       ...Array.from({ length: n }, (_, i) => passenger(String.fromCharCode(65 + i))),
