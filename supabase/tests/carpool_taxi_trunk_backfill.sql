@@ -38,5 +38,28 @@ begin
     raise exception 'carpool_trips_taxi_trunk_preset CHECK should reject non-preset taxi dims';
   end if;
 
-  raise notice 'taxi trunk backfill: taxi preset, private untouched, CHECK holds';
+  -- L2: NaN detour backfilled to 0, then CHECK (detour_km <> 'NaN').
+  select b.detour_km into w
+    from public.carpool_bookings b
+   where b.id = '00000000-0000-4000-8000-0000000000ac';
+  if w is distinct from 0 then
+    raise exception 'legacy NaN detour must backfill to 0, got %', w;
+  end if;
+
+  denied := false;
+  perform set_config('session_replication_role', 'replica', true);
+  begin
+    update public.carpool_bookings
+       set detour_km = 'NaN'::numeric
+     where id = '00000000-0000-4000-8000-0000000000ac';
+  exception
+    when check_violation then
+      denied := true;
+  end;
+  perform set_config('session_replication_role', 'origin', true);
+  if not denied then
+    raise exception 'carpool_bookings_detour_not_nan CHECK should reject NaN detour';
+  end if;
+
+  raise notice 'taxi trunk backfill: taxi preset, private untouched, CHECK holds, NaN detour backfilled';
 end $$;

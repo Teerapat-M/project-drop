@@ -82,6 +82,35 @@ alter table public.carpool_trips
     )
   );
 
+-- Origin/destination province + district (TIS 1099 codes). Nullable for
+-- legacy rows. Not in Realtime.
+alter table public.carpool_trips
+  add column if not exists origin_province_code text,
+  add column if not exists dest_province_code text,
+  add column if not exists origin_district_code text,
+  add column if not exists dest_district_code text;
+
+alter table public.carpool_trips
+  drop constraint if exists carpool_trips_origin_province_code;
+alter table public.carpool_trips
+  add constraint carpool_trips_origin_province_code
+  check (origin_province_code is null or origin_province_code ~ '^[0-9]{2}$');
+alter table public.carpool_trips
+  drop constraint if exists carpool_trips_dest_province_code;
+alter table public.carpool_trips
+  add constraint carpool_trips_dest_province_code
+  check (dest_province_code is null or dest_province_code ~ '^[0-9]{2}$');
+alter table public.carpool_trips
+  drop constraint if exists carpool_trips_origin_district_code;
+alter table public.carpool_trips
+  add constraint carpool_trips_origin_district_code
+  check (origin_district_code is null or origin_district_code ~ '^[0-9]{4}$');
+alter table public.carpool_trips
+  drop constraint if exists carpool_trips_dest_district_code;
+alter table public.carpool_trips
+  add constraint carpool_trips_dest_district_code
+  check (dest_district_code is null or dest_district_code ~ '^[0-9]{4}$');
+
 -- Join preview: anonymized booked luggage (no rider ids, no owner flag).
 -- Neutral order: volume desc, then H/W/D — not owner-first / created_at.
 create or replace function public.carpool_trip_preview(p_trip_id uuid)
@@ -117,6 +146,11 @@ begin
            'trunk_h_cm', t.trunk_h_cm,
            'trunk_l_cm', t.trunk_l_cm,
            'owner_display_name', p.full_name,
+           'is_mine', t.owner_id = uid,
+           'origin_province_code', t.origin_province_code,
+           'dest_province_code', t.dest_province_code,
+           'origin_district_code', t.origin_district_code,
+           'dest_district_code', t.dest_district_code,
            'stops', (
              select coalesce(jsonb_agg(jsonb_build_object(
                'seq', st.seq,
@@ -169,7 +203,205 @@ end;
 $$;
 
 comment on function public.carpool_trip_preview(uuid) is
-  'Join-page preview: rounded coords, anonymized seats and luggage (no rider ids / owner flag). Luggage ordered by volume desc, then dims.';
+  'Join-page preview: rounded coords, is_mine (never owner_id), anonymized seats and luggage (no rider ids). Luggage ordered by volume desc, then dims.';
 
 revoke all on function public.carpool_trip_preview(uuid) from public, anon;
 grant execute on function public.carpool_trip_preview(uuid) to authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- Javis PR #10 L2: numeric NaN passes CHECK (detour_km >= 0) because
+-- PostgreSQL treats numeric NaN as greater than every non-NaN value.
+-- Backfill first so existing rows cannot violate the new CHECK.
+-- ---------------------------------------------------------------------------
+update public.carpool_bookings
+   set detour_km = 0
+ where detour_km = 'NaN';
+
+alter table public.carpool_bookings
+  drop constraint if exists carpool_bookings_detour_not_nan;
+
+alter table public.carpool_bookings
+  add constraint carpool_bookings_detour_not_nan
+  check (detour_km <> 'NaN');
+
+-- ---------------------------------------------------------------------------
+-- Javis PR #10 L1: reject dest_* / luggage edits once the trip is in_progress
+-- or completed. Keep #10: dest_* change recomputes the haversine floor;
+-- otherwise NEW.detour_km = OLD.detour_km. Trigger-only (no EXECUTE grant).
+-- Helpers stay in private with search_path ''. Nothing added to Realtime.
+-- ---------------------------------------------------------------------------
+create or replace function public.carpool_bookings_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+  st public.carpool_trip_status;
+begin
+  -- Authenticated has no INSERT/DELETE grant. RPCs are SECURITY DEFINER but
+  -- auth.uid() is still the caller — do not reject user JWTs here.
+  if tg_op = 'INSERT' then
+    if uid is not null then
+      new.rider_id := uid;
+    end if;
+    -- Same floor as carpool_book_seat: never store less than haversine.
+    new.detour_km := greatest(
+      private.carpool_detour_floor_km(new.trip_id, new.dest_lat, new.dest_lng),
+      coalesce(new.detour_km, 0)
+    );
+    return new;
+  end if;
+  if tg_op = 'DELETE' then
+    if uid is not null and old.rider_id is distinct from uid then
+      raise exception 'only the rider can cancel their booking';
+    end if;
+    return old;
+  end if;
+  if uid is not null then
+    if new.rider_id is distinct from old.rider_id
+       or new.trip_id is distinct from old.trip_id
+       or new.seat_id is distinct from old.seat_id then
+      raise exception 'cannot reassign a booking';
+    end if;
+    if new.rider_id is distinct from uid then
+      raise exception 'only the rider can edit their booking';
+    end if;
+  end if;
+  select t.status into st from public.carpool_trips t where t.id = new.trip_id;
+  if st in ('in_progress', 'completed')
+     and (
+       new.dest_label is distinct from old.dest_label
+       or new.dest_lat is distinct from old.dest_lat
+       or new.dest_lng is distinct from old.dest_lng
+       or new.luggage_h_cm is distinct from old.luggage_h_cm
+       or new.luggage_w_cm is distinct from old.luggage_w_cm
+       or new.luggage_d_cm is distinct from old.luggage_d_cm
+     ) then
+    raise exception 'cannot change drop-off or luggage after the trip has started';
+  end if;
+  -- dest_* change: recompute floor vs client/NEW value. Else freeze detour_km.
+  if new.dest_label is distinct from old.dest_label
+     or new.dest_lat is distinct from old.dest_lat
+     or new.dest_lng is distinct from old.dest_lng then
+    new.detour_km := greatest(
+      private.carpool_detour_floor_km(new.trip_id, new.dest_lat, new.dest_lng),
+      coalesce(new.detour_km, 0)
+    );
+  else
+    new.detour_km := old.detour_km;
+  end if;
+  new.updated_at := pg_catalog.now();
+  return new;
+end;
+$$;
+
+comment on function public.carpool_bookings_guard() is
+  'Freeze identity columns; dest_*/luggage frozen in_progress/completed; dest_* recomputes detour floor; otherwise detour_km = OLD. Trigger-only.';
+
+revoke execute on function public.carpool_bookings_guard() from public, anon, authenticated;
+
+-- Discover: is_mine (never owner_id) + optional province/district filters.
+drop function if exists public.carpool_discover_trips(public.carpool_trip_kind);
+
+create function public.carpool_discover_trips(
+  p_kind public.carpool_trip_kind default null,
+  p_origin_province_code text default null,
+  p_dest_province_code text default null,
+  p_origin_district_code text default null,
+  p_dest_district_code text default null
+)
+returns table (
+  id uuid,
+  kind public.carpool_trip_kind,
+  vehicle_type public.carpool_vehicle_type,
+  car_icon text,
+  route_km numeric,
+  depart_at timestamptz,
+  status public.carpool_trip_status,
+  pickup_label text,
+  dest_label text,
+  pickup_lat double precision,
+  pickup_lng double precision,
+  dest_lat double precision,
+  dest_lng double precision,
+  trunk_w_cm numeric,
+  trunk_h_cm numeric,
+  trunk_l_cm numeric,
+  open_seats integer,
+  bookable_seats integer,
+  owner_display_name text,
+  is_mine boolean,
+  origin_province_code text,
+  dest_province_code text,
+  origin_district_code text,
+  dest_district_code text
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+begin
+  if uid is null then
+    raise exception 'not authenticated';
+  end if;
+
+  return query
+  select t.id,
+         t.kind,
+         t.vehicle_type,
+         t.car_icon,
+         t.route_km,
+         t.depart_at,
+         t.status,
+         t.pickup_label,
+         t.dest_label,
+         pg_catalog.round(t.pickup_lat::numeric, 3)::double precision,
+         pg_catalog.round(t.pickup_lng::numeric, 3)::double precision,
+         pg_catalog.round(t.dest_lat::numeric, 3)::double precision,
+         pg_catalog.round(t.dest_lng::numeric, 3)::double precision,
+         t.trunk_w_cm,
+         t.trunk_h_cm,
+         t.trunk_l_cm,
+         (
+           select count(*)::int from public.carpool_seats s
+            where s.trip_id = t.id and s.is_open and not s.is_booked
+         ) as open_seats,
+         (
+           select count(*)::int from public.carpool_seats s
+            where s.trip_id = t.id and s.is_open
+         ) as bookable_seats,
+         p.full_name as owner_display_name,
+         (t.owner_id = uid) as is_mine,
+         t.origin_province_code,
+         t.dest_province_code,
+         t.origin_district_code,
+         t.dest_district_code
+    from public.carpool_trips t
+    join public.profiles p on p.id = t.owner_id
+   where t.status in ('open', 'full')
+     and (p_kind is null or t.kind = p_kind)
+     and (p_origin_province_code is null or t.origin_province_code is not distinct from p_origin_province_code)
+     and (p_dest_province_code is null or t.dest_province_code is not distinct from p_dest_province_code)
+     and (p_origin_district_code is null or t.origin_district_code is not distinct from p_origin_district_code)
+     and (p_dest_district_code is null or t.dest_district_code is not distinct from p_dest_district_code)
+   order by t.depart_at
+   limit 50;
+end;
+$$;
+
+comment on function public.carpool_discover_trips(
+  public.carpool_trip_kind, text, text, text, text
+) is
+  'Trip-list discovery. Rounded coords, is_mine, no owner_id. Optional province/district filters.';
+
+revoke all on function public.carpool_discover_trips(
+  public.carpool_trip_kind, text, text, text, text
+) from public, anon;
+grant execute on function public.carpool_discover_trips(
+  public.carpool_trip_kind, text, text, text, text
+) to authenticated, service_role;

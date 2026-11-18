@@ -182,6 +182,16 @@ describe('carpool SQL test file', () => {
     expect(testSql).toMatch(/preview taxi luggage volume-desc no rider ids/);
     expect(testSql).toMatch(/private trunk insert\/update unchanged/);
     expect(testSql).toMatch(/anon\/authenticated must not EXECUTE public\.carpool_trips_taxi_trunk/);
+    expect(testSql).toMatch(/NaN detour insert\/update rejected by CHECK/);
+    expect(testSql).toMatch(/dest\/luggage edits allowed while trip is open/);
+    expect(testSql).toMatch(/dest_\* change rejected when in_progress/);
+    expect(testSql).toMatch(/luggage change rejected when in_progress/);
+    expect(testSql).toMatch(/dest_\* change rejected when completed/);
+    expect(testSql).toMatch(/luggage change rejected when completed/);
+    expect(testSql).toMatch(/is_mine true only for the owner/);
+    expect(testSql).toMatch(/owner My Trips sees owned trips/);
+    expect(testSql).toMatch(/rider My Trips sees booked trips/);
+    expect(testSql).toMatch(/stranger My Trips does not see others/);
   });
 });
 
@@ -289,7 +299,41 @@ describe('carpool taxi trunk migration', () => {
     expect(preview).not.toMatch(/b\.created_at/);
     expect(preview).not.toMatch(/'rider_id'/);
     expect(preview).not.toMatch(/'owner_id'/);
+    expect(preview).toMatch(/'is_mine'/);
     expect(preview).toMatch(/'stops'/);
+  });
+
+  it('adds is_mine and province/district filters to discover without exposing owner_id', () => {
+    expect(taxiTrunkSql).toMatch(/drop function if exists public\.carpool_discover_trips/);
+    expect(taxiTrunkSql).toMatch(/p_origin_province_code text default null/);
+    expect(taxiTrunkSql).toMatch(/\(t\.owner_id = uid\) as is_mine/);
+    expect(taxiTrunkSql).not.toMatch(/t\.owner_id as/);
+    expect(taxiTrunkSql).toMatch(
+      /grant execute on function public\.carpool_discover_trips\(\s*public\.carpool_trip_kind, text, text, text, text\s*\) to authenticated, service_role;/,
+    );
+  });
+
+  it('adds NaN detour CHECK and freezes dest/luggage after the trip starts', () => {
+    const nanAt = taxiTrunkSql.indexOf("detour_km = 'NaN'");
+    const checkAt = taxiTrunkSql.indexOf('carpool_bookings_detour_not_nan');
+    expect(nanAt).toBeGreaterThan(0);
+    expect(checkAt).toBeGreaterThan(nanAt);
+    expect(taxiTrunkSql).toMatch(/check \(detour_km <> 'NaN'\)/);
+    expect(stopsSql).not.toMatch(/carpool_bookings_detour_not_nan/);
+    expect(stopsSql).not.toMatch(/cannot change drop-off or luggage after the trip has started/);
+    const guard =
+      taxiTrunkSql.match(
+        /create or replace function public\.carpool_bookings_guard[\s\S]*?end;\n\$\$;/,
+      )?.[0] ?? '';
+    expect(guard).toMatch(/in_progress', 'completed'/);
+    expect(guard).toMatch(/cannot change drop-off or luggage after the trip has started/);
+    expect(guard).toMatch(/new\.detour_km := old\.detour_km/);
+    expect(guard).toMatch(/private\.carpool_detour_floor_km/);
+    expect(guard).toMatch(/set search_path = ''/);
+    expect(taxiTrunkSql).toMatch(
+      /revoke execute on function public\.carpool_bookings_guard\(\) from public, anon, authenticated;/,
+    );
+    expect(taxiTrunkSql).not.toMatch(/add table public\.carpool_/);
   });
 });
 
@@ -303,6 +347,8 @@ describe('carpool taxi trunk backfill runner', () => {
     expect(seedSql).toMatch(/'taxi'/);
     expect(seedSql).toMatch(/140, 40, 150/);
     expect(seedSql).toMatch(/'private'/);
+    expect(seedSql).toMatch(/'NaN'::numeric/);
+    expect(seedSql).toMatch(/session_replication_role/);
     expect(runner).toMatch(/carpool_taxi_trunk_seed\.sql/);
     expect(runner.indexOf('carpool_taxi_trunk_seed.sql')).toBeLessThan(
       runner.indexOf('20261118130000_carpool_taxi_trunk.sql'),
@@ -313,6 +359,8 @@ describe('carpool taxi trunk backfill runner', () => {
     expect(backfillSql).toMatch(/100×40×50/);
     expect(backfillSql).toMatch(/140×40×150/);
     expect(backfillSql).toMatch(/check_violation/);
+    expect(backfillSql).toMatch(/legacy NaN detour must backfill to 0/);
+    expect(backfillSql).toMatch(/carpool_bookings_detour_not_nan/);
     expect(runner).toMatch(/carpool_taxi_trunk_backfill\.sql/);
     expect(runner.indexOf('20261118130000_carpool_taxi_trunk.sql')).toBeLessThan(
       runner.indexOf('carpool_taxi_trunk_backfill.sql'),

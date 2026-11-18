@@ -31,3 +31,26 @@ insert into public.carpool_trips (
     'ขอนแก่น', 16.432, 102.836,
     'อุดรธานี', 17.415, 102.787, now() + interval '4 day', 'open'
   );
+
+-- Legacy NaN detour (numeric NaN passes detour_km >= 0). Skip the guard so
+-- the row actually stores NaN; 20261118130000 backfills then CHECKs.
+-- is_local set_config only lasts for this transaction.
+begin;
+select set_config('session_replication_role', 'replica', true);
+
+insert into public.carpool_bookings (
+  id, trip_id, rider_id, seat_id,
+  dest_label, dest_lat, dest_lng, detour_km
+)
+select
+  '00000000-0000-4000-8000-0000000000ac',
+  '00000000-0000-4000-8000-0000000000aa',
+  '00000000-0000-4000-8000-0000000000a0',
+  s.id,
+  'อยุธยา', 14.35, 100.57, 'NaN'::numeric
+from public.carpool_seats s
+where s.trip_id = '00000000-0000-4000-8000-0000000000aa'
+  and s.position = 'front_passenger';
+
+select set_config('session_replication_role', 'origin', true);
+commit;
