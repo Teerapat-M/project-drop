@@ -150,6 +150,11 @@ begin
        'authenticated',
        'private.carpool_detour_floor_km(uuid, double precision, double precision)',
        'EXECUTE'
+     )
+     or has_function_privilege(
+       'authenticated',
+       'private.carpool_enforce_max_detour(uuid, double precision, double precision, numeric)',
+       'EXECUTE'
      ) then
     raise exception 'authenticated must not EXECUTE detour floor helpers';
   end if;
@@ -177,6 +182,9 @@ declare
   def text := pg_get_functiondef(
     'public.carpool_book_seat(uuid, public.carpool_seat_position, text, double precision, double precision, numeric, numeric, numeric, numeric)'::regprocedure
   );
+  enforce text := pg_get_functiondef(
+    'private.carpool_enforce_max_detour(uuid, double precision, double precision, numeric)'::regprocedure
+  );
 begin
   if def !~ 'for update' then
     raise exception 'carpool_book_seat must lock the seat row FOR UPDATE: %', def;
@@ -199,10 +207,13 @@ begin
   if def !~ 'search_path' then
     raise exception 'carpool_book_seat must set search_path';
   end if;
-  if def !~ 'carpool_detour_floor_km' then
+  if def !~ 'carpool_enforce_max_detour' then
     raise exception 'carpool_book_seat must apply a server detour floor';
   end if;
-  if def !~ 'greatest' then
+  if enforce !~ 'carpool_detour_floor_km' then
+    raise exception 'carpool_enforce_max_detour must call the haversine floor';
+  end if;
+  if enforce !~ 'greatest' then
     raise exception 'carpool_book_seat must store greatest(floor, client detour)';
   end if;
 end $$;
@@ -1637,12 +1648,101 @@ begin
   perform tests.ok('anon is denied stops');
 end $$;
 
+-- Max detour: taxi floor > cap rejected; on-route dest accepted; dest change
+-- past the cap rejected by the bookings guard. Preview exposes the cap, never owner_id.
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_bookings;
+  preview jsonb;
+begin
+  select id into trip from tests.ids where k = 'taxi_trip';
+  preview := public.carpool_trip_preview(trip);
+  if preview ? 'owner_id' then
+    raise exception 'taxi preview must not leak owner_id';
+  end if;
+  if (preview->>'max_detour_km')::numeric is distinct from 5 then
+    raise exception 'taxi preview max_detour_km should be 5, got %', preview->>'max_detour_km';
+  end if;
+  rec := public.carpool_book_seat(
+    trip, 'rear_middle', 'อยุธยา', 14.35, 100.57, 0, null, null, null
+  );
+  if rec.detour_km < 0 then
+    raise exception 'on-route taxi dest should store a non-negative detour, got %', rec.detour_km;
+  end if;
+  perform tests.ok('taxi book accepted when floor <= max_detour_km');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  denied boolean := false;
+begin
+  select id into trip from tests.ids where k = 'taxi_trip';
+  begin
+    perform public.carpool_book_seat(
+      trip, 'rear_right', 'เชียงใหม่', 18.788, 98.985, 0, null, null, null
+    );
+  exception
+    when raise_exception then
+      if sqlerrm not like 'จุดลงนี้ออกนอกเส้นทาง%' then
+        raise exception 'expected max-detour Thai raise, got %', sqlerrm;
+      end if;
+      if sqlerrm not like '%สูงสุด 5 กม.%' then
+        raise exception 'expected cap in message, got %', sqlerrm;
+      end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'taxi book with floor > max_detour_km should be rejected';
+  end if;
+  perform tests.ok('taxi book rejected when floor > max_detour_km');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+  denied boolean := false;
+begin
+  select b.id into bid
+    from public.carpool_bookings b
+   where b.trip_id = (select id from tests.ids where k = 'taxi_trip')
+     and b.rider_id = (select id from tests.ids where k = 'rider2');
+  begin
+    update public.carpool_bookings
+       set dest_label = 'เชียงใหม่', dest_lat = 18.788, dest_lng = 98.985
+     where id = bid;
+  exception
+    when raise_exception then
+      if sqlerrm not like 'จุดลงนี้ออกนอกเส้นทาง%' then
+        raise exception 'expected max-detour Thai raise on dest change, got %', sqlerrm;
+      end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'dest change with floor > max_detour_km should be rejected';
+  end if;
+  perform tests.ok('dest change exceeding max_detour_km rejected by guard');
+end $$;
+commit;
+
 do $$
 declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 42 then
+  if n < 45 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

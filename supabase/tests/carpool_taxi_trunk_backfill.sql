@@ -61,5 +61,41 @@ begin
     raise exception 'carpool_bookings_detour_not_nan CHECK should reject NaN detour';
   end if;
 
-  raise notice 'taxi trunk backfill: taxi preset, private untouched, CHECK holds, NaN detour backfilled';
+  -- Max detour: legacy taxi backfilled to 5; private stays null.
+  select t.max_detour_km into w from public.carpool_trips t where t.id = taxi;
+  if w is distinct from 5 then
+    raise exception 'legacy taxi max_detour_km must backfill to 5, got %', w;
+  end if;
+  select t.max_detour_km into w from public.carpool_trips t where t.id = priv;
+  if w is not null then
+    raise exception 'private max_detour_km must stay null, got %', w;
+  end if;
+
+  denied := false;
+  perform set_config('session_replication_role', 'replica', true);
+  begin
+    update public.carpool_trips set max_detour_km = 0 where id = taxi;
+  exception
+    when check_violation then
+      denied := true;
+  end;
+  perform set_config('session_replication_role', 'origin', true);
+  if not denied then
+    raise exception 'carpool_trips_max_detour_km CHECK should reject taxi max_detour_km < 1';
+  end if;
+
+  denied := false;
+  perform set_config('session_replication_role', 'replica', true);
+  begin
+    update public.carpool_trips set max_detour_km = 31 where id = taxi;
+  exception
+    when check_violation then
+      denied := true;
+  end;
+  perform set_config('session_replication_role', 'origin', true);
+  if not denied then
+    raise exception 'carpool_trips_max_detour_km CHECK should reject taxi max_detour_km > 30';
+  end if;
+
+  raise notice 'taxi trunk backfill: taxi preset, private untouched, CHECK holds, NaN detour backfilled, max_detour 5';
 end $$;

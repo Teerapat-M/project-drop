@@ -49,3 +49,16 @@ export {
   provinceByCode,
   type ThaiProvince,
 } from './thaiAdmin';
+
+export {
+  MAX_DETOUR_KM_MIN,
+  MAX_DETOUR_KM_DEFAULT,
+  MAX_DETOUR_KM_MAX,
+  roundKm,
+  formatKm,
+  clampMaxDetourKm,
+  parseMaxDetourKm,
+  detourFloorKm,
+  maxDetourExceeded,
+  maxDetourWarning,
+} from './detour';

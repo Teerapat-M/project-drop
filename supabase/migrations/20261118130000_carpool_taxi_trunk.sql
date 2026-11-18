@@ -136,6 +136,69 @@ alter table public.carpool_trips
     )
   );
 
+-- Taxi max detour (ระยะออกนอกเส้นทางสูงสุด). Sync with
+-- MAX_DETOUR_KM_MIN/DEFAULT/MAX in packages/carpool-core/src/detour.ts
+-- (1 / 5 / 30). Nullable for private; taxi required. Backfill BEFORE CHECK.
+alter table public.carpool_trips
+  add column if not exists max_detour_km numeric;
+
+comment on column public.carpool_trips.max_detour_km is
+  'Taxi cap on rider detour km. Null for private (for now). Min 1, default 5, max 30.';
+
+update public.carpool_trips
+   set max_detour_km = 5
+ where kind = 'taxi'
+   and max_detour_km is null;
+
+create or replace function public.carpool_trips_max_detour()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.kind = 'taxi' and new.max_detour_km is null then
+    new.max_detour_km := 5;
+  end if;
+  return new;
+end;
+$$;
+
+comment on function public.carpool_trips_max_detour() is
+  'Trigger-only: default taxi max_detour_km to 5 when omitted. Private unchanged.';
+
+drop trigger if exists carpool_trips_max_detour on public.carpool_trips;
+create trigger carpool_trips_max_detour
+  before insert or update on public.carpool_trips
+  for each row
+  execute function public.carpool_trips_max_detour();
+
+revoke execute on function public.carpool_trips_max_detour() from public, anon, authenticated;
+
+alter table public.carpool_trips
+  drop constraint if exists carpool_trips_max_detour_km;
+
+alter table public.carpool_trips
+  add constraint carpool_trips_max_detour_km
+  check (
+    kind <> 'taxi'
+    or (
+      max_detour_km is not null
+      and max_detour_km >= 1
+      and max_detour_km <= 30
+    )
+  );
+
+alter table public.carpool_trips
+  drop constraint if exists carpool_trips_max_detour_range;
+
+alter table public.carpool_trips
+  add constraint carpool_trips_max_detour_range
+  check (
+    max_detour_km is null
+    or (max_detour_km >= 1 and max_detour_km <= 30)
+  );
+
 -- Join preview: anonymized booked luggage (no rider ids, no owner flag).
 -- Neutral order: volume desc, then H/W/D — not owner-first / created_at.
 create or replace function public.carpool_trip_preview(p_trip_id uuid)
@@ -176,6 +239,7 @@ begin
            'dest_province_code', t.dest_province_code,
            'origin_district_code', t.origin_district_code,
            'dest_district_code', t.dest_district_code,
+           'max_detour_km', t.max_detour_km,
            'stops', (
              select coalesce(jsonb_agg(jsonb_build_object(
                'seq', st.seq,
@@ -256,6 +320,49 @@ alter table public.carpool_bookings
   check (detour_km <> 'NaN');
 
 -- ---------------------------------------------------------------------------
+-- Max-detour cap: RAISE Thai when the haversine floor exceeds the taxi cap.
+-- Keep #10 floor via greatest(floor, client) when the pin is in range.
+-- ---------------------------------------------------------------------------
+create or replace function private.carpool_enforce_max_detour(
+  p_trip_id uuid,
+  p_dest_lat double precision,
+  p_dest_lng double precision,
+  p_client numeric
+)
+returns numeric
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  floor_km numeric;
+  stored numeric;
+  k public.carpool_trip_kind;
+  cap numeric;
+begin
+  floor_km := private.carpool_detour_floor_km(p_trip_id, p_dest_lat, p_dest_lng);
+  stored := greatest(floor_km, coalesce(p_client, 0));
+  select t.kind, t.max_detour_km into k, cap
+    from public.carpool_trips t
+   where t.id = p_trip_id;
+  if k = 'taxi' and cap is not null and floor_km > cap then
+    raise exception 'จุดลงนี้ออกนอกเส้นทาง % กม. เกินที่เจ้าของทริปกำหนด (สูงสุด % กม.)',
+      rtrim(rtrim(pg_catalog.round(floor_km, 1)::text, '0'), '.'),
+      rtrim(rtrim(pg_catalog.round(cap, 1)::text, '0'), '.');
+  end if;
+  return stored;
+end;
+$$;
+
+comment on function private.carpool_enforce_max_detour(uuid, double precision, double precision, numeric) is
+  'greatest(haversine floor, client); RAISE Thai when taxi floor > max_detour_km.';
+
+revoke all on function private.carpool_enforce_max_detour(
+  uuid, double precision, double precision, numeric
+) from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------
 -- Javis PR #10 L1: reject dest_* / luggage edits once the trip is in_progress,
 -- completed, or cancelled. Keep #10: dest_* change recomputes the haversine floor;
 -- otherwise NEW.detour_km = OLD.detour_km. Trigger-only (no EXECUTE grant).
@@ -277,10 +384,10 @@ begin
     if uid is not null then
       new.rider_id := uid;
     end if;
-    -- Same floor as carpool_book_seat: never store less than haversine.
-    new.detour_km := greatest(
-      private.carpool_detour_floor_km(new.trip_id, new.dest_lat, new.dest_lng),
-      coalesce(new.detour_km, 0)
+    -- Same floor as carpool_book_seat: never store less than haversine;
+    -- taxi floor may not exceed max_detour_km.
+    new.detour_km := private.carpool_enforce_max_detour(
+      new.trip_id, new.dest_lat, new.dest_lng, coalesce(new.detour_km, 0)
     );
     return new;
   end if;
@@ -316,9 +423,8 @@ begin
   if new.dest_label is distinct from old.dest_label
      or new.dest_lat is distinct from old.dest_lat
      or new.dest_lng is distinct from old.dest_lng then
-    new.detour_km := greatest(
-      private.carpool_detour_floor_km(new.trip_id, new.dest_lat, new.dest_lng),
-      coalesce(new.detour_km, 0)
+    new.detour_km := private.carpool_enforce_max_detour(
+      new.trip_id, new.dest_lat, new.dest_lng, coalesce(new.detour_km, 0)
     );
   else
     new.detour_km := old.detour_km;
@@ -332,6 +438,114 @@ comment on function public.carpool_bookings_guard() is
   'Freeze identity columns; dest_*/luggage frozen in_progress/completed/cancelled; dest_* recomputes detour floor; otherwise detour_km = OLD. Trigger-only.';
 
 revoke execute on function public.carpool_bookings_guard() from public, anon, authenticated;
+
+create or replace function public.carpool_book_seat(
+  p_trip_id uuid,
+  p_position public.carpool_seat_position,
+  p_dest_label text,
+  p_dest_lat double precision,
+  p_dest_lng double precision,
+  p_detour_km numeric default 0,
+  p_luggage_h_cm numeric default null,
+  p_luggage_w_cm numeric default null,
+  p_luggage_d_cm numeric default null
+)
+returns public.carpool_bookings
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+  trip public.carpool_trips%rowtype;
+  seat public.carpool_seats%rowtype;
+  rec public.carpool_bookings;
+  detour numeric;
+begin
+  if uid is null then
+    raise exception 'not authenticated';
+  end if;
+
+  select * into trip from public.carpool_trips t where t.id = p_trip_id;
+  if not found then
+    raise exception 'trip not found';
+  end if;
+  if trip.status is distinct from 'open' then
+    raise exception 'ทริปนี้ไม่ได้เปิดรับจอง';
+  end if;
+  if trip.owner_id = uid then
+    raise exception 'ไม่สามารถจองทริปของตนเองได้';
+  end if;
+  if exists (
+    select 1 from public.carpool_bookings b
+     where b.trip_id = p_trip_id and b.rider_id = uid
+  ) then
+    raise exception 'คุณจองทริปนี้แล้ว';
+  end if;
+
+  select * into seat
+    from public.carpool_seats s
+   where s.trip_id = p_trip_id
+     and s.position = p_position
+   for update;
+
+  if not found then
+    raise exception 'seat not found';
+  end if;
+  if seat.is_open is distinct from true then
+    raise exception 'ที่นั่งนี้ปิดอยู่';
+  end if;
+  if seat.is_booked then
+    raise exception 'ที่นั่งนี้เพิ่งถูกจอง';
+  end if;
+
+  update public.carpool_seats s
+     set is_booked = true,
+         booked_at = pg_catalog.now()
+   where s.id = seat.id
+     and s.is_open = true
+     and s.is_booked = false
+  returning * into seat;
+
+  if not found then
+    raise exception 'ที่นั่งนี้เพิ่งถูกจอง';
+  end if;
+
+  -- Never store less than the haversine floor. Client may report more.
+  -- Taxi: RAISE when the floor exceeds max_detour_km.
+  detour := private.carpool_enforce_max_detour(
+    p_trip_id, p_dest_lat, p_dest_lng, coalesce(p_detour_km, 0)
+  );
+
+  insert into public.carpool_bookings (
+    trip_id, rider_id, seat_id,
+    dest_label, dest_lat, dest_lng, detour_km,
+    luggage_h_cm, luggage_w_cm, luggage_d_cm
+  ) values (
+    p_trip_id, uid, seat.id,
+    p_dest_label, p_dest_lat, p_dest_lng, detour,
+    p_luggage_h_cm, p_luggage_w_cm, p_luggage_d_cm
+  ) returning * into rec;
+
+  perform private.carpool_refresh_status(p_trip_id);
+  return rec;
+end;
+$$;
+
+comment on function public.carpool_book_seat(
+  uuid, public.carpool_seat_position, text, double precision, double precision,
+  numeric, numeric, numeric, numeric
+) is
+  'Atomic seat booking. SELECT FOR UPDATE; first confirm wins. Loser: ที่นั่งนี้เพิ่งถูกจอง. detour_km = greatest(haversine floor, client); taxi floor may not exceed max_detour_km.';
+
+revoke all on function public.carpool_book_seat(
+  uuid, public.carpool_seat_position, text, double precision, double precision,
+  numeric, numeric, numeric, numeric
+) from public, anon;
+grant execute on function public.carpool_book_seat(
+  uuid, public.carpool_seat_position, text, double precision, double precision,
+  numeric, numeric, numeric, numeric
+) to authenticated, service_role;
 
 -- Discover: is_mine (never owner_id) + optional province/district filters.
 drop function if exists public.carpool_discover_trips(public.carpool_trip_kind);

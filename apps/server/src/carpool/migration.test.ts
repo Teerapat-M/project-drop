@@ -338,12 +338,33 @@ describe('carpool taxi trunk migration', () => {
     expect(guard).toMatch(/in_progress', 'completed', 'cancelled'/);
     expect(guard).toMatch(/cannot change drop-off or luggage after the trip has started/);
     expect(guard).toMatch(/new\.detour_km := old\.detour_km/);
-    expect(guard).toMatch(/private\.carpool_detour_floor_km/);
+    expect(guard).toMatch(/private\.carpool_enforce_max_detour/);
     expect(guard).toMatch(/set search_path = ''/);
     expect(taxiTrunkSql).toMatch(
       /revoke execute on function public\.carpool_bookings_guard\(\) from public, anon, authenticated;/,
     );
     expect(taxiTrunkSql).not.toMatch(/add table public\.carpool_/);
+  });
+
+  it('adds taxi max_detour_km with default 5, range 1–30, and book_seat cap', () => {
+    const colAt = taxiTrunkSql.indexOf('add column if not exists max_detour_km');
+    const checkAt = taxiTrunkSql.indexOf('carpool_trips_max_detour_km');
+    expect(colAt).toBeGreaterThan(0);
+    expect(taxiTrunkSql).toMatch(/set max_detour_km = 5/);
+    expect(checkAt).toBeGreaterThan(colAt);
+    expect(taxiTrunkSql).toMatch(/max_detour_km >= 1/);
+    expect(taxiTrunkSql).toMatch(/max_detour_km <= 30/);
+    expect(taxiTrunkSql).toMatch(/'max_detour_km', t.max_detour_km/);
+    const book =
+      taxiTrunkSql.match(
+        /create or replace function public\.carpool_book_seat[\s\S]*?end;\n\$\$;/,
+      )?.[0] ?? '';
+    expect(book).toMatch(/private\.carpool_enforce_max_detour/);
+    expect(book).toMatch(/ไม่สามารถจองทริปของตนเองได้/);
+    expect(book).toMatch(/ที่นั่งนี้เพิ่งถูกจอง/);
+    expect(book).toMatch(/set search_path = ''/);
+    expect(taxiTrunkSql).toMatch(/จุดลงนี้ออกนอกเส้นทาง/);
+    expect(taxiTrunkSql).not.toMatch(/t\.owner_id as/);
   });
 });
 
