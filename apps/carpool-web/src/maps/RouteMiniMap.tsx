@@ -1,7 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useIsDesktop } from '../lib/media';
 import { fetchRoute } from './fetchRoute';
-import { FALLBACK_ORIGIN, type LatLng, type PickedPlace, type RouteResult } from './MapProvider';
+import { formatKm } from '@drop/carpool-core';
+import { defaultMapCenter } from './defaultCenter';
+import { type LatLng, type PickedPlace, type RouteResult } from './MapProvider';
 import { MapView } from './MapView';
 import { useMapProvider } from './MapsProvider';
 import { ROUTE_DEBOUNCE_MS } from './routeCache';
@@ -136,18 +138,18 @@ export function RouteMiniMap({ origin, waypoints = [], stops = [], destination, 
     points?.map((p, i) => ({
       id: `p${i}`,
       position: p,
-      label: labels[i],
+      label: `${i + 1}. ${labels[i] ?? ''}`,
     })) ?? [];
 
   const mapBlock = (className: string, interactive: boolean) =>
     showMap && points ? (
       <MapView
         className={className}
-        center={points[0] ?? FALLBACK_ORIGIN}
+        center={defaultMapCenter({ routePoints: points })}
         path={points}
         encodedPolyline={route?.encodedPolyline}
         interactive={interactive}
-        fitToPath={interactive}
+        fitToPath
         markers={markers}
       />
     ) : null;
@@ -191,7 +193,7 @@ export function RouteMiniMap({ origin, waypoints = [], stops = [], destination, 
         </p>
         {km != null && km > 0 ? (
           <p className="muted" style={{ padding: '0 12px 12px' }}>
-            {km} กม.
+            {formatKm(km)} กม.
           </p>
         ) : null}
       </div>
@@ -209,7 +211,7 @@ export function RouteMiniMap({ origin, waypoints = [], stops = [], destination, 
       </p>
       {km != null && km > 0 ? (
         <p className="muted" data-testid="route-mini-map-km">
-          {km} กม.
+          {formatKm(km)} กม.
         </p>
       ) : (
         <p className="muted" data-testid="route-mini-map-km">

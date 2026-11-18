@@ -1,3 +1,4 @@
+import { roundKm } from '@drop/carpool-core';
 import type { LatLng, MapProvider, RouteResult } from './MapProvider';
 import { pointSetKey, readRouteCache, writeRouteCache } from './routeCache';
 
@@ -28,6 +29,7 @@ export async function fetchRoute(
   const cached = readRouteCache(key);
   if (cached) return cached;
   const result = await withTimeout(provider.route(points), ROUTE_TIMEOUT_MS);
-  writeRouteCache(key, result);
-  return result;
+  const rounded = { ...result, distanceKm: roundKm(result.distanceKm) };
+  writeRouteCache(key, rounded);
+  return rounded;
 }

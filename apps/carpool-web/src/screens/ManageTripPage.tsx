@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import type { LuggagePiece } from '@drop/carpool-core';
-import { remainingTrunkSpace } from '@drop/carpool-core';
+import { formatKm, remainingTrunkSpace } from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { LuggageBlock } from '../components/LuggageBlock';
 import { SeatPicker } from '../components/SeatPicker';
@@ -156,7 +156,7 @@ export function ManageTripPage() {
             </span>
           </h2>
           <p className="muted" style={{ margin: 0 }}>
-            {VEHICLE_LABEL[preview.vehicle_type]} · {preview.route_km} กม. · ประมาณ {thb(est.amountThb)} ฿
+            {VEHICLE_LABEL[preview.vehicle_type]} · {formatKm(preview.route_km)} กม. · ประมาณ {thb(est.amountThb)} ฿
             เมื่อมี {est.payerCount} คน
           </p>
         </div>

@@ -1,7 +1,13 @@
 import { useEffect, useId, useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { LuggagePiece } from '@drop/carpool-core';
-import { remainingTrunkSpace } from '@drop/carpool-core';
+import {
+  detourFloorKm,
+  formatKm,
+  maxDetourExceeded,
+  maxDetourWarning,
+  remainingTrunkSpace,
+} from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { TaxiBadge } from '../components/TaxiBadge';
 import { demoPreview } from '../fixtures';
@@ -17,6 +23,7 @@ import type { PickedPlace } from '../maps/MapProvider';
 import { PlaceField } from '../maps/PlaceField';
 import { RouteMiniMap } from '../maps/RouteMiniMap';
 import { parseDetourKm } from '../lib/detourInput';
+import { pointSetKey, readRouteCache } from '../maps/routeCache';
 import { detourFromViaKm } from '../maps/routePoints';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
@@ -36,6 +43,7 @@ export function JoinTripPage() {
   const [destPlace, setDestPlace] = useState<PickedPlace | null>(null);
   const [detour, setDetour] = useState(0);
   const [detourEdited, setDetourEdited] = useState(false);
+  const [viaKm, setViaKm] = useState<number | null>(null);
   const [routeStatus, setRouteStatus] = useState<JoinRouteStatus>('idle');
   const [h, setH] = useState(50);
   const [w, setW] = useState(40);
@@ -136,12 +144,41 @@ export function JoinTripPage() {
   const offTripDest =
     destPlace != null &&
     (destPlace.lat !== preview.dest_lat || destPlace.lng !== preview.dest_lng);
+  const ownerPoints = [
+    { lat: preview.pickup_lat, lng: preview.pickup_lng },
+    ...(preview.stops ?? []).map((s) => ({ lat: s.lat, lng: s.lng })),
+    { lat: preview.dest_lat, lng: preview.dest_lng },
+  ];
+  const ownerLabels = [
+    preview.pickup_label,
+    ...(preview.stops ?? []).map((s, i) => s.address || `จุดแวะ ${i + 1}`),
+    preview.dest_label,
+  ].map((label, i) => `${i + 1}. ${label}`);
+  const ownerRoute = readRouteCache(pointSetKey(ownerPoints));
+  const floorFor = (pin: { lat: number; lng: number }) =>
+    detourFloorKm({
+      pickup: { lat: preview.pickup_lat, lng: preview.pickup_lng },
+      destination: { lat: preview.dest_lat, lng: preview.dest_lng },
+      riderDest: pin,
+      stops: (preview.stops ?? []).map((s) => ({ lat: s.lat, lng: s.lng })),
+    });
+  const haversineDetour = destPlace ? floorFor(destPlace) : 0;
+  const roadDetour = viaKm != null ? detourFromViaKm(viaKm, preview.route_km) : 0;
+  const checkDetour = !offTripDest
+    ? 0
+    : routeStatus === 'ready'
+      ? roadDetour
+      : haversineDetour;
+  const cap = preview.max_detour_km ?? null;
+  const overMax = maxDetourExceeded(checkDetour, cap);
   const blocker = firstJoinBlocker({
     authenticated: demo || Boolean(user) || !configured,
     tripOpen,
     seatSelected: selected != null,
     destPinned,
     routeStatus: destPinned && offTripDest ? routeStatus : destPinned ? 'ready' : 'idle',
+    maxDetourOk: !overMax,
+    maxDetourHint: overMax && cap != null ? maxDetourWarning(checkDetour, cap) : undefined,
     trunkOk: !overflow,
     riskAccepted: agree,
   });
@@ -222,7 +259,7 @@ export function JoinTripPage() {
             คนขับ {preview.owner_display_name} · {VEHICLE_LABEL[preview.vehicle_type]}
           </p>
           <p className="muted" style={{ margin: 0 }}>
-            {preview.route_km} กม. · ประมาณ {thb(est.amountThb)} ฿ เมื่อมี {est.payerCount} คน · ตัวอย่าง
+            {formatKm(preview.route_km)} กม. · ประมาณ {thb(est.amountThb)} ฿ เมื่อมี {est.payerCount} คน · ตัวอย่าง
           </p>
         </div>
       </article>
@@ -273,10 +310,11 @@ export function JoinTripPage() {
               lng: preview.dest_lng,
               address: preview.dest_label,
             }}
-            onKm={(viaKm, meta) => {
+            onKm={(km, meta) => {
               setRouteStatus(meta?.fallback ? 'fallback' : 'ready');
+              setViaKm(meta?.fallback ? null : km);
               if (detourEdited) return;
-              setDetour(meta?.fallback ? 0 : detourFromViaKm(viaKm, preview.route_km));
+              setDetour(meta?.fallback ? 0 : detourFromViaKm(km, preview.route_km));
             }}
           />
         </div>
@@ -290,6 +328,13 @@ export function JoinTripPage() {
           value={destPlace}
           fallback={{ lat: preview.dest_lat, lng: preview.dest_lng, address: '' }}
           placeholder="ปักหมุดจุดลงของคุณ"
+          routeOverlay={{
+            points: ownerPoints,
+            polyline: ownerRoute?.encodedPolyline,
+            labels: ownerLabels,
+          }}
+          maxDetourKm={cap}
+          detourForPin={floorFor}
           onChange={(place) => {
             const offTrip =
               place.lat !== preview.dest_lat || place.lng !== preview.dest_lng;

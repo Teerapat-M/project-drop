@@ -149,6 +149,10 @@ describe('JoinTripPage', () => {
 
     fireEvent.change(detour, { target: { value: '9' } });
     expect(detour).toHaveValue(9);
+    fireEvent.change(detour, { target: { value: String(0.1 + 0.2) } });
+    expect(detour).toHaveValue(0.3);
+    fireEvent.change(detour, { target: { value: '9' } });
+    expect(detour).toHaveValue(9);
     fireEvent.change(detour, { target: { value: '-2' } });
     expect(detour).toHaveValue(9);
     fireEvent.change(detour, { target: { value: '' } });
@@ -361,6 +365,68 @@ describe('JoinTripPage', () => {
     pickSeatAndRisk();
     await waitFor(() => expect(screen.getByTestId('join-submit')).not.toBeDisabled());
     expect(screen.getByTestId('detour-fallback-note')).toBeInTheDocument();
+  });
+
+  it('fits the taxi owner route in the drop-off picker and warns above max detour', async () => {
+    mockMatchMedia(390);
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
+    const provider = createMockMapProvider();
+    render(
+      <AuthProvider>
+        <MapsProvider provider={provider}>
+          <MemoryRouter initialEntries={['/trips/demo-taxi-12km']}>
+            <Routes>
+              <Route path="/trips/:id" element={<JoinTripPage />} />
+            </Routes>
+          </MemoryRouter>
+        </MapsProvider>
+      </AuthProvider>,
+    );
+    await screen.findByTestId('join-submit');
+    fireEvent.click(screen.getByTestId('place-rider-stop'));
+    await waitFor(() => expect(screen.getByTestId('mock-map')).toBeInTheDocument());
+    const fitted = provider.lastFitBounds;
+    expect(fitted?.some((p) => p.lat === 13.75 && p.lng === 100.5)).toBe(true);
+    expect(fitted?.some((p) => p.lat === 14.35 && p.lng === 100.57)).toBe(true);
+    expect(fitted?.some((p) => Math.abs(p.lat - 18.788) < 0.05)).toBe(false);
+
+    fireEvent.click(screen.getByTestId('mock-map'));
+    expect(await screen.findByTestId('max-detour-warning')).toHaveTextContent('ออกนอกเส้นทาง');
+    expect(screen.getByTestId('place-confirm')).toBeDisabled();
+  });
+
+  it('feeds the max-detour warning into the B21 join hint when via km exceeds the cap', async () => {
+    mockMatchMedia(390);
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
+    rpc.mockImplementation((name: string) => {
+      if (name === 'carpool_trip_preview') {
+        return Promise.resolve({
+          data: { ...demoPreview('demo-taxi-12km'), max_detour_km: 1 },
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    const provider = createMockMapProvider();
+    render(
+      <AuthProvider>
+        <MapsProvider provider={provider}>
+          <MemoryRouter initialEntries={['/trips/demo-taxi-12km']}>
+            <Routes>
+              <Route path="/trips/:id" element={<JoinTripPage />} />
+            </Routes>
+          </MemoryRouter>
+        </MapsProvider>
+      </AuthProvider>,
+    );
+    await screen.findByTestId('join-submit');
+    fireEvent.click(screen.getByTestId('place-rider-stop'));
+    fireEvent.click(screen.getByTestId('place-confirm'));
+    pickSeatAndRisk();
+    await waitFor(() => {
+      expect(screen.getByTestId('join-hint')).toHaveTextContent('ออกนอกเส้นทาง');
+    });
+    expect(screen.getByTestId('join-hint')).toHaveTextContent('สูงสุด 1 กม.');
+    expect(screen.getByTestId('join-submit')).toBeDisabled();
   });
 
   it('shows ทริปนี้ปิดรับแล้ว when the trip is not open', async () => {

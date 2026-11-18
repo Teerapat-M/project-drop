@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { BANGKOK_PROVINCE_CODE, RATE_THB_PER_KM } from '@drop/carpool-core';
+import { BANGKOK_PROVINCE_CODE, RATE_THB_PER_KM, formatKm } from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { GeoPlaceFields, type GeoPlaceValue } from '../components/GeoPlaceFields';
 import { TaxiBadge } from '../components/TaxiBadge';
@@ -200,7 +200,7 @@ function TripCardView({ trip }: { trip: TripCard }) {
           {trip.kind === 'taxi' ? <TaxiBadge /> : null}
         </h3>
         <p className="muted" style={{ margin: 0 }}>
-          {trip.owner_display_name} · {VEHICLE_LABEL[trip.vehicle_type]} · {trip.route_km} กม.
+          {trip.owner_display_name} · {VEHICLE_LABEL[trip.vehicle_type]} · {formatKm(trip.route_km)} กม.
         </p>
         <p>
           ประมาณ {thb(est.amountThb)} ฿ เมื่อมี {est.payerCount} คน · ตัวอย่าง

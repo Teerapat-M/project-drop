@@ -28,6 +28,7 @@ export function createMockMapProvider(): MapProvider & {
   route: ReturnType<typeof vi.fn>;
   newAutocompleteSession: ReturnType<typeof vi.fn>;
   endAutocompleteSession: ReturnType<typeof vi.fn>;
+  lastFitBounds: LatLng[] | null;
 } {
   const load = vi.fn(async () => undefined);
   const autocomplete = vi.fn(async (query: string) =>
@@ -43,8 +44,13 @@ export function createMockMapProvider(): MapProvider & {
   const newAutocompleteSession = vi.fn(() => `session-${(sessionN += 1)}`);
   const endAutocompleteSession = vi.fn();
 
+  const lastFit: { current: LatLng[] | null } = { current: null };
+
   return {
     available: true,
+    get lastFitBounds() {
+      return lastFit.current;
+    },
     load,
     autocomplete,
     placeDetails,
@@ -63,7 +69,9 @@ export function createMockMapProvider(): MapProvider & {
       return {
         setCenter: () => undefined,
         setPath: () => undefined,
-        fitBounds: () => undefined,
+        fitBounds: (points) => {
+          lastFit.current = [...points];
+        },
         destroy: () => container.replaceChildren(),
       };
     },

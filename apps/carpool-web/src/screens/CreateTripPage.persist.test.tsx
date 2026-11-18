@@ -155,6 +155,7 @@ describe('CreateTripPage persist stops', () => {
         trunk_w_cm: 100,
         trunk_h_cm: 40,
         trunk_l_cm: 50,
+        max_detour_km: 5,
       }),
     );
     await waitFor(() =>

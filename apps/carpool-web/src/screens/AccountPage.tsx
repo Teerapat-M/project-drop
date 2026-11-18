@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { BANGKOK_CENTER } from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { DEMO_ADDRESSES } from '../fixtures';
 import { liters } from '../lib/format';
@@ -161,8 +162,8 @@ export function AccountPage() {
               kind: 'custom',
               label: 'อื่นๆ',
               address_text: '',
-              lat: 18.788,
-              lng: 98.985,
+              lat: BANGKOK_CENTER.lat,
+              lng: BANGKOK_CENTER.lng,
             })
           }
         >

@@ -6,6 +6,8 @@ export type JoinGateInput = {
   seatSelected: boolean;
   destPinned: boolean;
   routeStatus: JoinRouteStatus;
+  maxDetourOk: boolean;
+  maxDetourHint?: string;
   trunkOk: boolean;
   riskAccepted: boolean;
 };
@@ -16,6 +18,7 @@ export const JOIN_REQUIREMENTS = [
   { id: 'seat', hint: 'เลือกที่นั่งก่อน' },
   { id: 'pin', hint: 'ปักหมุดปลายทางของคุณ' },
   { id: 'route', hint: 'กำลังคำนวณเส้นทาง…' },
+  { id: 'max_detour', hint: 'จุดลงนี้ออกนอกเส้นทางเกินที่กำหนด' },
   { id: 'trunk', hint: 'สัมภาระเกินที่ว่างท้ายรถ' },
   { id: 'risk', hint: 'ติ๊กยอมรับความเสี่ยงก่อน' },
 ] as const;
@@ -34,6 +37,8 @@ function met(id: JoinRequirementId, input: JoinGateInput): boolean {
       return input.destPinned;
     case 'route':
       return input.routeStatus !== 'pending';
+    case 'max_detour':
+      return input.maxDetourOk;
     case 'trunk':
       return input.trunkOk;
     case 'risk':
@@ -42,6 +47,13 @@ function met(id: JoinRequirementId, input: JoinGateInput): boolean {
 }
 
 /** First unmet join requirement, or null when the button may enable. */
-export function firstJoinBlocker(input: JoinGateInput): (typeof JOIN_REQUIREMENTS)[number] | null {
-  return JOIN_REQUIREMENTS.find((row) => !met(row.id, input)) ?? null;
+export function firstJoinBlocker(
+  input: JoinGateInput,
+): { id: JoinRequirementId; hint: string } | null {
+  const row = JOIN_REQUIREMENTS.find((r) => !met(r.id, input));
+  if (!row) return null;
+  if (row.id === 'max_detour' && input.maxDetourHint) {
+    return { id: row.id, hint: input.maxDetourHint };
+  }
+  return { id: row.id, hint: row.hint };
 }

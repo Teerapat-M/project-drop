@@ -88,6 +88,10 @@ export function MapView({
         onClick: (coord) => clickRef.current?.(coord),
       });
       mapRef.current = map;
+      const initialPath = pathRef.current;
+      if (fitToPath && initialPath && initialPath.length >= 2) {
+        map.fitBounds(initialPath);
+      }
       syncMarkers(map);
     });
     return () => {
@@ -100,8 +104,9 @@ export function MapView({
   }, [provider]);
 
   useEffect(() => {
+    if (fitToPath && path && path.length >= 2) return;
     mapRef.current?.setCenter(center);
-  }, [center]);
+  }, [center, fitToPath, path]);
 
   useEffect(() => {
     const map = mapRef.current;

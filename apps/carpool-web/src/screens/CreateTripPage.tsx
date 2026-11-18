@@ -3,9 +3,14 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BANGKOK_CENTER,
   BANGKOK_PROVINCE_CODE,
+  MAX_DETOUR_KM_DEFAULT,
+  MAX_DETOUR_KM_MAX,
+  MAX_DETOUR_KM_MIN,
   RATE_THB_PER_KM,
   TAXI_TRUNK_PRESET,
+  parseMaxDetourKm,
   remainingTrunkSpace,
+  roundKm,
 } from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { CarSeatMap } from '../components/CarSeatMap';
@@ -15,6 +20,7 @@ import { TaxiBadge } from '../components/TaxiBadge';
 import { previewMainFare } from '../lib/estimateFare';
 import { liters, thb } from '../lib/format';
 import { ICON_CHOICES, VEHICLE_LABEL } from '../lib/carIcons';
+import { parseDetourKm } from '../lib/detourInput';
 import { FALLBACK_ORIGIN, type PickedPlace } from '../maps/MapProvider';
 import { PlaceField } from '../maps/PlaceField';
 import { RouteMiniMap } from '../maps/RouteMiniMap';
@@ -66,6 +72,8 @@ export function CreateTripPage() {
   const dest = destGeo.place;
   const [stops, setStops] = useState<StopPlace[]>([]);
   const [km, setKm] = useState(taxi ? 12 : 80);
+  const [maxDetour, setMaxDetour] = useState(MAX_DETOUR_KM_DEFAULT);
+  const [maxDetourError, setMaxDetourError] = useState<string | null>(null);
   const [depart, setDepart] = useState('2026-11-14T08:00');
   const [open, setOpen] = useState<Record<SeatPosition, boolean>>({
     front_passenger: true,
@@ -156,7 +164,7 @@ export function CreateTripPage() {
         trunk_w_cm: shownTrunk.w,
         trunk_h_cm: shownTrunk.h,
         trunk_l_cm: shownTrunk.l,
-        route_km: km,
+        route_km: roundKm(km),
         pickup_label: origin.address,
         pickup_lat: origin.lat,
         pickup_lng: origin.lng,
@@ -167,6 +175,7 @@ export function CreateTripPage() {
         dest_province_code: destGeo.provinceCode,
         origin_district_code: originGeo.districtCode,
         dest_district_code: destGeo.districtCode,
+        max_detour_km: taxi ? maxDetour : null,
         depart_at: new Date(depart).toISOString(),
         status: 'open',
       })
@@ -249,7 +258,7 @@ export function CreateTripPage() {
       </div>
       <div className="create-grid">
         <div className="create-map">
-          <RouteMiniMap origin={pickup} stops={stops} destination={dest} onKm={setKm} />
+          <RouteMiniMap origin={pickup} stops={stops} destination={dest} onKm={(next) => setKm(roundKm(next))} />
         </div>
         <div className="stack create-form">
           {taxi ? (
@@ -317,8 +326,40 @@ export function CreateTripPage() {
           <p className="muted">ที่นั่งที่เปิดให้จอง {openCount}/{positions.length} ที่</p>
           <label className="field">
             ระยะทางโดยประมาณ (กม.)
-            <input type="number" min={0} value={km} onChange={(e) => setKm(Number(e.target.value))} />
+            <input
+              type="number"
+              min={0}
+              step="0.1"
+              value={km}
+              onChange={(e) => setKm(parseDetourKm(e.target.value, km))}
+            />
           </label>
+          {taxi ? (
+            <label className="field">
+              ระยะออกนอกเส้นทางสูงสุด
+              <span className="km-suffix-row">
+                <input
+                  data-testid="max-detour-km"
+                  type="number"
+                  min={MAX_DETOUR_KM_MIN}
+                  max={MAX_DETOUR_KM_MAX}
+                  step={0.5}
+                  value={maxDetour}
+                  onChange={(e) => {
+                    const parsed = parseMaxDetourKm(e.target.value);
+                    setMaxDetour(parsed.value);
+                    setMaxDetourError(parsed.error);
+                  }}
+                />
+                <span className="km-suffix">กม.</span>
+              </span>
+              {maxDetourError ? (
+                <span className="field-error" data-testid="max-detour-error">
+                  {maxDetourError}
+                </span>
+              ) : null}
+            </label>
+          ) : null}
 
           <input
             className="hidden-rate"

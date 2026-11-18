@@ -237,6 +237,26 @@ a {
   background: #fff;
 }
 
+.km-suffix-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.km-suffix-row input {
+  flex: 1;
+}
+
+.km-suffix {
+  font-weight: 600;
+  color: var(--drop-muted);
+}
+
+.field-error {
+  color: var(--drop-danger);
+  font-weight: 500;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;

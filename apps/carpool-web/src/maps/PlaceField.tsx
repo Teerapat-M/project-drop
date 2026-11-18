@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import type { PickedPlace } from './MapProvider';
+import type { LatLng, PickedPlace } from './MapProvider';
 import { useMapProvider } from './MapsProvider';
-import { PlacePicker } from './PlacePicker';
+import { PlacePicker, type RouteOverlay } from './PlacePicker';
 
 type Props = {
   label: string;
@@ -9,6 +9,10 @@ type Props = {
   fallback?: PickedPlace;
   placeholder?: string;
   bias?: { lat: number; lng: number };
+  centroid?: LatLng | null;
+  routeOverlay?: RouteOverlay;
+  maxDetourKm?: number | null;
+  detourForPin?: (pin: LatLng) => number;
   onChange: (place: PickedPlace) => void;
   testId: string;
   onRemove?: () => void;
@@ -20,6 +24,10 @@ export function PlaceField({
   fallback,
   placeholder,
   bias,
+  centroid,
+  routeOverlay,
+  maxDetourKm,
+  detourForPin,
   onChange,
   testId,
   onRemove,
@@ -81,6 +89,10 @@ export function PlaceField({
           title={label}
           initial={value}
           bias={bias}
+          centroid={centroid}
+          routeOverlay={routeOverlay}
+          maxDetourKm={maxDetourKm}
+          detourForPin={detourForPin}
           onClose={() => setOpen(false)}
           onPick={(place) => {
             onChange(place);

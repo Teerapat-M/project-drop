@@ -116,6 +116,7 @@ export function GeoPlaceFields({
         fallback={placeFallback}
         placeholder={placePlaceholder}
         bias={bias}
+        centroid={bias}
         onChange={(place) => onChange({ ...value, place })}
       />
     </div>

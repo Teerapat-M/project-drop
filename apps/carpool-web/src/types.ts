@@ -39,6 +39,8 @@ export type TripCard = {
   dest_province_code?: string | null;
   origin_district_code?: string | null;
   dest_district_code?: string | null;
+  /** Taxi cap; null on private until we surface the field. */
+  max_detour_km?: number | null;
 };
 
 export type TripRole = 'created' | 'booked';

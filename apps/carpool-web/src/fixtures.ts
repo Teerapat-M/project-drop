@@ -109,6 +109,7 @@ export const DEMO_TRIPS: TripCard[] = [
     trunk_w_cm: TAXI_TRUNK_PRESET.widthCm,
     trunk_h_cm: TAXI_TRUNK_PRESET.heightCm,
     trunk_l_cm: TAXI_TRUNK_PRESET.lengthCm,
+    max_detour_km: 5,
     open_seats: 2,
     bookable_seats: 3,
     owner_display_name: 'โก้',

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthProvider } from '../auth/AuthProvider';
@@ -113,6 +113,24 @@ describe('CreateTripPage maps', () => {
     expect(css).toMatch(/\.place-field-btn\s*\{[^}]*min-height:\s*var\(--tap\)/s);
     expect(css).toMatch(/\.create-map,\s*\.join-map\s*\{[^}]*order:\s*-1/s);
     expect(css).toMatch(/@media \(min-width: 768px\)/);
+  });
+
+  it('shows a clamped taxi max-detour field with a km suffix and hides it for private', () => {
+    mockMatchMedia(390);
+    renderCreate({ path: '/trips/new?kind=taxi' });
+    const input = screen.getByTestId('max-detour-km') as HTMLInputElement;
+    expect(input).toHaveAttribute('step', '0.5');
+    expect(input).toHaveValue(5);
+    expect(input.parentElement).toHaveTextContent('กม.');
+    fireEvent.change(input, { target: { value: '0' } });
+    expect(input).toHaveValue(1);
+    expect(screen.getByTestId('max-detour-error')).toHaveTextContent('อย่างน้อย');
+    fireEvent.change(input, { target: { value: '40' } });
+    expect(input).toHaveValue(30);
+    expect(screen.getByTestId('max-detour-error')).toHaveTextContent('ไม่เกิน');
+    cleanup();
+    renderCreate();
+    expect(screen.queryByTestId('max-detour-km')).toBeNull();
   });
 
   it('hides trunk capacity on taxi create and only takes the creator luggage', () => {
