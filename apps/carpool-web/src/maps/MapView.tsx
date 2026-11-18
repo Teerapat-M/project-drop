@@ -16,6 +16,7 @@ type Props = {
   encodedPolyline?: string;
   markers?: readonly MarkerSpec[];
   interactive?: boolean;
+  fitToPath?: boolean;
   onClick?: (coord: LatLng) => void;
   className?: string;
 };
@@ -26,6 +27,7 @@ export function MapView({
   encodedPolyline,
   markers = [],
   interactive = true,
+  fitToPath = false,
   onClick,
   className,
 }: Props) {
@@ -102,8 +104,11 @@ export function MapView({
   }, [center]);
 
   useEffect(() => {
-    mapRef.current?.setPath(path ?? [], encodedPolyline);
-  }, [path, encodedPolyline]);
+    const map = mapRef.current;
+    if (!map) return;
+    map.setPath(path ?? [], encodedPolyline);
+    if (fitToPath && path && path.length >= 2) map.fitBounds(path);
+  }, [path, encodedPolyline, fitToPath]);
 
   useEffect(() => {
     const map = mapRef.current;

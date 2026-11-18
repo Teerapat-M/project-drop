@@ -33,7 +33,15 @@ export type TripCard = {
   bookable_seats: number;
   owner_display_name: string;
   owner_id?: string;
+  /** Server-side owner flag. Never send owner_id on public preview/list. */
+  is_mine?: boolean;
+  origin_province_code?: string | null;
+  dest_province_code?: string | null;
+  origin_district_code?: string | null;
+  dest_district_code?: string | null;
 };
+
+export type TripRole = 'created' | 'booked';
 
 export type TripStop = {
   seq: number;

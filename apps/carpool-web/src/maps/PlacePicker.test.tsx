@@ -25,7 +25,7 @@ describe('PlacePicker', () => {
     expect(provider.load).toHaveBeenCalled();
     fireEvent.change(screen.getByTestId('place-search'), { target: { value: 'วโรรส' } });
     await waitFor(() => expect(screen.getByText(MOCK_PLACE.address)).toBeInTheDocument());
-    expect(provider.autocomplete).toHaveBeenCalledWith('วโรรส', 'session-1');
+    expect(provider.autocomplete).toHaveBeenCalledWith('วโรรส', 'session-1', undefined);
     fireEvent.click(screen.getByText(MOCK_PLACE.address));
     await waitFor(() => expect(provider.placeDetails).toHaveBeenCalledWith('p1', 'session-1'));
     fireEvent.click(screen.getByTestId('place-confirm'));
@@ -41,7 +41,7 @@ describe('PlacePicker', () => {
     fireEvent.change(screen.getByTestId('place-search'), { target: { value: 'วโรรส' } });
     expect(provider.autocomplete).not.toHaveBeenCalled();
     await waitFor(() => expect(provider.autocomplete).toHaveBeenCalledTimes(1));
-    expect(provider.autocomplete).toHaveBeenCalledWith('วโรรส', 'session-1');
+    expect(provider.autocomplete).toHaveBeenCalledWith('วโรรส', 'session-1', undefined);
   });
 
   it('ends the Places session when confirming a dropped pin without a prediction', async () => {

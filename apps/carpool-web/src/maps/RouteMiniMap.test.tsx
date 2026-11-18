@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FallbackMapProvider } from './MapProvider';
 import { MapsProvider } from './MapsProvider';
 import { RouteMiniMap } from './RouteMiniMap';
 import { resetRouteCache } from './routeCache';
+import { mockMatchMedia } from '../test/matchMedia';
 import { createMockMapProvider, MOCK_DEST, MOCK_PLACE } from '../test/mockMapProvider';
 
 describe('RouteMiniMap', () => {
@@ -53,6 +54,23 @@ describe('RouteMiniMap', () => {
     );
     await waitFor(() => expect(screen.getByTestId('route-chain').textContent).toContain('แวะ'));
     expect(screen.getByTestId('route-chain').textContent).toMatch(/แวะ.*ลำพูน/);
+  });
+
+  it('opens a full-screen route dialog from the cached polyline without a second Routes call', async () => {
+    mockMatchMedia(390);
+    const provider = createMockMapProvider();
+    render(
+      <MapsProvider provider={provider}>
+        <RouteMiniMap origin={MOCK_PLACE} destination={MOCK_DEST} />
+      </MapsProvider>,
+    );
+    await waitFor(() => expect(provider.route).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByTestId('route-map-expand'));
+    expect(screen.getByTestId('route-map-dialog')).toHaveAttribute('data-mode', 'fullscreen');
+    expect(screen.getByTestId('route-dialog-chain').textContent).toContain(MOCK_PLACE.address);
+    expect(provider.route).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByTestId('route-map-dialog')).toBeNull();
   });
 
   it('falls back to the placeholder map when no key is configured', () => {

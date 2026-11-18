@@ -1,18 +1,24 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { RATE_THB_PER_KM, TAXI_TRUNK_PRESET, remainingTrunkSpace } from '@drop/carpool-core';
+import {
+  BANGKOK_CENTER,
+  BANGKOK_PROVINCE_CODE,
+  RATE_THB_PER_KM,
+  TAXI_TRUNK_PRESET,
+  remainingTrunkSpace,
+} from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { CarSeatMap } from '../components/CarSeatMap';
+import { GeoPlaceFields, type GeoPlaceValue } from '../components/GeoPlaceFields';
 import { LuggageBlock } from '../components/LuggageBlock';
 import { TaxiBadge } from '../components/TaxiBadge';
 import { previewMainFare } from '../lib/estimateFare';
 import { liters, thb } from '../lib/format';
 import { ICON_CHOICES, VEHICLE_LABEL } from '../lib/carIcons';
-import { FALLBACK_DEST, FALLBACK_ORIGIN, type PickedPlace } from '../maps/MapProvider';
+import { FALLBACK_ORIGIN, type PickedPlace } from '../maps/MapProvider';
 import { PlaceField } from '../maps/PlaceField';
 import { RouteMiniMap } from '../maps/RouteMiniMap';
 import { orderedRoute, waypointsFromOrdered } from '../maps/routePoints';
-import { useMapProvider } from '../maps/MapsProvider';
 import { positionsFor, SEAT_LABELS } from '../lib/seats';
 import { thaiRpcError } from '../lib/seatRpc';
 import { getSupabase } from '../supabase';
@@ -33,16 +39,31 @@ const TAXI_TRUNK = {
   l: TAXI_TRUNK_PRESET.lengthCm,
 };
 
+const BANGKOK_ORIGIN: PickedPlace = {
+  lat: BANGKOK_CENTER.lat,
+  lng: BANGKOK_CENTER.lng,
+  address: 'กรุงเทพมหานคร',
+};
+
 export function CreateTripPage() {
   const [params] = useSearchParams();
   const taxi = params.get('kind') === 'taxi';
   const navigate = useNavigate();
   const { demo } = useAuth();
-  const maps = useMapProvider();
   const [vehicle, setVehicle] = useState<VehicleType>('sedan');
   const [icon, setIcon] = useState('sedan');
-  const [pickup, setPickup] = useState<PickedPlace | null>(maps.available ? null : FALLBACK_ORIGIN);
-  const [dest, setDest] = useState<PickedPlace | null>(maps.available ? null : FALLBACK_DEST);
+  const [originGeo, setOriginGeo] = useState<GeoPlaceValue>({
+    provinceCode: BANGKOK_PROVINCE_CODE,
+    districtCode: '',
+    place: BANGKOK_ORIGIN,
+  });
+  const [destGeo, setDestGeo] = useState<GeoPlaceValue>({
+    provinceCode: '',
+    districtCode: '',
+    place: null,
+  });
+  const pickup = originGeo.place;
+  const dest = destGeo.place;
   const [stops, setStops] = useState<StopPlace[]>([]);
   const [km, setKm] = useState(taxi ? 12 : 80);
   const [depart, setDepart] = useState('2026-11-14T08:00');
@@ -92,10 +113,16 @@ export function CreateTripPage() {
     setOpen((s) => ({ ...s, [p]: isOpen }));
   };
 
+  const canPublish =
+    Boolean(originGeo.provinceCode && originGeo.districtCode && pickup?.address?.trim()) &&
+    Boolean(destGeo.provinceCode && destGeo.districtCode && dest?.address?.trim()) &&
+    !overflow &&
+    !busy;
+
   const publish = async () => {
     setError(null);
-    if (maps.available && (!pickup || !dest)) {
-      setError('เลือกต้นทางและปลายทางบนแผนที่');
+    if (!canPublish) {
+      setError('เลือกจังหวัด อำเภอ/เขต และหมุดต้นทาง–ปลายทางก่อนเปิดทริป');
       return;
     }
     if (demo) {
@@ -113,7 +140,12 @@ export function CreateTripPage() {
       return;
     }
     const origin = pickup ?? FALLBACK_ORIGIN;
-    const destination = dest ?? FALLBACK_DEST;
+    const destination = dest;
+    if (!destination) {
+      setBusy(false);
+      setError('เลือกปลายทาง');
+      return;
+    }
     const { data, error: insError } = await supabase
       .from('carpool_trips')
       .insert({
@@ -131,6 +163,10 @@ export function CreateTripPage() {
         dest_label: destination.address,
         dest_lat: destination.lat,
         dest_lng: destination.lng,
+        origin_province_code: originGeo.provinceCode,
+        dest_province_code: destGeo.provinceCode,
+        origin_district_code: originGeo.districtCode,
+        dest_district_code: destGeo.districtCode,
         depart_at: new Date(depart).toISOString(),
         status: 'open',
       })
@@ -230,19 +266,22 @@ export function CreateTripPage() {
             </div>
           ) : null}
 
-          <PlaceField
-            label="ต้นทาง"
-            testId="place-origin"
-            value={pickup}
-            fallback={FALLBACK_ORIGIN}
-            onChange={setPickup}
+          <GeoPlaceFields
+            placeLabel="ต้นทาง"
+            testIdPrefix="origin"
+            requireDistrict
+            allowEmptyProvince={false}
+            placeFallback={BANGKOK_ORIGIN}
+            value={originGeo}
+            onChange={setOriginGeo}
           />
-          <PlaceField
-            label="ปลายทาง"
-            testId="place-dest"
-            value={dest}
-            fallback={FALLBACK_DEST}
-            onChange={setDest}
+          <GeoPlaceFields
+            placeLabel="ปลายทาง"
+            testIdPrefix="dest"
+            requireDistrict
+            placePlaceholder="เลือกปลายทาง"
+            value={destGeo}
+            onChange={setDestGeo}
           />
           {stops.map((stop, i) => (
             <PlaceField
@@ -438,7 +477,7 @@ export function CreateTripPage() {
           className="btn tap-target"
           type="button"
           data-testid="create-submit"
-          disabled={busy || overflow}
+          disabled={!canPublish}
           onClick={() => void publish()}
         >
           เปิดทริป

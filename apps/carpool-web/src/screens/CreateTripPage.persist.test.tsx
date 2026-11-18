@@ -67,7 +67,21 @@ describe('CreateTripPage persist stops', () => {
       </AuthProvider>,
     );
 
-    fireEvent.click(await screen.findByTestId('place-origin'));
+    fireEvent.change(await screen.findByTestId('origin-province'), { target: { value: '10' } });
+    await waitFor(() => {
+      expect((screen.getByTestId('origin-district') as HTMLSelectElement).options.length).toBeGreaterThan(1);
+    });
+    fireEvent.change(screen.getByTestId('origin-district'), {
+      target: { value: (screen.getByTestId('origin-district') as HTMLSelectElement).options[1].value },
+    });
+    fireEvent.change(screen.getByTestId('dest-province'), { target: { value: '14' } });
+    await waitFor(() => {
+      expect((screen.getByTestId('dest-district') as HTMLSelectElement).options.length).toBeGreaterThan(1);
+    });
+    fireEvent.change(screen.getByTestId('dest-district'), {
+      target: { value: (screen.getByTestId('dest-district') as HTMLSelectElement).options[1].value },
+    });
+    fireEvent.click(screen.getByTestId('place-origin'));
     fireEvent.click(screen.getByTestId('place-confirm'));
     fireEvent.click(screen.getByTestId('place-dest'));
     fireEvent.click(screen.getByTestId('place-confirm'));
@@ -78,6 +92,12 @@ describe('CreateTripPage persist stops', () => {
     fireEvent.click(screen.getByRole('button', { name: 'เปิดทริป' }));
 
     await waitFor(() => expect(tripsInsert.length).toBe(1));
+    expect(tripsInsert[0]).toEqual(
+      expect.objectContaining({
+        origin_province_code: '10',
+        dest_province_code: '14',
+      }),
+    );
     await waitFor(() => expect(stopsInsert.length).toBe(1));
     expect(stopsInsert[0]).toEqual([
       expect.objectContaining({
@@ -105,7 +125,21 @@ describe('CreateTripPage persist stops', () => {
       </AuthProvider>,
     );
 
-    fireEvent.click(await screen.findByTestId('place-origin'));
+    fireEvent.change(await screen.findByTestId('origin-province'), { target: { value: '10' } });
+    await waitFor(() => {
+      expect((screen.getByTestId('origin-district') as HTMLSelectElement).options.length).toBeGreaterThan(1);
+    });
+    fireEvent.change(screen.getByTestId('origin-district'), {
+      target: { value: (screen.getByTestId('origin-district') as HTMLSelectElement).options[1].value },
+    });
+    fireEvent.change(screen.getByTestId('dest-province'), { target: { value: '14' } });
+    await waitFor(() => {
+      expect((screen.getByTestId('dest-district') as HTMLSelectElement).options.length).toBeGreaterThan(1);
+    });
+    fireEvent.change(screen.getByTestId('dest-district'), {
+      target: { value: (screen.getByTestId('dest-district') as HTMLSelectElement).options[1].value },
+    });
+    fireEvent.click(screen.getByTestId('place-origin'));
     fireEvent.click(screen.getByTestId('place-confirm'));
     fireEvent.click(screen.getByTestId('place-dest'));
     fireEvent.click(screen.getByTestId('place-confirm'));

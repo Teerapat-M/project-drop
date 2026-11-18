@@ -22,6 +22,7 @@ export type RouteResult = {
 export type MapInstance = {
   setCenter: (coord: LatLng) => void;
   setPath: (points: readonly LatLng[], encodedPolyline?: string) => void;
+  fitBounds: (points: readonly LatLng[]) => void;
   destroy: () => void;
 };
 
@@ -54,7 +55,11 @@ export interface MapProvider {
   load: () => Promise<void>;
   newAutocompleteSession: () => string;
   endAutocompleteSession: (sessionToken: string) => void;
-  autocomplete: (query: string, sessionToken: string) => Promise<AutocompletePrediction[]>;
+  autocomplete: (
+    query: string,
+    sessionToken: string,
+    bias?: LatLng,
+  ) => Promise<AutocompletePrediction[]>;
   placeDetails: (placeId: string, sessionToken: string) => Promise<PickedPlace>;
   reverseGeocode: (coord: LatLng) => Promise<string>;
   route: (points: readonly LatLng[]) => Promise<RouteResult>;
@@ -62,17 +67,17 @@ export interface MapProvider {
   renderMarker: (map: MapInstance, options: MarkerRenderOptions) => MarkerInstance;
 }
 
-/** Camera default / no-key persist fallback. Submit uses picked values when present. */
+/** Camera default / no-key persist fallback. Origin is Bangkok; dest stays empty. */
 export const FALLBACK_ORIGIN: PickedPlace = {
-  lat: 18.788,
-  lng: 98.985,
-  address: 'เชียงใหม่',
+  lat: 13.7563,
+  lng: 100.5018,
+  address: 'กรุงเทพมหานคร',
 };
 
 export const FALLBACK_DEST: PickedPlace = {
-  lat: 18.574,
-  lng: 99.009,
-  address: 'ลำพูน',
+  lat: 13.7563,
+  lng: 100.5018,
+  address: '',
 };
 
 const PLACEHOLDER_KEY = 'your-google-maps-api-key';
@@ -101,7 +106,11 @@ export class FallbackMapProvider implements MapProvider {
     return;
   }
 
-  async autocomplete(_query: string, _sessionToken: string): Promise<AutocompletePrediction[]> {
+  async autocomplete(
+    _query: string,
+    _sessionToken: string,
+    _bias?: LatLng,
+  ): Promise<AutocompletePrediction[]> {
     return [];
   }
 
@@ -126,6 +135,7 @@ export class FallbackMapProvider implements MapProvider {
     return {
       setCenter: () => undefined,
       setPath: () => undefined,
+      fitBounds: () => undefined,
       destroy: () => {
         container.replaceChildren();
       },

@@ -13,16 +13,17 @@ import { useMapProvider } from './MapsProvider';
 type Props = {
   title: string;
   initial: PickedPlace | null;
+  bias?: LatLng;
   onPick: (place: PickedPlace) => void;
   onClose: () => void;
 };
 
-export function PlacePicker({ title, initial, onPick, onClose }: Props) {
+export function PlacePicker({ title, initial, bias, onPick, onClose }: Props) {
   const provider = useMapProvider();
   const desktop = useIsDesktop();
   const [query, setQuery] = useState(initial?.address ?? '');
   const [hits, setHits] = useState<AutocompletePrediction[]>([]);
-  const [pin, setPin] = useState<LatLng>(initial ?? FALLBACK_ORIGIN);
+  const [pin, setPin] = useState<LatLng>(initial ?? bias ?? FALLBACK_ORIGIN);
   const [address, setAddress] = useState(initial?.address ?? '');
   const [busy, setBusy] = useState(false);
   const tokenRef = useRef(provider.newAutocompleteSession());
@@ -39,7 +40,7 @@ export function PlacePicker({ title, initial, onPick, onClose }: Props) {
       return;
     }
     const handle = window.setTimeout(() => {
-      void provider.autocomplete(q, tokenRef.current).then(setHits);
+      void provider.autocomplete(q, tokenRef.current, bias).then(setHits);
     }, 200);
     return () => window.clearTimeout(handle);
   }, [provider, query]);

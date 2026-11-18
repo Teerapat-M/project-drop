@@ -85,32 +85,25 @@ describe('JoinTripPage', () => {
     expect(css).toMatch(/\.check-row input\[type=['']checkbox['']\]\s*\{[^}]*min-height:\s*22px/s);
   });
 
-  it('reverts the optimistic owner seat toggle when the RPC errors', async () => {
-    let finishSeatRpc!: (value: { error: { message: string } }) => void;
+  it('redirects the owner to the manage page', async () => {
     rpc.mockImplementation((name: string) => {
       if (name === 'carpool_trip_preview') {
-        return Promise.resolve({ data: demoPreview('demo-taxi-12km') });
-      }
-      if (name === 'carpool_set_seat_open') {
-        return new Promise((resolve) => {
-          finishSeatRpc = resolve;
-        });
+        return Promise.resolve({ data: { ...demoPreview('demo-taxi-12km'), is_mine: true } });
       }
       return Promise.resolve({ data: null, error: null });
     });
-
-    renderJoin('/trips/demo-taxi-12km?owner=1');
-    const seat = await screen.findByTestId('seat-rear_middle');
-    expect(seat).toHaveAttribute('data-state', 'open');
-
-    fireEvent.click(seat);
-    expect(screen.getByTestId('seat-rear_middle')).toHaveAttribute('data-state', 'closed');
-
-    finishSeatRpc({ error: { message: 'cannot open/close a booked seat' } });
-    await waitFor(() => {
-      expect(screen.getByTestId('seat-rear_middle')).toHaveAttribute('data-state', 'open');
-    });
-    expect(screen.getByText('ไม่สามารถเปิด/ปิดที่นั่งที่ถูกจองแล้ว')).toBeInTheDocument();
+    render(
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/trips/demo-taxi-12km']}>
+          <Routes>
+            <Route path="/trips/:id" element={<JoinTripPage />} />
+            <Route path="/trips/:id/manage" element={<p data-testid="manage-trip">จัดการทริป</p>} />
+          </Routes>
+        </MemoryRouter>
+      </AuthProvider>,
+    );
+    expect(await screen.findByTestId('manage-trip')).toBeInTheDocument();
+    expect(screen.queryByTestId('join-submit')).toBeNull();
   });
 
   it('auto-fills detour km from via-path minus route_km and does not overwrite a manual edit', async () => {

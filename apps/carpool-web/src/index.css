@@ -502,6 +502,18 @@ a {
   color: var(--drop-on-primary);
 }
 
+.badge.mine,
+.badge.role {
+  background: var(--drop-primary);
+  color: var(--drop-on-primary);
+  margin-left: 6px;
+}
+
+.route-map-dialog-canvas {
+  flex: 1;
+  min-height: 240px;
+}
+
 .badge.completed,
 .badge.cancelled,
 .badge.in_progress {

@@ -24,6 +24,7 @@ type Listener = { remove: () => void };
 type GMap = {
   setCenter: (c: LatLng) => void;
   setOptions?: (opts: Record<string, unknown>) => void;
+  fitBounds?: (bounds: unknown) => void;
 };
 
 type GMarker = {
@@ -114,6 +115,7 @@ type GMaps = {
   };
   TravelMode?: { DRIVING: string };
   DirectionsStatus?: { OK: string };
+  LatLngBounds?: new () => { extend: (c: LatLng) => void };
 };
 
 type GoogleWindow = Window & { google?: { maps?: GMaps }; __carpoolMapsReady?: () => void };
@@ -193,12 +195,24 @@ export class GoogleMapProvider implements MapProvider {
     return token;
   }
 
-  async autocomplete(query: string, sessionToken: string): Promise<AutocompletePrediction[]> {
+  async autocomplete(
+    query: string,
+    sessionToken: string,
+    bias?: LatLng,
+  ): Promise<AutocompletePrediction[]> {
     const q = query.trim();
     if (q.length < MIN_AUTOCOMPLETE_CHARS) return [];
     await this.load();
     const maps = gmaps();
     const Suggestion = maps.places?.AutocompleteSuggestion;
+    const circleBias = bias
+      ? {
+          circle: {
+            center: { latitude: bias.lat, longitude: bias.lng },
+            radius: 50_000,
+          },
+        }
+      : undefined;
     if (Suggestion?.fetchAutocompleteSuggestions) {
       const { suggestions } = await Suggestion.fetchAutocompleteSuggestions({
         input: q,
@@ -206,6 +220,7 @@ export class GoogleMapProvider implements MapProvider {
         language: 'th',
         region: 'TH',
         includedRegionCodes: ['TH'],
+        ...(circleBias ? { locationBias: circleBias } : {}),
       });
       return suggestions
         .map((s) => ({
@@ -224,6 +239,7 @@ export class GoogleMapProvider implements MapProvider {
           sessionToken: this.sessionToken(sessionToken),
           language: 'th',
           componentRestrictions: { country: 'th' },
+          ...(bias ? { location: bias, radius: 50_000 } : {}),
         },
         (preds, status) => {
           if (status !== (maps.places?.PlacesServiceStatus?.OK ?? 'OK') || !preds) {
@@ -413,6 +429,13 @@ export class GoogleMapProvider implements MapProvider {
       native: map,
       setCenter: (coord) => map.setCenter(coord),
       setPath,
+      fitBounds: (points) => {
+        const Bounds = maps.LatLngBounds;
+        if (!Bounds || points.length < 2 || !map.fitBounds) return;
+        const bounds = new Bounds();
+        for (const p of points) bounds.extend(p);
+        map.fitBounds(bounds);
+      },
       destroy: () => {
         listeners.forEach((l) => l.remove());
         line?.setMap(null);

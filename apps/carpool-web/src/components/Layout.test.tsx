@@ -26,6 +26,7 @@ describe('mobile-first layout', () => {
     const nav = screen.getByTestId('bottom-nav');
     expect(nav).toHaveTextContent('หน้าแรก');
     expect(nav).toHaveTextContent('สร้าง');
+    expect(nav).toHaveTextContent('ทริปของคุณ');
     expect(nav).toHaveTextContent('ประวัติ');
     expect(nav).toHaveTextContent('บัญชี');
     const taps = document.querySelectorAll('.tap-target');

@@ -63,6 +63,7 @@ export function createMockMapProvider(): MapProvider & {
       return {
         setCenter: () => undefined,
         setPath: () => undefined,
+        fitBounds: () => undefined,
         destroy: () => container.replaceChildren(),
       };
     },

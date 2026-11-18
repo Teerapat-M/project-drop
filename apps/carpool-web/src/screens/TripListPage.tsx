@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { RATE_THB_PER_KM } from '@drop/carpool-core';
+import { BANGKOK_PROVINCE_CODE, RATE_THB_PER_KM } from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
+import { GeoPlaceFields, type GeoPlaceValue } from '../components/GeoPlaceFields';
 import { TaxiBadge } from '../components/TaxiBadge';
 import { DEMO_TRIPS } from '../fixtures';
 import { VEHICLE_LABEL } from '../lib/carIcons';
 import { estimateViewerFare } from '../lib/estimateFare';
 import { formatDepart, thb } from '../lib/format';
+import { formatRouteLine } from '../lib/placeLabel';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
 import type { TripCard, TripKind } from '../types';
@@ -17,6 +19,22 @@ export function TripListPage() {
   const kind = (params.get('kind') === 'taxi' ? 'taxi' : 'private') as TripKind;
   const [trips, setTrips] = useState<TripCard[]>(demo ? DEMO_TRIPS : []);
   const [emptyForced] = useState(params.get('empty') === '1');
+  const [originGeo, setOriginGeo] = useState<GeoPlaceValue>({
+    provinceCode: BANGKOK_PROVINCE_CODE,
+    districtCode: '',
+    place: null,
+  });
+  const [destGeo, setDestGeo] = useState<GeoPlaceValue>({
+    provinceCode: '',
+    districtCode: '',
+    place: null,
+  });
+  const [applied, setApplied] = useState({
+    originProvince: '',
+    originDistrict: '',
+    destProvince: '',
+    destDistrict: '',
+  });
 
   useEffect(() => {
     if (demo) {
@@ -25,16 +43,31 @@ export function TripListPage() {
     }
     const supabase = getSupabase();
     if (!supabase) return;
-    void supabase.rpc('carpool_discover_trips', { p_kind: kind }).then(({ data, error }) => {
-      if (error) setTrips([]);
-      else setTrips((data as TripCard[]) ?? []);
-    });
-  }, [demo, kind]);
+    void supabase
+      .rpc('carpool_discover_trips', {
+        p_kind: kind,
+        p_origin_province_code: applied.originProvince || null,
+        p_origin_district_code: applied.originDistrict || null,
+        p_dest_province_code: applied.destProvince || null,
+        p_dest_district_code: applied.destDistrict || null,
+      })
+      .then(({ data, error }) => {
+        if (error) setTrips([]);
+        else setTrips((data as TripCard[]) ?? []);
+      });
+  }, [demo, kind, applied]);
 
   const shown = useMemo(() => {
     if (emptyForced) return [];
-    return trips.filter((t) => t.kind === kind);
-  }, [trips, kind, emptyForced]);
+    return trips.filter((t) => {
+      if (t.kind !== kind) return false;
+      if (applied.originProvince && t.origin_province_code !== applied.originProvince) return false;
+      if (applied.originDistrict && t.origin_district_code !== applied.originDistrict) return false;
+      if (applied.destProvince && t.dest_province_code !== applied.destProvince) return false;
+      if (applied.destDistrict && t.dest_district_code !== applied.destDistrict) return false;
+      return true;
+    });
+  }, [trips, kind, emptyForced, applied]);
 
   return (
     <main className="page">
@@ -45,16 +78,28 @@ export function TripListPage() {
         className="search-card stack"
         onSubmit={(e) => {
           e.preventDefault();
+          setApplied({
+            originProvince: originGeo.provinceCode,
+            originDistrict: originGeo.districtCode,
+            destProvince: destGeo.provinceCode,
+            destDistrict: destGeo.districtCode,
+          });
         }}
       >
-        <label className="field">
-          ต้นทาง
-          <input defaultValue="เชียงใหม่" />
-        </label>
-        <label className="field">
-          ปลายทาง
-          <input defaultValue="ลำพูน" />
-        </label>
+        <GeoPlaceFields
+          placeLabel="ต้นทาง"
+          testIdPrefix="search-origin"
+          placePlaceholder="เลือกต้นทาง"
+          value={originGeo}
+          onChange={setOriginGeo}
+        />
+        <GeoPlaceFields
+          placeLabel="ปลายทาง"
+          testIdPrefix="search-dest"
+          placePlaceholder="เลือกปลายทาง"
+          value={destGeo}
+          onChange={setDestGeo}
+        />
         <button className="btn tap-target" type="submit">
           ค้นหา
         </button>
@@ -130,12 +175,23 @@ function TripCardView({ trip }: { trip: TripCard }) {
     kind: trip.kind,
     bookedPassengerCount: bookedPassengers,
   });
+  const mine = trip.is_mine === true;
+  const href = mine ? `/trips/${trip.id}/manage` : `/trips/${trip.id}`;
+  const route = formatRouteLine(trip.pickup_label, trip.dest_label, {
+    originProvince: trip.origin_province_code,
+    destProvince: trip.dest_province_code,
+  });
   return (
     <article className={`card trip-card ${full ? 'dimmed' : ''}`} data-testid={`trip-${trip.id}`}>
       <CarPhoto car_icon={trip.car_icon} vehicle_type={trip.vehicle_type} kind={trip.kind} />
       <div>
         <h3>
-          {trip.pickup_label} → {trip.dest_label}{' '}
+          {route}{' '}
+          {mine ? (
+            <span className="badge mine" data-testid="owner-badge">
+              ทริปของคุณ
+            </span>
+          ) : null}
           {full ? (
             <span className="badge full" data-testid="full-badge">
               เต็มแล้ว
@@ -151,8 +207,8 @@ function TripCardView({ trip }: { trip: TripCard }) {
         </p>
         <p className="muted">{formatDepart(trip.depart_at)} · ว่าง {trip.open_seats}/{trip.bookable_seats}</p>
       </div>
-      <Link to={`/trips/${trip.id}`} className="btn tap-target">
-        {full ? 'ดูทริป' : 'ดูทริปนี้'}
+      <Link to={href} className="btn tap-target" data-testid={mine ? `manage-${trip.id}` : `join-${trip.id}`}>
+        {mine ? 'จัดการทริป' : full ? 'ดูทริป' : 'ดูทริปนี้'}
       </Link>
     </article>
   );

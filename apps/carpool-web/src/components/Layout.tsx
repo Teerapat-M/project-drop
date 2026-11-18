@@ -56,6 +56,11 @@ export function Layout() {
         <NavLink to="/trips/new" className="nav-link tap-target">
           สร้างทริป
         </NavLink>
+        {user || demo ? (
+          <NavLink to="/my-trips" className="nav-link tap-target" data-testid="nav-my-trips">
+            ทริปของคุณ
+          </NavLink>
+        ) : null}
         <NavLink to="/history" className="nav-link tap-target">
           ประวัติทริป
         </NavLink>
@@ -99,6 +104,11 @@ export function Layout() {
         <NavLink to="/trips/new" className="nav-link tap-target">
           สร้าง
         </NavLink>
+        {user || demo ? (
+          <NavLink to="/my-trips" className="nav-link tap-target" data-testid="nav-my-trips-mobile">
+            ทริปของคุณ
+          </NavLink>
+        ) : null}
         <NavLink to="/history" className="nav-link tap-target">
           ประวัติ
         </NavLink>
