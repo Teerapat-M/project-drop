@@ -817,6 +817,125 @@ a {
   left: -9999px;
 }
 
+.create-grid,
+.join-map-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.create-map,
+.join-map {
+  order: -1;
+}
+
+.place-field-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.place-field-row input,
+.place-field-row .place-field-btn {
+  flex: 1;
+  min-width: 0;
+}
+
+.place-field-btn {
+  min-height: var(--tap);
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--drop-border);
+  border-radius: 12px;
+  padding: 0 12px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.place-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(20, 20, 20, 0.4);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.place-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--drop-surface);
+  display: flex;
+  flex-direction: column;
+}
+
+.place-picker-head {
+  display: grid;
+  grid-template-columns: var(--tap) 1fr var(--tap);
+  align-items: center;
+  min-height: var(--nav-h);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--drop-border);
+}
+
+.place-picker-title {
+  margin: 0;
+  text-align: center;
+  font-size: 16px;
+}
+
+.place-picker-search {
+  padding: 8px 12px 0;
+}
+
+.place-suggestions {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.place-suggestion {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 0 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.place-picker-map {
+  flex: 1;
+  min-height: 200px;
+  margin: 8px 12px;
+  border-radius: 12px;
+  background: #f3f3f3;
+}
+
+.place-picker-address {
+  margin: 0;
+  padding: 0 12px 8px;
+}
+
+.place-picker-bar {
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+}
+
+.route-mini-map {
+  display: grid;
+  gap: 8px;
+}
+
+.route-mini-map-canvas {
+  min-height: 140px;
+  width: 100%;
+  border-radius: 12px;
+  background: #f3f3f3;
+}
+
 @media (min-width: 768px) {
   .app-shell {
     padding-bottom: 0;
@@ -884,11 +1003,39 @@ a {
   }
 
   .create-grid,
-  .summary-grid {
+  .summary-grid,
+  .join-map-grid {
     display: grid;
     grid-template-columns: 1.2fr 0.8fr;
     gap: 20px;
     align-items: start;
+  }
+
+  .create-map,
+  .join-map {
+    order: 0;
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .create-form {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .create-seats {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .place-picker-backdrop .place-picker {
+    position: relative;
+    inset: auto;
+    width: min(640px, 100%);
+    height: min(720px, 90vh);
+    border-radius: 16px;
+    border: 1px solid var(--drop-border);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
   }
 
   .trip-card {

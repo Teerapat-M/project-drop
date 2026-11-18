@@ -1,4 +1,4 @@
-import { computeFare, type SeatInput } from '@drop/carpool-core';
+import { computeFare, type FareResult, type SeatInput } from '@drop/carpool-core';
 import type { TripKind } from '../types';
 
 export const VIEWER_ID = 'viewer';
@@ -18,6 +18,18 @@ export type ViewerFareEstimate = {
 
 function vehicle(kind: TripKind) {
   return kind === 'taxi' ? 'taxi' : 'private_car';
+}
+
+/** Main-route preview from mini-map km. Luggage is ignored (not an argument). */
+export function previewMainFare(mainRouteKm: number, kind: TripKind): FareResult {
+  return computeFare({
+    mainRouteKm,
+    vehicle: vehicle(kind),
+    seats:
+      kind === 'taxi'
+        ? [{ id: 'preview', open: true, booked: true }]
+        : [{ id: 'driver', open: true, booked: true, role: 'owner_driver' }],
+  });
 }
 
 /**

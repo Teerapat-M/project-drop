@@ -4,13 +4,20 @@ import { RATE_THB_PER_KM } from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { CarSeatMap } from '../components/CarSeatMap';
 import { TaxiBadge } from '../components/TaxiBadge';
-import { liters } from '../lib/format';
+import { previewMainFare } from '../lib/estimateFare';
+import { liters, thb } from '../lib/format';
 import { ICON_CHOICES, VEHICLE_LABEL } from '../lib/carIcons';
+import { FALLBACK_DEST, FALLBACK_ORIGIN, type PickedPlace } from '../maps/MapProvider';
+import { PlaceField } from '../maps/PlaceField';
+import { RouteMiniMap } from '../maps/RouteMiniMap';
+import { useMapProvider } from '../maps/MapsProvider';
 import { positionsFor, SEAT_LABELS } from '../lib/seats';
 import { thaiRpcError } from '../lib/seatRpc';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
 import type { SeatPosition, SeatState, VehicleType } from '../types';
+
+type StopPlace = PickedPlace & { id: string };
 
 const TRUNK = {
   sedan: { w: 100, h: 50, l: 50 },
@@ -26,10 +33,12 @@ export function CreateTripPage() {
   const taxi = params.get('kind') === 'taxi';
   const navigate = useNavigate();
   const { demo } = useAuth();
+  const maps = useMapProvider();
   const [vehicle, setVehicle] = useState<VehicleType>('sedan');
   const [icon, setIcon] = useState('sedan');
-  const [pickup, setPickup] = useState('เชียงใหม่');
-  const [dest, setDest] = useState('ลำพูน');
+  const [pickup, setPickup] = useState<PickedPlace | null>(maps.available ? null : FALLBACK_ORIGIN);
+  const [dest, setDest] = useState<PickedPlace | null>(maps.available ? null : FALLBACK_DEST);
+  const [stops, setStops] = useState<StopPlace[]>([]);
   const [km, setKm] = useState(taxi ? 12 : 80);
   const [depart, setDepart] = useState('2026-11-14T08:00');
   const [open, setOpen] = useState<Record<SeatPosition, boolean>>({
@@ -54,6 +63,7 @@ export function CreateTripPage() {
 
   const openCount = positions.filter((p) => open[p]).length;
   const vol = useMemo(() => liters(trunk.w, trunk.h, trunk.l), [trunk]);
+  const farePreview = useMemo(() => previewMainFare(km, taxi ? 'taxi' : 'private'), [km, taxi]);
 
   const onVehicle = (v: VehicleType) => {
     setVehicle(v);
@@ -67,6 +77,10 @@ export function CreateTripPage() {
 
   const publish = async () => {
     setError(null);
+    if (maps.available && (!pickup || !dest)) {
+      setError('เลือกต้นทางและปลายทางบนแผนที่');
+      return;
+    }
     if (demo) {
       navigate(taxi ? '/trips/demo-taxi-12km/fare' : '/trips/demo-private-12km/fare');
       return;
@@ -81,6 +95,8 @@ export function CreateTripPage() {
       setError('ต้องเข้าสู่ระบบ');
       return;
     }
+    const origin = pickup ?? FALLBACK_ORIGIN;
+    const destination = dest ?? FALLBACK_DEST;
     const { data, error: insError } = await supabase
       .from('carpool_trips')
       .insert({
@@ -92,12 +108,12 @@ export function CreateTripPage() {
         trunk_h_cm: trunk.h,
         trunk_l_cm: trunk.l,
         route_km: km,
-        pickup_label: pickup,
-        pickup_lat: 18.788,
-        pickup_lng: 98.985,
-        dest_label: dest,
-        dest_lat: 18.574,
-        dest_lng: 99.009,
+        pickup_label: origin.address,
+        pickup_lat: origin.lat,
+        pickup_lng: origin.lng,
+        dest_label: destination.address,
+        dest_lat: destination.lat,
+        dest_lng: destination.lng,
         depart_at: new Date(depart).toISOString(),
         status: 'open',
       })
@@ -148,7 +164,10 @@ export function CreateTripPage() {
         <span className="page-head-spacer" />
       </div>
       <div className="create-grid">
-        <div className="stack">
+        <div className="create-map">
+          <RouteMiniMap origin={pickup} stops={stops} destination={dest} onKm={setKm} />
+        </div>
+        <div className="stack create-form">
           {taxi ? (
             <div className="row">
               <CarPhoto car_icon="taxi" vehicle_type="sedan" kind="taxi" />
@@ -163,14 +182,47 @@ export function CreateTripPage() {
             </div>
           ) : null}
 
-          <label className="field">
-            ต้นทาง
-            <input value={pickup} onChange={(e) => setPickup(e.target.value)} />
-          </label>
-          <label className="field">
-            ปลายทาง
-            <input value={dest} onChange={(e) => setDest(e.target.value)} />
-          </label>
+          <PlaceField
+            label="ต้นทาง"
+            testId="place-origin"
+            value={pickup}
+            fallback={FALLBACK_ORIGIN}
+            onChange={setPickup}
+          />
+          <PlaceField
+            label="ปลายทาง"
+            testId="place-dest"
+            value={dest}
+            fallback={FALLBACK_DEST}
+            onChange={setDest}
+          />
+          {stops.map((stop, i) => (
+            <PlaceField
+              key={stop.id}
+              label={`จุดแวะ ${i + 1}`}
+              testId={`place-stop-${i}`}
+              value={Number.isFinite(stop.lat) ? stop : null}
+              onChange={(place) =>
+                setStops((prev) => prev.map((s) => (s.id === stop.id ? { ...place, id: stop.id } : s)))
+              }
+              onRemove={() => setStops((prev) => prev.filter((s) => s.id !== stop.id))}
+            />
+          ))}
+          {stops.length < 4 ? (
+            <button
+              type="button"
+              className="chip tap-target"
+              data-testid="add-stop"
+              onClick={() =>
+                setStops((prev) => [
+                  ...prev,
+                  { id: crypto.randomUUID(), lat: Number.NaN, lng: Number.NaN, address: '' },
+                ])
+              }
+            >
+              + จุดแวะ
+            </button>
+          ) : null}
           <label className="field">
             วันออกเดินทาง
             <input type="datetime-local" value={depart} onChange={(e) => setDepart(e.target.value)} />
@@ -193,9 +245,14 @@ export function CreateTripPage() {
           />
 
           {taxi ? (
-            <p className="muted">ค่าโดยสาร {RATE_THB_PER_KM} ฿/กม. หารเท่ากันเฉพาะที่นั่งที่เปิดและมีคนจอง · ตัวอย่าง</p>
+            <p className="muted" data-testid="fare-preview">
+              ค่าโดยสารหลัก {thb(farePreview.mainFareThb)} ฿ · {RATE_THB_PER_KM} ฿/กม. หารเท่ากันเฉพาะที่นั่งที่เปิดและมีคนจอง ·
+              สัมภาระไม่กระทบค่าโดยสาร
+            </p>
           ) : (
-            <p className="muted">ใช้อัตราคงที่ {RATE_THB_PER_KM} ฿/กม.</p>
+            <p className="muted" data-testid="fare-preview">
+              ค่าโดยสารหลัก {thb(farePreview.mainFareThb)} ฿ · {RATE_THB_PER_KM} ฿/กม. · สัมภาระไม่กระทบค่าโดยสาร
+            </p>
           )}
 
           {!taxi ? (
@@ -285,7 +342,7 @@ export function CreateTripPage() {
             </div>
           ) : null}
         </div>
-        <div className="stack">
+        <div className="stack create-seats">
           <CarSeatMap
             vehicle={taxi ? 'sedan' : vehicle}
             seats={seats}

@@ -162,7 +162,7 @@ Copy `.env.example` (root or per app). Never commit `.env` files or live keys. D
 | Mobile | `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_ENABLE_PHONE_OTP` (default false), `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_MAP_STYLE_URL`, `EXPO_PUBLIC_GEOCODER_URL`, `EXPO_PUBLIC_OSRM_URL` |
 | Server | `PORT`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, optional `SUPABASE_JWT_SECRET`, optional `SUPABASE_SERVICE_ROLE_KEY`, optional `GEMINI_API_KEY`, optional `GEMINI_MODEL`, optional `TRANSLATION_PROVIDER`, optional `MYMEMORY_EMAIL`, optional `TRANSLATION_TIMEOUT_MS` |
 | Admin | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` |
-| Carpool web | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (same project as Drop; placeholders in `apps/carpool-web/.env.example`) |
+| Carpool web | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, optional `VITE_GOOGLE_MAPS_API_KEY` (same project as Drop; placeholders in `apps/carpool-web/.env.example`) |
 
 Do **not** put `GEMINI_API_KEY` (or any translation secret) in Expo / `EXPO_PUBLIC_*`.
 

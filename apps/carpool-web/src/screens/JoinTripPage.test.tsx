@@ -5,6 +5,8 @@ import { AuthProvider } from '../auth/AuthProvider';
 import { demoPreview } from '../fixtures';
 import css from '../index.css?raw';
 import { mockMatchMedia } from '../test/matchMedia';
+import { MapsProvider } from '../maps/MapsProvider';
+import { createMockMapProvider } from '../test/mockMapProvider';
 import { JoinTripPage } from './JoinTripPage';
 
 const { rpc, maybeSingle, removeChannel } = vi.hoisted(() => ({
@@ -109,5 +111,26 @@ describe('JoinTripPage', () => {
       expect(screen.getByTestId('seat-rear_middle')).toHaveAttribute('data-state', 'open');
     });
     expect(screen.getByText('ไม่สามารถเปิด/ปิดที่นั่งที่ถูกจองแล้ว')).toBeInTheDocument();
+  });
+
+  it('opens a map picker for the rider stop at 390px', async () => {
+    mockMatchMedia(390);
+    const provider = createMockMapProvider();
+    render(
+      <AuthProvider>
+        <MapsProvider provider={provider}>
+          <MemoryRouter initialEntries={['/trips/demo-taxi-12km']}>
+            <Routes>
+              <Route path="/trips/:id" element={<JoinTripPage />} />
+            </Routes>
+          </MemoryRouter>
+        </MapsProvider>
+      </AuthProvider>,
+    );
+    const field = await screen.findByTestId('place-rider-stop');
+    expect(field).toHaveClass('tap-target');
+    fireEvent.click(field);
+    expect(screen.getByTestId('place-picker')).toHaveAttribute('data-mode', 'fullscreen');
+    expect(provider.load).toHaveBeenCalled();
   });
 });

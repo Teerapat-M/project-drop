@@ -13,6 +13,9 @@ import { SEAT_LABELS } from '../lib/seats';
 import { thaiRpcError, withSeatOpen } from '../lib/seatRpc';
 import { SeatPicker } from '../components/SeatPicker';
 import { LuggageBlock } from '../components/LuggageBlock';
+import type { PickedPlace } from '../maps/MapProvider';
+import { PlaceField } from '../maps/PlaceField';
+import { RouteMiniMap } from '../maps/RouteMiniMap';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
 import type { SeatPosition, SeatState, TripPreview } from '../types';
@@ -27,6 +30,7 @@ export function JoinTripPage() {
   const [preview, setPreview] = useState<TripPreview | null>(demo ? demoPreview(id) : null);
   const [selected, setSelected] = useState<SeatPosition | null>(null);
   const [dest, setDest] = useState('ตลาดกลาง');
+  const [destPlace, setDestPlace] = useState<PickedPlace | null>(null);
   const [detour, setDetour] = useState(0);
   const [h, setH] = useState(50);
   const [w, setW] = useState(40);
@@ -162,9 +166,9 @@ export function JoinTripPage() {
     const { error: bookError } = await supabase.rpc('carpool_book_seat', {
       p_trip_id: id,
       p_position: selected,
-      p_dest_label: dest,
-      p_dest_lat: preview.dest_lat,
-      p_dest_lng: preview.dest_lng,
+      p_dest_label: destPlace?.address ?? dest,
+      p_dest_lat: destPlace?.lat ?? preview.dest_lat,
+      p_dest_lng: destPlace?.lng ?? preview.dest_lng,
       p_detour_km: detour,
       p_luggage_h_cm: noBags ? null : h,
       p_luggage_w_cm: noBags ? null : w,
@@ -228,20 +232,47 @@ export function JoinTripPage() {
         luggage={noBags ? [] : luggage}
       />
 
+      <div className="join-map-grid">
+        <div className="join-map">
+          <RouteMiniMap
+            origin={{
+              lat: preview.pickup_lat,
+              lng: preview.pickup_lng,
+              address: preview.pickup_label,
+            }}
+            stops={
+              destPlace && (destPlace.lat !== preview.dest_lat || destPlace.lng !== preview.dest_lng)
+                ? [{ ...destPlace, id: 'you' }]
+                : []
+            }
+            destination={{
+              lat: preview.dest_lat,
+              lng: preview.dest_lng,
+              address: preview.dest_label,
+            }}
+          />
+        </div>
       <section className="stack" data-testid="own-booking">
         <p>
           <strong>ที่นั่งของคุณ</strong> · {ownSeatLabel}
         </p>
-        <label className="field">
-          จุดลงของคุณ
-          <input value={dest} onChange={(e) => setDest(e.target.value)} />
-        </label>
+        <PlaceField
+          label="จุดลงของคุณ"
+          testId="place-rider-stop"
+          value={destPlace}
+          fallback={{ lat: preview.dest_lat, lng: preview.dest_lng, address: dest }}
+          onChange={(place) => {
+            setDestPlace(place);
+            setDest(place.address);
+          }}
+        />
         <label className="field">
           ระยะทางที่อ้อม (กม.)
           <input type="number" min={0} step="0.1" value={detour} onChange={(e) => setDetour(Number(e.target.value))} />
         </label>
         <p className="muted">สัมภาระของคุณ {noBags ? 'ไม่มี' : `${w} × ${h} × ${d} ซม. = ${bagL.toFixed(0)} ลิตร`}</p>
       </section>
+      </div>
 
       <LuggageBlock
         widthCm={preview.trunk_w_cm}
