@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { LuggagePiece } from '@drop/carpool-core';
 import { remainingTrunkSpace } from '@drop/carpool-core';
@@ -9,6 +9,7 @@ import { bindChat, openChat } from '../lib/chatEvents';
 import { VEHICLE_LABEL } from '../lib/carIcons';
 import { estimateViewerFareFromSeats } from '../lib/estimateFare';
 import { liters, thb } from '../lib/format';
+import { firstJoinBlocker, type JoinRouteStatus } from '../lib/joinRequirements';
 import { SEAT_LABELS } from '../lib/seats';
 import { SeatPicker } from '../components/SeatPicker';
 import { LuggageBlock } from '../components/LuggageBlock';
@@ -27,13 +28,15 @@ export function JoinTripPage() {
   const { id = '' } = useParams();
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const { demo } = useAuth();
+  const { demo, user, configured } = useAuth();
+  const joinHintId = useId();
   const [preview, setPreview] = useState<TripPreview | null>(demo ? demoPreview(id) : null);
   const [selected, setSelected] = useState<SeatPosition | null>(null);
-  const [dest, setDest] = useState('ตลาดกลาง');
+  const [dest, setDest] = useState('');
   const [destPlace, setDestPlace] = useState<PickedPlace | null>(null);
   const [detour, setDetour] = useState(0);
   const [detourEdited, setDetourEdited] = useState(false);
+  const [routeStatus, setRouteStatus] = useState<JoinRouteStatus>('idle');
   const [h, setH] = useState(50);
   const [w, setW] = useState(40);
   const [d, setD] = useState(25);
@@ -128,6 +131,21 @@ export function JoinTripPage() {
 
   const taxi = preview.kind === 'taxi';
   const full = preview.status === 'full' || preview.seats.every((s) => !s.is_open || s.is_booked);
+  const tripOpen = preview.status === 'open' && !full;
+  const destPinned = destPlace != null && dest.trim().length > 0;
+  const offTripDest =
+    destPlace != null &&
+    (destPlace.lat !== preview.dest_lat || destPlace.lng !== preview.dest_lng);
+  const blocker = firstJoinBlocker({
+    authenticated: demo || Boolean(user) || !configured,
+    tripOpen,
+    seatSelected: selected != null,
+    destPinned,
+    routeStatus: destPinned && offTripDest ? routeStatus : destPinned ? 'ready' : 'idle',
+    trunkOk: !overflow,
+    riskAccepted: agree,
+  });
+  const joinDisabled = busy || blocker != null;
   const est = estimateViewerFareFromSeats({
     mainRouteKm: preview.route_km,
     kind: preview.kind,
@@ -141,6 +159,10 @@ export function JoinTripPage() {
     setError(null);
     if (!selected) {
       setError('เลือกที่นั่งก่อน');
+      return;
+    }
+    if (!destPlace) {
+      setError('ปักหมุดปลายทางของคุณ');
       return;
     }
     if (demo) {
@@ -180,7 +202,12 @@ export function JoinTripPage() {
           ←
         </Link>
         <h1 className="page-title">{full ? 'ทริปเต็มแล้ว' : taxi ? 'ยืนยันร่วมทริปแท็กซี่' : 'ยืนยันร่วมทริป'}</h1>
-        <button type="button" className="nav-link tap-target" onClick={() => openChat(id)}>
+        <button
+          type="button"
+          className="nav-link tap-target"
+          aria-label="แชทกับเพื่อนร่วมทาง"
+          onClick={() => openChat(id)}
+        >
           แชท
         </button>
       </div>
@@ -246,9 +273,10 @@ export function JoinTripPage() {
               lng: preview.dest_lng,
               address: preview.dest_label,
             }}
-            onKm={(viaKm) => {
+            onKm={(viaKm, meta) => {
+              setRouteStatus(meta?.fallback ? 'fallback' : 'ready');
               if (detourEdited) return;
-              setDetour(detourFromViaKm(viaKm, preview.route_km));
+              setDetour(meta?.fallback ? 0 : detourFromViaKm(viaKm, preview.route_km));
             }}
           />
         </div>
@@ -260,10 +288,15 @@ export function JoinTripPage() {
           label="จุดลงของคุณ"
           testId="place-rider-stop"
           value={destPlace}
-          fallback={{ lat: preview.dest_lat, lng: preview.dest_lng, address: dest }}
+          fallback={{ lat: preview.dest_lat, lng: preview.dest_lng, address: '' }}
+          placeholder="ปักหมุดจุดลงของคุณ"
           onChange={(place) => {
+            const offTrip =
+              place.lat !== preview.dest_lat || place.lng !== preview.dest_lng;
             setDestPlace(place);
             setDest(place.address);
+            setRouteStatus(offTrip ? 'pending' : 'ready');
+            if (!offTrip && !detourEdited) setDetour(0);
           }}
         />
         <label className="field">
@@ -280,6 +313,11 @@ export function JoinTripPage() {
             }}
           />
         </label>
+        {routeStatus === 'fallback' ? (
+          <p className="muted" data-testid="detour-fallback-note">
+            ระบบจะคำนวณระยะอ้อมให้
+          </p>
+        ) : null}
         <p className="muted">สัมภาระของคุณ {noBags ? 'ไม่มี' : `${w} × ${h} × ${d} ซม. = ${bagL.toFixed(0)} ลิตร`}</p>
       </section>
       </div>
@@ -318,11 +356,17 @@ export function JoinTripPage() {
       </label>
 
       <div className="sticky-bar">
+        {blocker ? (
+          <p className="muted join-hint" id={joinHintId} data-testid="join-hint">
+            {blocker.hint}
+          </p>
+        ) : null}
         <button
           className="btn tap-target"
           type="button"
           data-testid="join-submit"
-          disabled={busy || !agree || !selected || overflow || full}
+          disabled={joinDisabled}
+          aria-describedby={blocker ? joinHintId : undefined}
           onClick={() => void join()}
         >
           {full ? 'ร่วมทริปไม่ได้ · ที่นั่งเต็มแล้ว' : 'ร่วมทริป'}

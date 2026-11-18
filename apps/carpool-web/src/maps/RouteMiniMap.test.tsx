@@ -73,16 +73,18 @@ describe('RouteMiniMap', () => {
     expect(screen.queryByTestId('route-map-dialog')).toBeNull();
   });
 
-  it('falls back to the placeholder map when no key is configured', () => {
+  it('falls back to the placeholder map when no key is configured', async () => {
     const provider = new FallbackMapProvider();
     const load = vi.spyOn(provider, 'load');
+    const onKm = vi.fn();
     render(
       <MapsProvider provider={provider}>
-        <RouteMiniMap origin={MOCK_PLACE} destination={MOCK_DEST} />
+        <RouteMiniMap origin={MOCK_PLACE} destination={MOCK_DEST} onKm={onKm} />
       </MapsProvider>,
     );
     expect(load).not.toHaveBeenCalled();
     expect(screen.getByTestId('route-mini-map')).toHaveClass('map-placeholder');
     expect(screen.getByTestId('route-mini-map-km')).toHaveTextContent('ใส่ระยะทาง');
+    await waitFor(() => expect(onKm).toHaveBeenCalledWith(0, { fallback: true }));
   });
 });

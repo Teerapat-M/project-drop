@@ -1,18 +1,21 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthProvider } from '../auth/AuthProvider';
 import { demoPreview } from '../fixtures';
 import css from '../index.css?raw';
 import { mockMatchMedia } from '../test/matchMedia';
+import { FallbackMapProvider } from '../maps/MapProvider';
 import { MapsProvider } from '../maps/MapsProvider';
+import { resetRouteCache } from '../maps/routeCache';
 import { createMockMapProvider } from '../test/mockMapProvider';
 import { JoinTripPage } from './JoinTripPage';
 
-const { rpc, maybeSingle, removeChannel } = vi.hoisted(() => ({
+const { rpc, maybeSingle, removeChannel, getSession } = vi.hoisted(() => ({
   rpc: vi.fn(),
   maybeSingle: vi.fn(),
   removeChannel: vi.fn(),
+  getSession: vi.fn(),
 }));
 
 vi.mock('../supabase', () => ({
@@ -34,10 +37,7 @@ vi.mock('../supabase', () => ({
     }),
     removeChannel,
     auth: {
-      getSession: () =>
-        Promise.resolve({
-          data: { session: { user: { id: 'u1' } } },
-        }),
+      getSession,
       onAuthStateChange: () => ({
         data: { subscription: { unsubscribe: () => undefined } },
       }),
@@ -57,11 +57,29 @@ function renderJoin(path: string) {
   );
 }
 
+function pinDestText(address = 'ตลาดกลาง') {
+  fireEvent.change(screen.getByTestId('place-rider-stop'), { target: { value: address } });
+}
+
+function pickSeatAndRisk() {
+  fireEvent.click(screen.getByTestId('seat-rear_middle'));
+  fireEvent.click(screen.getByLabelText(/ร่วมทริปด้วยความเสี่ยง/));
+}
+
 describe('JoinTripPage', () => {
+  afterEach(() => {
+    resetRouteCache();
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     rpc.mockReset();
     maybeSingle.mockReset();
     removeChannel.mockReset();
+    getSession.mockReset();
+    getSession.mockResolvedValue({
+      data: { session: { user: { id: 'u1' } } },
+    });
     maybeSingle.mockResolvedValue({ data: { owner_id: 'u1' } });
     rpc.mockImplementation((name: string) => {
       if (name === 'carpool_trip_preview') {
@@ -173,6 +191,7 @@ describe('JoinTripPage', () => {
     // booked 50 L + 24 L + joiner default 50 L = 124 L → 76 L left
     expect(screen.getByTestId('trunk-remain')).toHaveTextContent('เหลือ 76 ลิตร');
     expect(screen.getByTestId('trunk-fill')).toHaveAttribute('data-overflow', 'false');
+    pinDestText();
     fireEvent.click(screen.getByTestId('seat-rear_middle'));
     fireEvent.click(screen.getByLabelText(/ร่วมทริปด้วยความเสี่ยง/));
     expect(screen.getByTestId('join-submit')).not.toBeDisabled();
@@ -199,6 +218,7 @@ describe('JoinTripPage', () => {
     maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
     renderJoin('/trips/demo-taxi-12km');
     await screen.findByTestId('trunk-remain');
+    pinDestText();
     fireEvent.click(screen.getByTestId('seat-rear_middle'));
     fireEvent.click(screen.getByLabelText(/ร่วมทริปด้วยความเสี่ยง/));
     expect(screen.getByTestId('join-submit')).not.toBeDisabled();
@@ -208,6 +228,7 @@ describe('JoinTripPage', () => {
     expect(screen.getByTestId('luggage-overflow')).toBeInTheDocument();
     expect(screen.getByTestId('trunk-fill')).toHaveAttribute('data-overflow', 'true');
     expect(screen.getByTestId('join-submit')).toBeDisabled();
+    expect(screen.getByTestId('join-hint')).toHaveTextContent('สัมภาระเกินที่ว่างท้ายรถ');
   });
 
   it('uses the private-car driver-entered trunk on join', async () => {
@@ -225,4 +246,135 @@ describe('JoinTripPage', () => {
     expect(screen.getByTestId('trunk-remain')).toHaveTextContent('เหลือ 200 ลิตร');
     expect(screen.getByTestId('trunk-fill')).toHaveAttribute('data-overflow', 'false');
   });
+
+  it('shows the first unmet join hint in order and enables once all are met', async () => {
+    mockMatchMedia(390);
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
+    renderJoin('/trips/demo-taxi-12km');
+    await waitFor(() =>
+      expect(screen.getByTestId('join-hint')).toHaveTextContent('เลือกที่นั่งก่อน'),
+    );
+    expect(screen.getByTestId('join-submit')).toBeDisabled();
+    expect(screen.getByTestId('join-submit')).toHaveAttribute(
+      'aria-describedby',
+      screen.getByTestId('join-hint').id,
+    );
+
+    fireEvent.click(screen.getByTestId('seat-rear_middle'));
+    expect(screen.getByTestId('join-hint')).toHaveTextContent('ปักหมุดปลายทางของคุณ');
+
+    pinDestText();
+    expect(screen.getByTestId('join-hint')).toHaveTextContent('ติ๊กยอมรับความเสี่ยงก่อน');
+
+    fireEvent.click(screen.getByLabelText(/ร่วมทริปด้วยความเสี่ยง/));
+    expect(screen.queryByTestId('join-hint')).toBeNull();
+    expect(screen.getByTestId('join-submit')).not.toBeDisabled();
+  });
+
+  it('enables for a non-owner with seat, pin, and risk ticked (Bell)', async () => {
+    mockMatchMedia(390);
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
+    renderJoin('/trips/demo-taxi-12km');
+    await screen.findByTestId('join-submit');
+    pinDestText();
+    pickSeatAndRisk();
+    expect(screen.getByTestId('join-submit')).not.toBeDisabled();
+    expect(screen.queryByTestId('join-hint')).toBeNull();
+  });
+
+  it('falls back and enables when the route call fails or there is no Maps key', async () => {
+    mockMatchMedia(390);
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
+    const provider = new FallbackMapProvider();
+    const onRoute = vi.spyOn(provider, 'route');
+    render(
+      <AuthProvider>
+        <MapsProvider provider={provider}>
+          <MemoryRouter initialEntries={['/trips/demo-taxi-12km']}>
+            <Routes>
+              <Route path="/trips/:id" element={<JoinTripPage />} />
+            </Routes>
+          </MemoryRouter>
+        </MapsProvider>
+      </AuthProvider>,
+    );
+    await screen.findByTestId('join-submit');
+    pinDestText('เซ็นทรัลเฟสติวัล');
+    pickSeatAndRisk();
+    expect(screen.getByTestId('join-submit')).not.toBeDisabled();
+    expect(onRoute).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByTestId('detour-fallback-note')).toBeInTheDocument());
+  });
+
+  it('shows กำลังคำนวณเส้นทาง while an off-trip route is pending', async () => {
+    mockMatchMedia(390);
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
+    const provider = createMockMapProvider();
+    provider.route.mockImplementation(() => new Promise(() => undefined));
+    render(
+      <AuthProvider>
+        <MapsProvider provider={provider}>
+          <MemoryRouter initialEntries={['/trips/demo-taxi-12km']}>
+            <Routes>
+              <Route path="/trips/:id" element={<JoinTripPage />} />
+            </Routes>
+          </MemoryRouter>
+        </MapsProvider>
+      </AuthProvider>,
+    );
+    await screen.findByTestId('join-submit');
+    fireEvent.click(screen.getByTestId('place-rider-stop'));
+    fireEvent.click(screen.getByTestId('place-confirm'));
+    pickSeatAndRisk();
+    expect(screen.getByTestId('join-hint')).toHaveTextContent('กำลังคำนวณเส้นทาง…');
+    expect(screen.getByTestId('join-submit')).toBeDisabled();
+  });
+
+  it('shows เข้าสู่ระบบก่อน when there is no session', async () => {
+    mockMatchMedia(390);
+    getSession.mockResolvedValue({ data: { session: null } });
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
+    renderJoin('/trips/demo-taxi-12km');
+    expect(await screen.findByTestId('join-hint')).toHaveTextContent('เข้าสู่ระบบก่อน');
+    expect(screen.getByTestId('join-submit')).toBeDisabled();
+  });
+
+  it('falls back and enables when the Routes call rejects', async () => {
+    mockMatchMedia(390);
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
+    const provider = createMockMapProvider();
+    provider.route.mockRejectedValue(new Error('routes down'));
+    render(
+      <AuthProvider>
+        <MapsProvider provider={provider}>
+          <MemoryRouter initialEntries={['/trips/demo-taxi-12km']}>
+            <Routes>
+              <Route path="/trips/:id" element={<JoinTripPage />} />
+            </Routes>
+          </MemoryRouter>
+        </MapsProvider>
+      </AuthProvider>,
+    );
+    await screen.findByTestId('join-submit');
+    fireEvent.click(screen.getByTestId('place-rider-stop'));
+    fireEvent.click(screen.getByTestId('place-confirm'));
+    pickSeatAndRisk();
+    await waitFor(() => expect(screen.getByTestId('join-submit')).not.toBeDisabled());
+    expect(screen.getByTestId('detour-fallback-note')).toBeInTheDocument();
+  });
+
+  it('shows ทริปนี้ปิดรับแล้ว when the trip is not open', async () => {
+    mockMatchMedia(390);
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
+    rpc.mockImplementation((name: string) => {
+      if (name === 'carpool_trip_preview') {
+        return Promise.resolve({ data: { ...demoPreview('demo-taxi-12km'), status: 'cancelled' } });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    renderJoin('/trips/demo-taxi-12km');
+    expect(await screen.findByTestId('join-hint')).toHaveTextContent('ทริปนี้ปิดรับแล้ว');
+    expect(screen.getByTestId('join-submit')).toBeDisabled();
+  });
 });
+

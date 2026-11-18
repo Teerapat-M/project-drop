@@ -7,12 +7,14 @@ import { useMapProvider } from './MapsProvider';
 import { ROUTE_DEBOUNCE_MS } from './routeCache';
 import { orderedRoute, type NamedStop } from './routePoints';
 
+export type RouteKmMeta = { fallback?: boolean };
+
 type Props = {
   origin: PickedPlace | null;
   waypoints?: readonly (PickedPlace & { id: string })[];
   stops?: readonly (PickedPlace & { id: string })[];
   destination: PickedPlace | null;
-  onKm?: (km: number) => void;
+  onKm?: (km: number, meta?: RouteKmMeta) => void;
 };
 
 function namedFrom(places: readonly (PickedPlace & { id: string })[]): NamedStop[] {
@@ -64,15 +66,26 @@ export function RouteMiniMap({ origin, waypoints = [], stops = [], destination, 
           setPoints(null);
           setRoute(null);
           setLabels([]);
+          onKmRef.current?.(0, { fallback: true });
           return;
         }
         setLabels(ordered.labels);
         setPoints(ordered.points);
-        if (!provider.available) return;
-        const result = await fetchRoute(provider, ordered.points);
-        if (dead) return;
-        setRoute(result);
-        onKmRef.current?.(result.distanceKm);
+        if (!provider.available) {
+          setRoute({ distanceKm: 0 });
+          onKmRef.current?.(0, { fallback: true });
+          return;
+        }
+        try {
+          const result = await fetchRoute(provider, ordered.points);
+          if (dead) return;
+          setRoute(result);
+          onKmRef.current?.(result.distanceKm);
+        } catch {
+          if (dead) return;
+          setRoute({ distanceKm: 0 });
+          onKmRef.current?.(0, { fallback: true });
+        }
       })();
     }, ROUTE_DEBOUNCE_MS);
     return () => {
