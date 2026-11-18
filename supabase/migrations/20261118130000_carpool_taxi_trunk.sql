@@ -21,6 +21,20 @@ comment on function private.carpool_taxi_trunk() is
 
 revoke all on function private.carpool_taxi_trunk() from public, anon, authenticated;
 
+-- Backfill BEFORE the trigger and CHECK. Live taxi rows may still have the old
+-- create-form dims (e.g. 100×50×50). Adding the CHECK first would fail.
+update public.carpool_trips t
+   set trunk_w_cm = p.width_cm,
+       trunk_h_cm = p.height_cm,
+       trunk_l_cm = p.length_cm
+  from private.carpool_taxi_trunk() p
+ where t.kind = 'taxi'
+   and (
+     t.trunk_w_cm is distinct from p.width_cm
+     or t.trunk_h_cm is distinct from p.height_cm
+     or t.trunk_l_cm is distinct from p.length_cm
+   );
+
 -- Force the preset on taxi insert/update. Private-car dimensions stay as entered.
 create or replace function public.carpool_trips_taxi_trunk()
 returns trigger
@@ -68,7 +82,8 @@ alter table public.carpool_trips
     )
   );
 
--- Join preview: anonymized booked luggage (no rider ids). Creator first.
+-- Join preview: anonymized booked luggage (no rider ids, no owner flag).
+-- Neutral order: volume desc, then H/W/D — not owner-first / created_at.
 create or replace function public.carpool_trip_preview(p_trip_id uuid)
 returns jsonb
 language plpgsql
@@ -117,7 +132,12 @@ begin
                'height_cm', b.luggage_h_cm,
                'width_cm', b.luggage_w_cm,
                'depth_cm', b.luggage_d_cm
-             ) order by (b.rider_id = t.owner_id) desc, b.created_at, b.id), '[]'::jsonb)
+             ) order by
+                 (b.luggage_h_cm * b.luggage_w_cm * b.luggage_d_cm) desc,
+                 b.luggage_h_cm,
+                 b.luggage_w_cm,
+                 b.luggage_d_cm
+             ), '[]'::jsonb)
                from public.carpool_bookings b
               where b.trip_id = t.id
                 and b.luggage_h_cm is not null
@@ -149,7 +169,7 @@ end;
 $$;
 
 comment on function public.carpool_trip_preview(uuid) is
-  'Join-page preview: rounded coords, anonymized seats and luggage (no rider ids), no owner_id. Creator luggage first.';
+  'Join-page preview: rounded coords, anonymized seats and luggage (no rider ids / owner flag). Luggage ordered by volume desc, then dims.';
 
 revoke all on function public.carpool_trip_preview(uuid) from public, anon;
 grant execute on function public.carpool_trip_preview(uuid) to authenticated, service_role;

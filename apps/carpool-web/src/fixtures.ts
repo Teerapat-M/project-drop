@@ -233,6 +233,7 @@ export function demoPreview(id: string): TripPreview | null {
   const card = DEMO_TRIPS.find((t) => t.id === id) ?? DEMO_HISTORY.find((t) => t.id === id);
   if (!card) return null;
   const seats = card.vehicle_type === 'sedan' ? sedanSeats(card) : threeSeats(card);
+  // Booked bags only, volume-desc — not owner-first. Creator is not index 0.
   const luggage =
     card.kind === 'taxi'
       ? [

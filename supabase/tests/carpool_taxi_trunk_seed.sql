@@ -1,0 +1,33 @@
+-- Seed legacy rows BEFORE 20261118130000_carpool_taxi_trunk.sql.
+-- Taxi 100×50×50 is the old create-form default; private keeps custom dims.
+-- CI: supabase/tests/run-carpool-rls.sh. Do not point this at the live drop project.
+
+insert into auth.users (id, email, raw_user_meta_data) values
+  (
+    '00000000-0000-4000-8000-0000000000a0',
+    'trunk-backfill@test.local',
+    jsonb_build_object('full_name', 'Backfill')
+  );
+
+insert into public.carpool_trips (
+  id, owner_id, kind, vehicle_type, car_icon,
+  trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+  pickup_label, pickup_lat, pickup_lng,
+  dest_label, dest_lat, dest_lng, depart_at, status
+) values
+  (
+    '00000000-0000-4000-8000-0000000000aa',
+    '00000000-0000-4000-8000-0000000000a0',
+    'taxi', 'sedan', 'taxi',
+    100, 50, 50, 12,
+    'กรุงเทพฯ', 13.75, 100.5,
+    'อยุธยา', 14.35, 100.57, now() + interval '3 day', 'open'
+  ),
+  (
+    '00000000-0000-4000-8000-0000000000ab',
+    '00000000-0000-4000-8000-0000000000a0',
+    'private', 'pickup', 'pickup',
+    140, 40, 150, 80,
+    'ขอนแก่น', 16.432, 102.836,
+    'อุดรธานี', 17.415, 102.787, now() + interval '4 day', 'open'
+  );

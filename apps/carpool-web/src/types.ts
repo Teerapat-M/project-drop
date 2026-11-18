@@ -51,7 +51,7 @@ export type PreviewLuggage = {
 export type TripPreview = Omit<TripCard, 'open_seats' | 'bookable_seats'> & {
   seats: SeatState[];
   stops?: TripStop[];
-  /** Booked luggage, creator first, no rider ids. */
+  /** Booked luggage, anonymized, volume-desc. No rider ids. */
   luggage?: PreviewLuggage[];
 };
 

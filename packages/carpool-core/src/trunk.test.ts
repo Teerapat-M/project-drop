@@ -150,12 +150,14 @@ describe('remainingTrunkSpace', () => {
     expect(space.overflow).toBe(false);
   });
 
-  it('counts creator first, then booked riders, then the joiner', () => {
-    const space = remainingTrunkSpace(TAXI_TRUNK_PRESET, [creator, booked, joiner]);
-    expect(space.usedVol).toBe(50_000 + 24_000 + 8_000);
-    expect(space.remainingVol).toBe(capacity - 82_000);
-    expect(space.remainingLitres).toBe(118);
-    expect(space.overflow).toBe(false);
+  it('sums every piece; order does not change remaining space', () => {
+    const a = remainingTrunkSpace(TAXI_TRUNK_PRESET, [creator, booked, joiner]);
+    const b = remainingTrunkSpace(TAXI_TRUNK_PRESET, [joiner, booked, creator]);
+    expect(a).toEqual(b);
+    expect(a.usedVol).toBe(50_000 + 24_000 + 8_000);
+    expect(a.remainingVol).toBe(capacity - 82_000);
+    expect(a.remainingLitres).toBe(118);
+    expect(a.overflow).toBe(false);
   });
 
   it('overflow when usedVol > capacity; remaining clamps at 0', () => {

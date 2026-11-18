@@ -12,8 +12,10 @@
  * fillHeight = H * s * usedVol / (W * H * L), capped at the rect height.
  * overflow = usedVol > W * H * L. fillRatio = usedVol / (W * H * L).
  *
- * Remaining space = capacity − used. Pass luggage in order: creator first,
- * then booked riders, then the prospective joiner.
+ * Remaining space = capacity − used. usedVol is a sum: piece order does not
+ * matter. Creator luggage is included because it is passed from the create
+ * form, or because the creator already has a booking in the booked set — not
+ * because of preview position.
  */
 
 export const MIN_SHORT_SIDE_FRAME_RATIO = 0.4;
@@ -175,7 +177,7 @@ export function luggageUsedVol(luggage: readonly LuggagePiece[] = []): number {
   return usedVol;
 }
 
-/** Remaining space after luggage. Array order: creator, then booked riders, then joiner. */
+/** Remaining space after luggage. usedVol is a sum; array order does not matter. */
 export function remainingTrunkSpace(
   trunk: TrunkDims,
   luggage: readonly LuggagePiece[] = [],

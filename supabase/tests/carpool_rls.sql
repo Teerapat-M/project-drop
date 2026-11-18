@@ -1,5 +1,7 @@
 -- Catalog + behavioral RLS for 20261118100000_carpool.sql,
 -- 20261118120000_carpool_trip_stops.sql, and 20261118130000_carpool_taxi_trunk.sql.
+-- Taxi-trunk backfill (legacy 100×50×50) runs in run-carpool-rls.sh around
+-- that migration, via carpool_taxi_trunk_seed.sql / carpool_taxi_trunk_backfill.sql.
 -- CI: supabase/tests/run-carpool-rls.sh (shim + profiles + carpool on ephemeral Postgres).
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/carpool_rls.sql
 -- Recursion (42P17) or missing EXECUTE on policy helpers fails this file.
@@ -687,7 +689,7 @@ end $$;
 commit;
 
 -- Taxi trunk: trigger forces the preset; private dims stay; preview luggage
--- is anonymized with creator first.
+-- is anonymized and ordered by volume (not owner-first).
 begin;
 select tests.login(id) from tests.ids where k = 'owner';
 set local role authenticated;
@@ -737,8 +739,8 @@ declare
   rec public.carpool_bookings;
 begin
   select id into trip from tests.ids where k = 'taxi_trip';
-  rec := public.carpool_claim_owner_seat(trip, 'front_passenger', 50, 40, 25);
-  if rec.luggage_h_cm <> 50 or rec.luggage_w_cm <> 40 or rec.luggage_d_cm <> 25 then
+  rec := public.carpool_claim_owner_seat(trip, 'front_passenger', 40, 30, 20);
+  if rec.luggage_h_cm <> 40 or rec.luggage_w_cm <> 30 or rec.luggage_d_cm <> 20 then
     raise exception 'owner claim luggage mismatch';
   end if;
   perform tests.ok('taxi owner claim stores creator luggage');
@@ -755,9 +757,9 @@ declare
 begin
   select id into trip from tests.ids where k = 'taxi_trip';
   rec := public.carpool_book_seat(
-    trip, 'rear_left', 'อยุธยา', 14.35, 100.57, 0, 40, 30, 20
+    trip, 'rear_left', 'อยุธยา', 14.35, 100.57, 0, 50, 40, 25
   );
-  if rec.luggage_w_cm <> 30 then
+  if rec.luggage_w_cm <> 40 then
     raise exception 'rider luggage mismatch';
   end if;
   perform tests.ok('taxi rider books with luggage');
@@ -785,15 +787,17 @@ begin
   if jsonb_array_length(bags) <> 2 then
     raise exception 'preview luggage count: %', bags;
   end if;
+  -- Rider bag 50×40×25 (50 L) is larger than owner 40×30×20 (24 L). Volume-desc
+  -- must put the rider first; owner-first ordering would reverse this.
   if (bags->0->>'height_cm')::numeric <> 50
      or (bags->0->>'width_cm')::numeric <> 40
      or (bags->0->>'depth_cm')::numeric <> 25 then
-    raise exception 'creator luggage must be first: %', bags->0;
+    raise exception 'preview luggage must be volume-desc (larger bag first): %', bags->0;
   end if;
   if (bags->1->>'height_cm')::numeric <> 40
      or (bags->1->>'width_cm')::numeric <> 30
      or (bags->1->>'depth_cm')::numeric <> 20 then
-    raise exception 'booked rider luggage second: %', bags->1;
+    raise exception 'preview luggage smaller bag second: %', bags->1;
   end if;
   if bags->0 ? 'rider_id' or bags->1 ? 'rider_id' then
     raise exception 'preview luggage must not leak rider_id';
@@ -801,7 +805,7 @@ begin
   if rec ? 'owner_id' then
     raise exception 'preview must not leak owner_id';
   end if;
-  perform tests.ok('preview taxi luggage creator-first no rider ids');
+  perform tests.ok('preview taxi luggage volume-desc no rider ids');
 end $$;
 commit;
 

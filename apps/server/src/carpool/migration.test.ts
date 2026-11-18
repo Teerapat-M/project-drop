@@ -174,7 +174,7 @@ describe('carpool SQL test file', () => {
     expect(testSql).toMatch(/discover\/preview stay rounded with no owner id/);
     expect(testSql).toMatch(/anon is denied stops/);
     expect(testSql).toMatch(/taxi trunk insert\/update forced to preset/);
-    expect(testSql).toMatch(/preview taxi luggage creator-first no rider ids/);
+    expect(testSql).toMatch(/preview taxi luggage volume-desc no rider ids/);
     expect(testSql).toMatch(/private trunk insert\/update unchanged/);
     expect(testSql).toMatch(/anon\/authenticated must not EXECUTE public\.carpool_trips_taxi_trunk/);
   });
@@ -220,6 +220,16 @@ describe('carpool taxi trunk migration', () => {
     expect(taxiTrunkSql).toMatch(/carpool_trips_taxi_trunk_preset/);
   });
 
+  it('backfills taxi trunks before the trigger and CHECK', () => {
+    const updateAt = taxiTrunkSql.indexOf('update public.carpool_trips t');
+    const triggerAt = taxiTrunkSql.indexOf('create trigger carpool_trips_taxi_trunk');
+    const checkAt = taxiTrunkSql.indexOf('carpool_trips_taxi_trunk_preset');
+    expect(updateAt).toBeGreaterThan(0);
+    expect(updateAt).toBeLessThan(triggerAt);
+    expect(updateAt).toBeLessThan(checkAt);
+    expect(taxiTrunkSql).toMatch(/t\.kind = 'taxi'/);
+  });
+
   it('forces taxi dims via a trigger with no EXECUTE grant', () => {
     expect(taxiTrunkSql).toMatch(/set search_path = ''/);
     expect(taxiTrunkSql).toMatch(
@@ -233,15 +243,46 @@ describe('carpool taxi trunk migration', () => {
     expect(taxiTrunkSql).toMatch(/kind <> 'taxi'/);
   });
 
-  it('adds anonymized preview luggage with creator first', () => {
+  it('adds anonymized preview luggage ordered by volume, not owner', () => {
     const preview =
       taxiTrunkSql.match(
         /create or replace function public\.carpool_trip_preview[\s\S]*?end;\n\$\$;/,
       )?.[0] ?? '';
     expect(preview).toMatch(/'luggage'/);
-    expect(preview).toMatch(/order by \(b\.rider_id = t\.owner_id\) desc, b\.created_at, b\.id/);
+    expect(preview).toMatch(
+      /order by\s+\(b\.luggage_h_cm \* b\.luggage_w_cm \* b\.luggage_d_cm\) desc/,
+    );
+    expect(preview).not.toMatch(/rider_id = t\.owner_id/);
+    expect(preview).not.toMatch(/b\.created_at/);
     expect(preview).not.toMatch(/'rider_id'/);
     expect(preview).not.toMatch(/'owner_id'/);
     expect(preview).toMatch(/'stops'/);
+  });
+});
+
+describe('carpool taxi trunk backfill runner', () => {
+  const seedSql = readFileSync(join(root, 'tests/carpool_taxi_trunk_seed.sql'), 'utf8');
+  const backfillSql = readFileSync(join(root, 'tests/carpool_taxi_trunk_backfill.sql'), 'utf8');
+  const runner = readFileSync(join(root, 'tests/run-carpool-rls.sh'), 'utf8');
+
+  it('seeds a legacy taxi 100×50×50 and a private custom trunk before the migration', () => {
+    expect(seedSql).toMatch(/100, 50, 50/);
+    expect(seedSql).toMatch(/'taxi'/);
+    expect(seedSql).toMatch(/140, 40, 150/);
+    expect(seedSql).toMatch(/'private'/);
+    expect(runner).toMatch(/carpool_taxi_trunk_seed\.sql/);
+    expect(runner.indexOf('carpool_taxi_trunk_seed.sql')).toBeLessThan(
+      runner.indexOf('20261118130000_carpool_taxi_trunk.sql'),
+    );
+  });
+
+  it('asserts backfill, private unchanged, and CHECK after the migration', () => {
+    expect(backfillSql).toMatch(/100×40×50/);
+    expect(backfillSql).toMatch(/140×40×150/);
+    expect(backfillSql).toMatch(/check_violation/);
+    expect(runner).toMatch(/carpool_taxi_trunk_backfill\.sql/);
+    expect(runner.indexOf('20261118130000_carpool_taxi_trunk.sql')).toBeLessThan(
+      runner.indexOf('carpool_taxi_trunk_backfill.sql'),
+    );
   });
 });

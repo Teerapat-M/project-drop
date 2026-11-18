@@ -166,17 +166,33 @@ describe('JoinTripPage', () => {
     expect(provider.load).toHaveBeenCalled();
   });
 
-  it('subtracts creator and booked luggage from the fixed taxi trunk', async () => {
+  it('subtracts booked luggage plus the joiner form, regardless of preview order', async () => {
     mockMatchMedia(390);
     maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
     renderJoin('/trips/demo-taxi-12km');
     expect(await screen.findByTestId('trunk-label')).toHaveTextContent('ท้ายรถ 100×40×50 ซม. = 200 ล.');
-    // creator 50 L + booked 24 L + joiner default 50 L = 124 L → 76 L left
+    // booked 50 L + 24 L + joiner default 50 L = 124 L → 76 L left
     expect(screen.getByTestId('trunk-remain')).toHaveTextContent('เหลือ 76 ลิตร');
     expect(screen.getByTestId('trunk-fill')).toHaveAttribute('data-overflow', 'false');
     fireEvent.click(screen.getByTestId('seat-rear_middle'));
     fireEvent.click(screen.getByLabelText(/ร่วมทริปด้วยความเสี่ยง/));
     expect(screen.getByTestId('join-submit')).not.toBeDisabled();
+  });
+
+  it('keeps the same remaining space when preview luggage order is reversed', async () => {
+    mockMatchMedia(390);
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
+    const preview = demoPreview('demo-taxi-12km')!;
+    rpc.mockImplementation((name: string) => {
+      if (name === 'carpool_trip_preview') {
+        return Promise.resolve({
+          data: { ...preview, luggage: [...(preview.luggage ?? [])].reverse() },
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    renderJoin('/trips/demo-taxi-12km');
+    expect(await screen.findByTestId('trunk-remain')).toHaveTextContent('เหลือ 76 ลิตร');
   });
 
   it('turns red and disables join when luggage overflows the taxi trunk', async () => {
@@ -197,6 +213,7 @@ describe('JoinTripPage', () => {
 
   it('uses the private-car driver-entered trunk on join', async () => {
     mockMatchMedia(390);
+    maybeSingle.mockResolvedValue({ data: { owner_id: 'other' } });
     rpc.mockImplementation((name: string) => {
       if (name === 'carpool_trip_preview') {
         return Promise.resolve({ data: demoPreview('demo-private-12km') });

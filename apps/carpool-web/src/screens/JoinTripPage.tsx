@@ -95,6 +95,9 @@ export function JoinTripPage() {
   const yours: LuggagePiece[] = noBags
     ? []
     : [{ riderId: 'you', heightCm: h, widthCm: w, depthCm: d }];
+  // Preview bags are the booked set (anonymized, volume-desc). Creator luggage
+  // is in that set via their booking — not by array position. The join form is
+  // only this viewer's bags; skip it in owner mode so we do not double-count.
   const bookedLuggage: LuggagePiece[] = useMemo(
     () =>
       (preview?.luggage ?? []).map((row, i) => ({
@@ -105,7 +108,7 @@ export function JoinTripPage() {
       })),
     [preview],
   );
-  const luggage = [...bookedLuggage, ...yours];
+  const luggage = [...bookedLuggage, ...(ownerMode ? [] : yours)];
   const overflow = preview
     ? remainingTrunkSpace(
         {

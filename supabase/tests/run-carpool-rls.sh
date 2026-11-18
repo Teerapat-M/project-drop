@@ -15,5 +15,9 @@ psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/shim.sql"
 psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/migrations/20261110120000_profiles.sql"
 psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/migrations/20261118100000_carpool.sql"
 psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/migrations/20261118120000_carpool_trip_stops.sql"
+# Legacy taxi 100×50×50 + private custom dims, then the C2.3 migration, then
+# assert backfill/CHECK. Must run around the migration, not after carpool_rls.sql.
+psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/carpool_taxi_trunk_seed.sql"
 psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/migrations/20261118130000_carpool_taxi_trunk.sql"
+psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/carpool_taxi_trunk_backfill.sql"
 psql -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/carpool_rls.sql"
