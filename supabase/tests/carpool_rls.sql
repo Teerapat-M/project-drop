@@ -3536,50 +3536,105 @@ commit;
 do $$
 declare
   nearby text := 'พื้นที่ใกล้เคียง';
+  bkk text := 'กรุงเทพมหานคร';
   zwsp text := U&'\200B';
   got text;
+  n_canon int;
+  leak text;
+  leaks text[] := array[
+    'กรุงเทพฯ, ซ.ลาดพร้าว',
+    'Bangkok, Main St',
+    'กรุงเทพฯ, Soi ⑤',
+    'กรุงเทพฯ, Soi ²',
+    'กรุงเทพฯ, Ⅻ',
+    'สุขุมวิท, คอนโด ABC'
+  ];
 begin
+  select count(distinct canonical) into n_canon from private.carpool_province_pairs();
+  if n_canon is distinct from 77 then
+    raise exception 'expected 77 canonical provinces, got %', n_canon;
+  end if;
+  perform tests.ok('province allowlist 77 canonical');
+
   got := private.carpool_coarse_label('๙๙, กรุงเทพฯ');
-  if got is distinct from 'กรุงเทพฯ' then
-    raise exception 'thai digits should keep last part, got %', got;
+  if got is distinct from bkk then
+    raise exception 'thai digits should yield canonical, got %', got;
   end if;
   got := private.carpool_coarse_label('９９, กรุงเทพฯ');
-  if got is distinct from 'กรุงเทพฯ' then
-    raise exception 'fullwidth digits should keep last part, got %', got;
+  if got is distinct from bkk then
+    raise exception 'fullwidth digits should yield canonical, got %', got;
   end if;
   got := private.carpool_coarse_label('ซ.ลาดพร้าว, กรุงเทพฯ');
-  if got is distinct from 'กรุงเทพฯ' then
-    raise exception 'ซ. abbreviation should keep last part, got %', got;
+  if got is distinct from bkk then
+    raise exception 'ซ. abbreviation should yield canonical, got %', got;
   end if;
   got := private.carpool_coarse_label('ซ.๑๕, กรุงเทพฯ');
-  if got is distinct from 'กรุงเทพฯ' then
-    raise exception 'ซ. with thai digits should keep last part, got %', got;
+  if got is distinct from bkk then
+    raise exception 'ซ. with thai digits should yield canonical, got %', got;
   end if;
   got := private.carpool_coarse_label('ถ.สุขุมวิท, กรุงเทพฯ');
-  if got is distinct from 'กรุงเทพฯ' then
-    raise exception 'ถ. abbreviation should keep last part, got %', got;
+  if got is distinct from bkk then
+    raise exception 'ถ. abbreviation should yield canonical, got %', got;
   end if;
   got := private.carpool_coarse_label('Main St, Bangkok');
-  if got is distinct from 'Bangkok' then
-    raise exception 'Main St should keep last part, got %', got;
+  if got is distinct from bkk then
+    raise exception 'Main St, Bangkok should yield canonical, got %', got;
   end if;
   got := private.carpool_coarse_label('ซ' || zwsp || 'อยลาดพร้าว, กรุงเทพฯ');
-  if got is distinct from 'กรุงเทพฯ' then
-    raise exception 'zwsp soi should keep last part, got %', got;
+  if got is distinct from bkk then
+    raise exception 'zwsp soi should yield canonical, got %', got;
   end if;
   got := private.carpool_coarse_label('คอนโด ABC, กรุงเทพฯ');
-  if got is distinct from 'กรุงเทพฯ' then
-    raise exception 'condo ABC should keep last part, got %', got;
+  if got is distinct from bkk then
+    raise exception 'condo ABC should yield canonical, got %', got;
+  end if;
+  got := private.carpool_coarse_label('บ้าน, กรุงเทพฯ 10900');
+  if got is distinct from bkk then
+    raise exception 'trailing postcode should still match, got %', got;
   end if;
   got := private.carpool_coarse_label('จุดนัด');
   if got is distinct from nearby then
     raise exception 'single-part no-comma must fall back, got %', got;
   end if;
-  got := private.carpool_coarse_label('บ้าน, กรุงเทพฯ 10900');
-  if got is distinct from nearby then
-    raise exception 'last part with postcode must fall back, got %', got;
+  perform tests.ok('coarse province allowlist canonical Thai');
+
+  foreach leak in array leaks loop
+    got := private.carpool_coarse_label(leak);
+    if got is distinct from nearby then
+      raise exception 'street/soi/condo last part leaked from % as %', leak, got;
+    end if;
+  end loop;
+  perform tests.ok('soi/street last part falls back');
+
+  got := private.carpool_coarse_label('Sukhumvit Road, Khlong Toei, Bangkok 10110, Thailand');
+  if got is distinct from bkk then
+    raise exception 'google Bangkok should be canonical, got %', got;
   end if;
-  perform tests.ok('coarse allowlist last comma part only');
+  got := private.carpool_coarse_label('ถนนสุเทพ, เชียงใหม่ 50200, ประเทศไทย');
+  if got is distinct from 'เชียงใหม่' then
+    raise exception 'google Chiang Mai should be canonical, got %', got;
+  end if;
+  got := private.carpool_coarse_label('Beach Rd, Pattaya, Chon Buri 20150, Thailand');
+  if got is distinct from 'ชลบุรี' then
+    raise exception 'google Chon Buri should be canonical, got %', got;
+  end if;
+  got := private.carpool_coarse_label('Mueang, Nonthaburi 11000, Thailand');
+  if got is distinct from 'นนทบุรี' then
+    raise exception 'google Nonthaburi should be canonical, got %', got;
+  end if;
+  got := private.carpool_coarse_label('Bang Phli, Samut Prakarn 10540, Thailand');
+  if got is distinct from 'สมุทรปราการ' then
+    raise exception 'google Samut Prakarn should be canonical, got %', got;
+  end if;
+  got := private.carpool_coarse_label('Pratu Chai, Phra Nakhon Si Ayutthaya 13000, Thailand');
+  if got is distinct from 'พระนครศรีอยุธยา' then
+    raise exception 'google Ayutthaya should be canonical, got %', got;
+  end if;
+  got := private.carpool_coarse_label('ซอย 1, จ.เชียงใหม่');
+  if got is distinct from 'เชียงใหม่' then
+    raise exception 'จ. prefix should match, got %', got;
+  end if;
+  perform tests.ok('google addresses yield canonical Thai province');
 end $$;
 
 do $$
@@ -3608,7 +3663,14 @@ declare
     '12 หมู่ 4 ถนนพหลโยธิน, เชียงใหม่',
     '42/3 Silom Road, Bang Rak, Bangkok',
     'บ้านเลขที่ 9 แขวงลุมพินี เขตปทุมวัน กรุงเทพมหานคร',
-    'บ้าน, กรุงเทพฯ 10900'
+    'บ้าน, กรุงเทพฯ 10900',
+    'กรุงเทพฯ, ซ.ลาดพร้าว',
+    'Bangkok, Main St',
+    'กรุงเทพฯ, Soi ⑤',
+    'กรุงเทพฯ, Soi ²',
+    'กรุงเทพฯ, Ⅻ',
+    'สุขุมวิท, คอนโด ABC',
+    'Sukhumvit Road, Khlong Toei, Bangkok 10110, Thailand'
   ];
 begin
   -- array concat above uses the same zwsp as the dedicated case
@@ -3718,7 +3780,7 @@ declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 87 then
+  if n < 90 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

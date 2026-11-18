@@ -628,7 +628,7 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
     expect(testSql).toMatch(/dest vs cancel same booking 15x no 40P01/);
     expect(testSql).toMatch(/direct UPDATE dest_\* is permission denied/);
     expect(testSql).toMatch(/direct UPDATE on carpool_bookings by authenticated is 42501/);
-    expect(testSql).toMatch(/coarse allowlist last comma part only/);
+    expect(testSql).toMatch(/coarse province allowlist canonical Thai/);
     expect(testSql).toMatch(/tests\.dblink_conn\(\)/);
     expect(testSql).toMatch(/dblink conn includes host and port/);
     expect(testSql).toMatch(/non-owner payloads never leak house\/soi\/digits/);
@@ -653,8 +653,14 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
     expect(c25Sql).toMatch(/moves more than ~200 m/);
     expect(c25Sql).toMatch(/drop function if exists private\.carpool_coarse_area_part/);
     expect(c25Sql).toMatch(/create or replace function private\.carpool_text_has_number/);
+    expect(c25Sql).toMatch(/create or replace function private\.carpool_province_pairs/);
+    expect(c25Sql).toMatch(/create or replace function private\.carpool_lookup_province/);
     expect(c25Sql).toMatch(/create or replace function private\.carpool_coarse_label/);
     expect(c25Sql).toMatch(/private\.carpool_text_has_number\(last_part\)/);
+    expect(c25Sql).toMatch(/canonical allowlisted name, never input text/);
+    expect(testSql).toMatch(/province allowlist 77 canonical/);
+    expect(testSql).toMatch(/soi\/street last part falls back/);
+    expect(testSql).toMatch(/google addresses yield canonical Thai province/);
     expect(testSql).toMatch(/stranger preview pickup must be ~1 km from true/);
     expect(testSql).toMatch(/authenticated cannot SELECT true pickup_lat/);
     expect(testSql).toMatch(/dest offset only when hide_dest is on/);

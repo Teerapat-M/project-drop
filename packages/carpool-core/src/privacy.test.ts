@@ -8,9 +8,13 @@ import {
   shouldRegenOffset,
   shouldRevealPickup,
   stableOffset,
+  textHasNumber,
 } from './privacy';
+import { THAI_PROVINCE_ALIASES, lookupCanonicalProvince } from './thaiProvinces';
 
 const home = { lat: 13.75634, lng: 100.50187 };
+const nearby = 'พื้นที่ใกล้เคียง';
+const bkk = 'กรุงเทพมหานคร';
 
 describe('privacy offset', () => {
   it('lands 0.9–1.1 km from the true point', () => {
@@ -32,28 +36,71 @@ describe('privacy offset', () => {
 });
 
 describe('coarseAddress', () => {
-  const nearby = 'พื้นที่ใกล้เคียง';
-
-  it('keeps only the last comma part when it has no digits', () => {
-    expect(coarseAddress('บ้านเลขที่ 99 ซอยลาดพร้าว 15, กรุงเทพฯ')).toBe('กรุงเทพฯ');
-    expect(coarseAddress('๙๙, กรุงเทพฯ')).toBe('กรุงเทพฯ');
-    expect(coarseAddress('９９, กรุงเทพฯ')).toBe('กรุงเทพฯ');
-    expect(coarseAddress('ซ.ลาดพร้าว, กรุงเทพฯ')).toBe('กรุงเทพฯ');
-    expect(coarseAddress('ซ.๑๕, กรุงเทพฯ')).toBe('กรุงเทพฯ');
-    expect(coarseAddress('ถ.สุขุมวิท, กรุงเทพฯ')).toBe('กรุงเทพฯ');
-    expect(coarseAddress('Main St, Bangkok')).toBe('Bangkok');
-    expect(coarseAddress('ซ\u200Bอยลาดพร้าว, กรุงเทพฯ')).toBe('กรุงเทพฯ');
-    expect(coarseAddress('คอนโด ABC, กรุงเทพฯ')).toBe('กรุงเทพฯ');
-    expect(coarseAddress('12 หมู่ 4 ถนนพหลโยธิน, เชียงใหม่')).toBe('เชียงใหม่');
+  it('lists 77 canonical provinces', () => {
+    expect(THAI_PROVINCE_ALIASES).toHaveLength(77);
+    expect(new Set(THAI_PROVINCE_ALIASES.map(([c]) => c)).size).toBe(77);
   });
 
-  it('falls back when there is no comma, or the last part has digits', () => {
+  it('returns the canonical Thai province for the last allowlisted part', () => {
+    expect(coarseAddress('บ้านเลขที่ 99 ซอยลาดพร้าว 15, กรุงเทพฯ')).toBe(bkk);
+    expect(coarseAddress('๙๙, กรุงเทพฯ')).toBe(bkk);
+    expect(coarseAddress('９９, กรุงเทพฯ')).toBe(bkk);
+    expect(coarseAddress('ซ.ลาดพร้าว, กรุงเทพฯ')).toBe(bkk);
+    expect(coarseAddress('ซ.๑๕, กรุงเทพฯ')).toBe(bkk);
+    expect(coarseAddress('ถ.สุขุมวิท, กรุงเทพฯ')).toBe(bkk);
+    expect(coarseAddress('Main St, Bangkok')).toBe(bkk);
+    expect(coarseAddress('ซ\u200Bอยลาดพร้าว, กรุงเทพฯ')).toBe(bkk);
+    expect(coarseAddress('คอนโด ABC, กรุงเทพฯ')).toBe(bkk);
+    expect(coarseAddress('12 หมู่ 4 ถนนพหลโยธิน, เชียงใหม่')).toBe('เชียงใหม่');
+    expect(coarseAddress('บ้าน, กรุงเทพฯ 10900')).toBe(bkk);
+    expect(coarseAddress('123 ซอยสุขุมวิท, คลองเตย, กรุงเทพมหานคร 10110')).toBe(bkk);
+  });
+
+  it('never leaks a street/soi/condo last part', () => {
+    const leaks = [
+      'กรุงเทพฯ, ซ.ลาดพร้าว',
+      'Bangkok, Main St',
+      'กรุงเทพฯ, Soi ⑤',
+      'กรุงเทพฯ, Soi ²',
+      'กรุงเทพฯ, Ⅻ',
+      'สุขุมวิท, คอนโด ABC',
+    ];
+    for (const addr of leaks) {
+      const shown = coarseAddress(addr);
+      expect(shown).toBe(nearby);
+      expect(shown).not.toMatch(/ซ\.|ลาดพร้าว|Main St|Soi|คอนโด|Ⅻ|⑤|²/i);
+    }
+  });
+
+  it('maps realistic Google addresses with postcode and country', () => {
+    expect(coarseAddress('Sukhumvit Road, Khlong Toei, Bangkok 10110, Thailand')).toBe(bkk);
+    expect(coarseAddress('ถนนสุเทพ, เชียงใหม่ 50200, ประเทศไทย')).toBe('เชียงใหม่');
+    expect(coarseAddress('Beach Rd, Pattaya, Chon Buri 20150, Thailand')).toBe('ชลบุรี');
+    expect(coarseAddress('Mueang, Nonthaburi 11000, Thailand')).toBe('นนทบุรี');
+    expect(coarseAddress('Bang Phli, Samut Prakarn 10540, Thailand')).toBe('สมุทรปราการ');
+    expect(coarseAddress('Pratu Chai, Phra Nakhon Si Ayutthaya 13000, Thailand')).toBe(
+      'พระนครศรีอยุธยา',
+    );
+    expect(coarseAddress('Hat Yai, Songkhla 90110, Thailand')).toBe('สงขลา');
+    expect(coarseAddress('ซอย 1, จ.เชียงใหม่')).toBe('เชียงใหม่');
+    expect(coarseAddress('Soi 1, Chiang Mai Province')).toBe('เชียงใหม่');
+  });
+
+  it('falls back for single-part labels and non-province last parts', () => {
     expect(coarseAddress('')).toBe(nearby);
     expect(coarseAddress('จุดนัด')).toBe(nearby);
     expect(coarseAddress('99/1 ซอยลาดพร้าว')).toBe(nearby);
     expect(coarseAddress('บ้านเลขที่ 9 แขวงลุมพินี เขตปทุมวัน กรุงเทพมหานคร')).toBe(nearby);
-    expect(coarseAddress('123 ซอยสุขุมวิท, คลองเตย, กรุงเทพมหานคร 10110')).toBe(nearby);
-    expect(coarseAddress('บ้าน, กรุงเทพฯ 10900')).toBe(nearby);
+    expect(coarseAddress('กรุงเทพมหานคร')).toBe(nearby);
+    expect(coarseAddress('Bangkok')).toBe(nearby);
+  });
+
+  it('treats circled, superscript, and roman numbers as digits', () => {
+    expect(textHasNumber('Soi ⑤')).toBe(true);
+    expect(textHasNumber('Soi ²')).toBe(true);
+    expect(textHasNumber('Ⅻ')).toBe(true);
+    expect(textHasNumber('๙')).toBe(true);
+    expect(lookupCanonicalProvince('Bangkok')).toBe(bkk);
   });
 });
 

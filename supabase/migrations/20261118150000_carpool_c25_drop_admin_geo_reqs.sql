@@ -47,11 +47,14 @@
 -- Reveal: in_progress exists in the enum/guards but carpool-web never
 -- sets it. Booked riders get the true pickup 30 min before depart_at or
 -- once status is in_progress/completed.
--- Coarse labels (non-owners): ALLOWLIST — only the last comma-separated
--- part (province/city), after stripping Unicode Cf (U+200B–U+200D, U+2060,
--- U+FEFF). If that part has any \p{N} digit or is empty, or the label has
--- no comma, return พื้นที่ใกล้เคียง. Same function for discover/preview/
--- visible_trips/booked-before-reveal. No thai-admin dataset.
+-- Coarse labels (non-owners): 77-province ALLOWLIST. Last comma-separated
+-- part, after dropping a trailing country-only part (Thailand /
+-- ประเทศไทย / ไทย) and a trailing 5-digit ASCII postcode, is matched
+-- (NFC, strip Cf, trim, collapse spaces, case-fold, strip จ./จังหวัด
+-- prefix and Province/Changwat suffix) against hand-written aliases.
+-- Hit → canonical Thai province name (never input text). Miss, empty,
+-- remaining \p{N} digit, or a single-part label → พื้นที่ใกล้เคียง.
+-- Same function for discover/preview/visible_trips/booked-before-reveal.
 --
 -- M3 dest change: riders call public.carpool_set_booking_dest (helper in
 -- private). Lock trip FOR UPDATE, then the booking. Direct UPDATE of
@@ -185,22 +188,323 @@ revoke all on function private.carpool_offset_point(
 
 drop function if exists private.carpool_coarse_area_part(text);
 
--- Postgres ARE has no \p{N}/\p{Cf}. Strip Cf (ZWSP/ZWNJ/ZWJ/word-joiner/BOM
--- and related format chars) and treat ASCII/Thai/fullwidth/other BMP decimal
--- digits as \p{N}.
+-- Postgres ARE has no \p{N}/\p{Cf}. NFKC turns fullwidth/circled/superscript
+-- digits into ASCII; Thai ๐-๙ stay; Roman/enclosed ranges cover the rest.
 create or replace function private.carpool_text_has_number(p_text text)
 returns boolean
 language sql
 immutable
 set search_path = ''
 as $$
-  select coalesce(p_text, '') ~ '[0-9๐-๙０-９٠-٩۰-۹]'
-      or coalesce(p_text, '') ~ U&'[\0030-\0039\0660-\0669\06F0-\06F9\07C0-\07C9\0966-\096F\09E6-\09EF\0A66-\0A6F\0AE6-\0AEF\0B66-\0B6F\0BE6-\0BEF\0C66-\0C6F\0CE6-\0CEF\0D66-\0D6F\0DE6-\0DEF\0E50-\0E59\0ED0-\0ED9\0F20-\0F29\1040-\1049\1090-\1099\17E0-\17E9\1810-\1819\1946-\194F\19D0-\19D9\1B50-\1B59\1BB0-\1BB9\1C40-\1C49\1C50-\1C59\A620-\A629\A8D0-\A8D9\A900-\A909\A9D0-\A9D9\AA50-\AA59\ABF0-\ABF9\FF10-\FF19]';
+  select coalesce(normalize(p_text, nfkc), '') ~ '[0-9๐-๙０-９٠-٩۰-۹]'
+      or coalesce(p_text, '') ~ U&'[\00B2-\00B3\00B9\00BC-\00BE\2070-\2079\2080-\2089\2150-\2188\2460-\24FF\2776-\2793\FF10-\FF19]';
 $$;
 
 revoke all on function private.carpool_text_has_number(text) from public, anon, authenticated;
 
--- Allowlist: last comma part only (province/city). No house-token blocklist.
+-- Strip Unicode Cf (ZWSP/ZWNJ/ZWJ/word-joiner/BOM and related format chars).
+create or replace function private.carpool_strip_format(p_text text)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$
+  select pg_catalog.btrim(
+    pg_catalog.regexp_replace(
+      pg_catalog.regexp_replace(
+        normalize(coalesce(p_text, ''), nfc),
+        U&'[\00AD\200B-\200F\202A-\202E\2060-\206F\FEFF]',
+        '',
+        'g'
+      ),
+      '[[:space:]]+',
+      ' ',
+      'g'
+    )
+  );
+$$;
+
+revoke all on function private.carpool_strip_format(text) from public, anon, authenticated;
+
+-- NFC, strip Cf, collapse spaces, case-fold, strip จ./จังหวัด prefix and
+-- Province/Changwat suffix.
+create or replace function private.carpool_norm_province_key(p_text text)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$
+  select pg_catalog.btrim(
+    pg_catalog.regexp_replace(
+      pg_catalog.regexp_replace(
+        pg_catalog.lower(private.carpool_strip_format(p_text)),
+        '^(จังหวัด|จ\.)[[:space:]]*',
+        ''
+      ),
+      '[[:space:]]+(province|changwat)$',
+      ''
+    )
+  );
+$$;
+
+revoke all on function private.carpool_norm_province_key(text) from public, anon, authenticated;
+
+-- Hand-written 77-province allowlist (canonical Thai + aliases). Not a
+-- bundled geo dataset; no credit line.
+create or replace function private.carpool_province_pairs()
+returns table(alias text, canonical text)
+language sql
+immutable
+set search_path = ''
+as $$
+  select * from (values
+    ('กรุงเทพมหานคร', 'กรุงเทพมหานคร'),
+    ('กรุงเทพฯ', 'กรุงเทพมหานคร'),
+    ('กรุงเทพ', 'กรุงเทพมหานคร'),
+    ('กทม.', 'กรุงเทพมหานคร'),
+    ('กทม', 'กรุงเทพมหานคร'),
+    ('Bangkok', 'กรุงเทพมหานคร'),
+    ('Bangkok Metropolis', 'กรุงเทพมหานคร'),
+    ('Krung Thep Maha Nakhon', 'กรุงเทพมหานคร'),
+    ('Krung Thep', 'กรุงเทพมหานคร'),
+    ('Krungthep', 'กรุงเทพมหานคร'),
+    ('กระบี่', 'กระบี่'),
+    ('Krabi', 'กระบี่'),
+    ('กาญจนบุรี', 'กาญจนบุรี'),
+    ('Kanchanaburi', 'กาญจนบุรี'),
+    ('กาฬสินธุ์', 'กาฬสินธุ์'),
+    ('Kalasin', 'กาฬสินธุ์'),
+    ('กำแพงเพชร', 'กำแพงเพชร'),
+    ('Kamphaeng Phet', 'กำแพงเพชร'),
+    ('Kamphaengphet', 'กำแพงเพชร'),
+    ('Kampangpetch', 'กำแพงเพชร'),
+    ('ขอนแก่น', 'ขอนแก่น'),
+    ('Khon Kaen', 'ขอนแก่น'),
+    ('Khonkaen', 'ขอนแก่น'),
+    ('จันทบุรี', 'จันทบุรี'),
+    ('Chanthaburi', 'จันทบุรี'),
+    ('Chantaburi', 'จันทบุรี'),
+    ('ฉะเชิงเทรา', 'ฉะเชิงเทรา'),
+    ('Chachoengsao', 'ฉะเชิงเทรา'),
+    ('Chachoeng Sao', 'ฉะเชิงเทรา'),
+    ('ชลบุรี', 'ชลบุรี'),
+    ('Chon Buri', 'ชลบุรี'),
+    ('Chonburi', 'ชลบุรี'),
+    ('ชัยนาท', 'ชัยนาท'),
+    ('Chai Nat', 'ชัยนาท'),
+    ('Chainat', 'ชัยนาท'),
+    ('ชัยภูมิ', 'ชัยภูมิ'),
+    ('Chaiyaphum', 'ชัยภูมิ'),
+    ('ชุมพร', 'ชุมพร'),
+    ('Chumphon', 'ชุมพร'),
+    ('เชียงราย', 'เชียงราย'),
+    ('Chiang Rai', 'เชียงราย'),
+    ('Chiangrai', 'เชียงราย'),
+    ('เชียงใหม่', 'เชียงใหม่'),
+    ('Chiang Mai', 'เชียงใหม่'),
+    ('Chiangmai', 'เชียงใหม่'),
+    ('ตรัง', 'ตรัง'),
+    ('Trang', 'ตรัง'),
+    ('ตราด', 'ตราด'),
+    ('Trat', 'ตราด'),
+    ('ตาก', 'ตาก'),
+    ('Tak', 'ตาก'),
+    ('นครนายก', 'นครนายก'),
+    ('Nakhon Nayok', 'นครนายก'),
+    ('Nakhonnayok', 'นครนายก'),
+    ('นครปฐม', 'นครปฐม'),
+    ('Nakhon Pathom', 'นครปฐม'),
+    ('Nakhonpathom', 'นครปฐม'),
+    ('นครพนม', 'นครพนม'),
+    ('Nakhon Phanom', 'นครพนม'),
+    ('Nakhonphanom', 'นครพนม'),
+    ('นครราชสีมา', 'นครราชสีมา'),
+    ('Nakhon Ratchasima', 'นครราชสีมา'),
+    ('Nakhonratchasima', 'นครราชสีมา'),
+    ('Khorat', 'นครราชสีมา'),
+    ('Korat', 'นครราชสีมา'),
+    ('นครศรีธรรมราช', 'นครศรีธรรมราช'),
+    ('Nakhon Si Thammarat', 'นครศรีธรรมราช'),
+    ('Nakhonsithammarat', 'นครศรีธรรมราช'),
+    ('นครสวรรค์', 'นครสวรรค์'),
+    ('Nakhon Sawan', 'นครสวรรค์'),
+    ('Nakhonsawan', 'นครสวรรค์'),
+    ('นนทบุรี', 'นนทบุรี'),
+    ('Nonthaburi', 'นนทบุรี'),
+    ('นราธิวาส', 'นราธิวาส'),
+    ('Narathiwat', 'นราธิวาส'),
+    ('น่าน', 'น่าน'),
+    ('Nan', 'น่าน'),
+    ('บึงกาฬ', 'บึงกาฬ'),
+    ('Bueng Kan', 'บึงกาฬ'),
+    ('Buengkan', 'บึงกาฬ'),
+    ('Bungkan', 'บึงกาฬ'),
+    ('บุรีรัมย์', 'บุรีรัมย์'),
+    ('Buri Ram', 'บุรีรัมย์'),
+    ('Buriram', 'บุรีรัมย์'),
+    ('ปทุมธานี', 'ปทุมธานี'),
+    ('Pathum Thani', 'ปทุมธานี'),
+    ('Pathumthani', 'ปทุมธานี'),
+    ('ประจวบคีรีขันธ์', 'ประจวบคีรีขันธ์'),
+    ('Prachuap Khiri Khan', 'ประจวบคีรีขันธ์'),
+    ('Prachuapkhirikhan', 'ประจวบคีรีขันธ์'),
+    ('ปราจีนบุรี', 'ปราจีนบุรี'),
+    ('Prachin Buri', 'ปราจีนบุรี'),
+    ('Prachinburi', 'ปราจีนบุรี'),
+    ('ปัตตานี', 'ปัตตานี'),
+    ('Pattani', 'ปัตตานี'),
+    ('พระนครศรีอยุธยา', 'พระนครศรีอยุธยา'),
+    ('อยุธยา', 'พระนครศรีอยุธยา'),
+    ('Ayutthaya', 'พระนครศรีอยุธยา'),
+    ('Phra Nakhon Si Ayutthaya', 'พระนครศรีอยุธยา'),
+    ('Phra Nakhon Si Ayudhya', 'พระนครศรีอยุธยา'),
+    ('Ayudhya', 'พระนครศรีอยุธยา'),
+    ('พังงา', 'พังงา'),
+    ('Phangnga', 'พังงา'),
+    ('Phang Nga', 'พังงา'),
+    ('Phang-nga', 'พังงา'),
+    ('พัทลุง', 'พัทลุง'),
+    ('Phatthalung', 'พัทลุง'),
+    ('Phattalung', 'พัทลุง'),
+    ('พิจิตร', 'พิจิตร'),
+    ('Phichit', 'พิจิตร'),
+    ('พิษณุโลก', 'พิษณุโลก'),
+    ('Phitsanulok', 'พิษณุโลก'),
+    ('เพชรบุรี', 'เพชรบุรี'),
+    ('Phetchaburi', 'เพชรบุรี'),
+    ('Petchaburi', 'เพชรบุรี'),
+    ('เพชรบูรณ์', 'เพชรบูรณ์'),
+    ('Phetchabun', 'เพชรบูรณ์'),
+    ('Petchabun', 'เพชรบูรณ์'),
+    ('แพร่', 'แพร่'),
+    ('Phrae', 'แพร่'),
+    ('พะเยา', 'พะเยา'),
+    ('Phayao', 'พะเยา'),
+    ('ภูเก็ต', 'ภูเก็ต'),
+    ('Phuket', 'ภูเก็ต'),
+    ('มหาสารคาม', 'มหาสารคาม'),
+    ('Maha Sarakham', 'มหาสารคาม'),
+    ('Mahasarakham', 'มหาสารคาม'),
+    ('มุกดาหาร', 'มุกดาหาร'),
+    ('Mukdahan', 'มุกดาหาร'),
+    ('แม่ฮ่องสอน', 'แม่ฮ่องสอน'),
+    ('Mae Hong Son', 'แม่ฮ่องสอน'),
+    ('Maehongson', 'แม่ฮ่องสอน'),
+    ('ยโสธร', 'ยโสธร'),
+    ('Yasothon', 'ยโสธร'),
+    ('ยะลา', 'ยะลา'),
+    ('Yala', 'ยะลา'),
+    ('ร้อยเอ็ด', 'ร้อยเอ็ด'),
+    ('Roi Et', 'ร้อยเอ็ด'),
+    ('Roiet', 'ร้อยเอ็ด'),
+    ('ระนอง', 'ระนอง'),
+    ('Ranong', 'ระนอง'),
+    ('ระยอง', 'ระยอง'),
+    ('Rayong', 'ระยอง'),
+    ('ราชบุรี', 'ราชบุรี'),
+    ('Ratchaburi', 'ราชบุรี'),
+    ('ลพบุรี', 'ลพบุรี'),
+    ('Lopburi', 'ลพบุรี'),
+    ('Lop Buri', 'ลพบุรี'),
+    ('ลำปาง', 'ลำปาง'),
+    ('Lampang', 'ลำปาง'),
+    ('ลำพูน', 'ลำพูน'),
+    ('Lamphun', 'ลำพูน'),
+    ('เลย', 'เลย'),
+    ('Loei', 'เลย'),
+    ('ศรีสะเกษ', 'ศรีสะเกษ'),
+    ('Si Sa Ket', 'ศรีสะเกษ'),
+    ('Sisaket', 'ศรีสะเกษ'),
+    ('Sri Saket', 'ศรีสะเกษ'),
+    ('สกลนคร', 'สกลนคร'),
+    ('Sakon Nakhon', 'สกลนคร'),
+    ('Sakonnakhon', 'สกลนคร'),
+    ('สงขลา', 'สงขลา'),
+    ('Songkhla', 'สงขลา'),
+    ('สตูล', 'สตูล'),
+    ('Satun', 'สตูล'),
+    ('สมุทรปราการ', 'สมุทรปราการ'),
+    ('Samut Prakan', 'สมุทรปราการ'),
+    ('Samut Prakarn', 'สมุทรปราการ'),
+    ('Samutprakan', 'สมุทรปราการ'),
+    ('Samutprakarn', 'สมุทรปราการ'),
+    ('สมุทรสงคราม', 'สมุทรสงคราม'),
+    ('Samut Songkhram', 'สมุทรสงคราม'),
+    ('Samutsongkhram', 'สมุทรสงคราม'),
+    ('สมุทรสาคร', 'สมุทรสาคร'),
+    ('Samut Sakhon', 'สมุทรสาคร'),
+    ('Samutsakhon', 'สมุทรสาคร'),
+    ('สระแก้ว', 'สระแก้ว'),
+    ('Sa Kaeo', 'สระแก้ว'),
+    ('Sakaeo', 'สระแก้ว'),
+    ('Sa Kaew', 'สระแก้ว'),
+    ('สระบุรี', 'สระบุรี'),
+    ('Saraburi', 'สระบุรี'),
+    ('สิงห์บุรี', 'สิงห์บุรี'),
+    ('Sing Buri', 'สิงห์บุรี'),
+    ('Singburi', 'สิงห์บุรี'),
+    ('สุโขทัย', 'สุโขทัย'),
+    ('Sukhothai', 'สุโขทัย'),
+    ('สุพรรณบุรี', 'สุพรรณบุรี'),
+    ('Suphan Buri', 'สุพรรณบุรี'),
+    ('Suphanburi', 'สุพรรณบุรี'),
+    ('สุราษฎร์ธานี', 'สุราษฎร์ธานี'),
+    ('Surat Thani', 'สุราษฎร์ธานี'),
+    ('Suratthani', 'สุราษฎร์ธานี'),
+    ('สุรินทร์', 'สุรินทร์'),
+    ('Surin', 'สุรินทร์'),
+    ('หนองคาย', 'หนองคาย'),
+    ('Nong Khai', 'หนองคาย'),
+    ('Nongkhai', 'หนองคาย'),
+    ('หนองบัวลำภู', 'หนองบัวลำภู'),
+    ('Nong Bua Lam Phu', 'หนองบัวลำภู'),
+    ('Nongbualamphu', 'หนองบัวลำภู'),
+    ('Nong Bua Lamphu', 'หนองบัวลำภู'),
+    ('อ่างทอง', 'อ่างทอง'),
+    ('Ang Thong', 'อ่างทอง'),
+    ('Angthong', 'อ่างทอง'),
+    ('อำนาจเจริญ', 'อำนาจเจริญ'),
+    ('Amnat Charoen', 'อำนาจเจริญ'),
+    ('Amnatcharoen', 'อำนาจเจริญ'),
+    ('อุดรธานี', 'อุดรธานี'),
+    ('Udon Thani', 'อุดรธานี'),
+    ('Udonthani', 'อุดรธานี'),
+    ('Udorn Thani', 'อุดรธานี'),
+    ('อุตรดิตถ์', 'อุตรดิตถ์'),
+    ('Uttaradit', 'อุตรดิตถ์'),
+    ('อุทัยธานี', 'อุทัยธานี'),
+    ('Uthai Thani', 'อุทัยธานี'),
+    ('Uthaithani', 'อุทัยธานี'),
+    ('อุบลราชธานี', 'อุบลราชธานี'),
+    ('Ubon Ratchathani', 'อุบลราชธานี'),
+    ('Ubonratchathani', 'อุบลราชธานี')
+  ) as v(alias, canonical);
+$$;
+
+revoke all on function private.carpool_province_pairs() from public, anon, authenticated;
+
+create or replace function private.carpool_lookup_province(p_part text)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$
+  select p.canonical
+    from private.carpool_province_pairs() p
+   where private.carpool_norm_province_key(p.alias)
+         = private.carpool_norm_province_key(p_part)
+   limit 1;
+$$;
+
+revoke all on function private.carpool_lookup_province(text) from public, anon, authenticated;
+
+-- Allowlist: canonical Thai province for the last comma-separated part.
+-- Google formatted addresses usually end with ", Thailand" / ", ประเทศไทย"
+-- and a postcode (e.g. "..., Bangkok 10110, Thailand" or
+-- "... กรุงเทพมหานคร 10110"). Drop a trailing country-only part and a
+-- trailing 5-digit ASCII postcode token before matching. Output is always
+-- the canonical allowlisted name, never input text. No comma, empty, any
+-- remaining \p{N} digit, or a non-province last part → พื้นที่ใกล้เคียง.
 create or replace function private.carpool_coarse_label(p_address text)
 returns text
 language plpgsql
@@ -208,26 +512,38 @@ immutable
 set search_path = ''
 as $$
 declare
-  raw text := coalesce(p_address, '');
+  raw text := private.carpool_strip_format(p_address);
   parts text[];
+  n int;
   last_part text;
+  key text;
+  canon text;
 begin
-  raw := pg_catalog.regexp_replace(
-    raw,
-    U&'[\00AD\200B-\200F\202A-\202E\2060-\206F\FEFF]',
-    '',
-    'g'
-  );
-  raw := pg_catalog.btrim(raw);
   if raw = '' or pg_catalog.strpos(raw, ',') = 0 then
     return 'พื้นที่ใกล้เคียง';
   end if;
   parts := pg_catalog.regexp_split_to_array(raw, '\s*,\s*');
-  last_part := pg_catalog.btrim(parts[pg_catalog.cardinality(parts)]);
+  n := pg_catalog.cardinality(parts);
+  while n > 0 loop
+    last_part := pg_catalog.btrim(parts[n]);
+    key := pg_catalog.lower(private.carpool_strip_format(last_part));
+    exit when key not in ('thailand', 'ประเทศไทย', 'ไทย');
+    n := n - 1;
+  end loop;
+  if n < 1 then
+    return 'พื้นที่ใกล้เคียง';
+  end if;
+  last_part := pg_catalog.btrim(parts[n]);
+  last_part := pg_catalog.regexp_replace(last_part, '[[:space:]]+[0-9]{5}$', '');
+  last_part := pg_catalog.btrim(last_part);
   if last_part = '' or private.carpool_text_has_number(last_part) then
     return 'พื้นที่ใกล้เคียง';
   end if;
-  return last_part;
+  canon := private.carpool_lookup_province(last_part);
+  if canon is null then
+    return 'พื้นที่ใกล้เคียง';
+  end if;
+  return canon;
 end;
 $$;
 

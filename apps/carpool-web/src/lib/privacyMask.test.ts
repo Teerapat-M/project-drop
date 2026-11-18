@@ -57,7 +57,7 @@ describe('maskTripForViewer', () => {
     );
     expect(km).toBeGreaterThanOrEqual(0.8);
     expect(km).toBeLessThanOrEqual(1.2);
-    expect(shown.dest_label).toBe('กรุงเทพฯ');
+    expect(shown.dest_label).toBe('กรุงเทพมหานคร');
     expect(shown.dest_label).not.toMatch(/\d/);
     expect(shown.dest_label).not.toMatch(/ซอย|soi/i);
   });

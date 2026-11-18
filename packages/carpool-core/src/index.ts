@@ -65,11 +65,19 @@ export {
   OFFSET_REGEN_KM,
   offsetPoint,
   stableOffset,
+  NEARBY_AREA_LABEL,
   coarseAddress,
   offsetKmFromTrue,
   shouldRevealPickup,
   shouldRegenOffset,
+  textHasNumber,
 } from './privacy';
+
+export {
+  THAI_PROVINCE_ALIASES,
+  lookupCanonicalProvince,
+  normProvinceKey,
+} from './thaiProvinces';
 
 export {
   SEARCH_RADIUS_KM_MIN,

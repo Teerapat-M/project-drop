@@ -1,5 +1,15 @@
 import { haversineMeters, type GeoPoint } from './dropoffOrder';
 import { roundCoord } from './search';
+import {
+  NEARBY_AREA_LABEL,
+  isCountryOnlyPart,
+  lookupCanonicalProvince,
+  stripFormatChars,
+  stripTrailingPostcode,
+  textHasNumber,
+} from './thaiProvinces';
+
+export { NEARBY_AREA_LABEL, textHasNumber } from './thaiProvinces';
 
 /** Offset distance stored per trip (random in this range, once). */
 export const PRIVACY_OFFSET_KM_MIN = 0.9;
@@ -51,21 +61,27 @@ export function stableOffset(seed: string): { bearingRad: number; km: number } {
   };
 }
 
-const FORMAT_CHARS = /[\u200B-\u200D\u2060\uFEFF\p{Cf}]/gu;
-const ANY_DIGIT = /\p{N}/u;
-
 /**
- * Non-owners get only the last comma-separated part (province/city) after
- * stripping Unicode format chars. Any \p{N} digit, an empty last part, or a
- * single-part label (could be the full address) → พื้นที่ใกล้เคียง.
+ * Non-owners see the canonical Thai province when the last comma-separated
+ * part (after dropping a trailing country-only part and a trailing 5-digit
+ * ASCII postcode) matches the 77-province allowlist. Anything else, a
+ * single-part label, or a remaining \p{N} digit → พื้นที่ใกล้เคียง.
+ *
+ * Google formatted addresses usually end with ", Thailand" / ", ประเทศไทย"
+ * and a postcode (e.g. "..., Bangkok 10110, Thailand"). Those tokens are
+ * stripped before matching; the return value is always the allowlisted
+ * canonical name, never input text.
  */
 export function coarseAddress(address: string | null | undefined): string {
-  const raw = (address ?? '').replace(FORMAT_CHARS, '').trim();
-  if (!raw.includes(',')) return 'พื้นที่ใกล้เคียง';
-  const parts = raw.split(/\s*,\s*/);
-  const last = (parts[parts.length - 1] ?? '').trim();
-  if (!last || ANY_DIGIT.test(last)) return 'พื้นที่ใกล้เคียง';
-  return last;
+  const raw = stripFormatChars(address ?? '');
+  if (!raw.includes(',')) return NEARBY_AREA_LABEL;
+  const parts = raw.split(/\s*,\s*/).filter((p) => p.length > 0);
+  while (parts.length > 0 && isCountryOnlyPart(parts[parts.length - 1] ?? '')) {
+    parts.pop();
+  }
+  const last = stripTrailingPostcode(parts[parts.length - 1] ?? '');
+  if (!last || textHasNumber(last)) return NEARBY_AREA_LABEL;
+  return lookupCanonicalProvince(last) ?? NEARBY_AREA_LABEL;
 }
 
 export function shouldRegenOffset(prev: GeoPoint, next: GeoPoint): boolean {
