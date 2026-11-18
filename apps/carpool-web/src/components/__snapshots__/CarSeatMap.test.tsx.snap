@@ -1,0 +1,73 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`CarSeatMap Penpot layout > snapshots seat boxes and car image per vehicle 1`] = `
+{
+  "hatch": {
+    "img": "/assets/hatch.png",
+    "slots": [
+      {
+        "box": "0.16 0.411017 0.3 0.095339",
+        "id": "seat-slot-1A",
+      },
+      {
+        "box": "0.54 0.411017 0.3 0.095339",
+        "id": "seat-slot-1B",
+      },
+      {
+        "box": "0.16 0.521186 0.3 0.095339",
+        "id": "seat-slot-2A",
+      },
+      {
+        "box": "0.54 0.521186 0.3 0.095339",
+        "id": "seat-slot-2B",
+      },
+    ],
+  },
+  "pickup": {
+    "img": "/assets/pickup.png",
+    "slots": [
+      {
+        "box": "0.16 0.3104 0.3 0.0848",
+        "id": "seat-slot-1A",
+      },
+      {
+        "box": "0.54 0.3104 0.3 0.0848",
+        "id": "seat-slot-1B",
+      },
+      {
+        "box": "0.16 0.4224 0.3 0.0848",
+        "id": "seat-slot-2A",
+      },
+      {
+        "box": "0.54 0.4224 0.3 0.0848",
+        "id": "seat-slot-2B",
+      },
+    ],
+  },
+  "sedan": {
+    "img": "/assets/sedan.png",
+    "slots": [
+      {
+        "box": "0.16 0.414545 0.3 0.1",
+        "id": "seat-slot-1A",
+      },
+      {
+        "box": "0.54 0.414545 0.3 0.1",
+        "id": "seat-slot-1B",
+      },
+      {
+        "box": "0.16 0.525455 0.2 0.1",
+        "id": "seat-slot-2A",
+      },
+      {
+        "box": "0.396 0.525455 0.2 0.1",
+        "id": "seat-slot-2C",
+      },
+      {
+        "box": "0.632 0.525455 0.2 0.1",
+        "id": "seat-slot-2B",
+      },
+    ],
+  },
+}
+`;

@@ -43,7 +43,7 @@ describe('mobile-first layout', () => {
   });
 
   it('keeps 44px tap targets on seat buttons and chat bubble CSS', () => {
-    expect(css).toMatch(/\.seat-btn\s*\{[^}]*min-height:\s*var\(--tap\)/s);
+    expect(css).toMatch(/\.seat-hit\s*\{[^}]*min-height:\s*var\(--tap\)/s);
     expect(css).toMatch(/\.chat-bubble\s*\{[^}]*width:\s*var\(--tap\)/s);
   });
 });

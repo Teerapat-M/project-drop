@@ -1,6 +1,7 @@
+import type { LuggagePiece } from '@drop/carpool-core';
 import type { SeatPosition, SeatState, VehicleType } from '../types';
 import { SEAT_LABELS } from '../lib/seats';
-import { CarSeatMap } from './CarSeatMap';
+import { CarSeatMap, type TrunkDims } from './CarSeatMap';
 
 type Props = {
   vehicle: VehicleType;
@@ -10,6 +11,8 @@ type Props = {
   onToggleOpen?: (position: SeatState['position'], isOpen: boolean) => void;
   driverLabel?: string;
   ownPosition?: SeatPosition | null;
+  trunk?: TrunkDims;
+  luggage?: LuggagePiece[];
 };
 
 export function SeatPicker({
@@ -20,6 +23,8 @@ export function SeatPicker({
   onToggleOpen,
   driverLabel,
   ownPosition,
+  trunk,
+  luggage,
 }: Props) {
   return (
     <section data-testid="seat-picker" className="stack">
@@ -32,6 +37,8 @@ export function SeatPicker({
         onToggleOpen={onToggleOpen}
         driverLabel={driverLabel}
         ownPosition={ownPosition}
+        trunk={trunk}
+        luggage={luggage}
       />
       <ul className="muted" style={{ margin: 0, paddingLeft: 18 }}>
         {seats.map((s) => (

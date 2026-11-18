@@ -14,6 +14,7 @@ Files in this folder (no others):
 - `sedan_opt2.svg`, `sedan_opt2.png`
 - `sedan_opt3.svg`, `sedan_opt3.png`
 - `taxi_sedan.svg`, `taxi_sedan.png`
+- `sedan.png`, `hatch.png`, `pickup.png` (top-down seat-map bodies)
 - `LICENCE.md` (this file)
 
 ## Lucide line icons — house, briefcase
@@ -48,3 +49,11 @@ Files in this folder (no others):
 - Sources: matching `.svg` files listed above.
 - Renders: matching 256 px-wide PNGs, height cropped to the car plus about 6% margin, via cairosvg.
 - Use: image fills on trip cards, pickers, switches, history, account, and taxi chrome.
+
+## Own work — top-down seat-map bodies
+- Top-down car bodies exported from the drop-friend Penpot file (boards B07 / B07h / B07p / M-B07 / M-B21). RGBA, transparent background, body only. 2× LANCZOS upscales of the native 250 px-wide export.
+- `sedan.png` 500×1100 — also used for taxi (no separate taxi body).
+- `hatch.png` 500×944
+- `pickup.png` 500×1250
+- Licence: original work for this project; may be reused with the project. No manufacturer logo or badge.
+- Use: background of the join/create seat map. Seat boxes and trunk rect are overlaid from `src/lib/seat-layout.json` fractions.

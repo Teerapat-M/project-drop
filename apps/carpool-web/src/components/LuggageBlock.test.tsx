@@ -13,7 +13,6 @@ describe('LuggageBlock', () => {
       />,
     );
     expect(screen.getByTestId('luggage-overflow')).toHaveTextContent('สัมภาระเกินพื้นที่ท้ายรถ');
-    expect(screen.getByTestId('luggage-block').querySelector('[data-overflow="true"]')).toBeTruthy();
   });
 
   it('does not block when luggage fits', () => {

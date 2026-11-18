@@ -293,6 +293,7 @@ export function CreateTripPage() {
             onToggleOpen={toggleSeat}
             ownPosition={taxi ? ownerSeat : null}
             driverLabel={taxi ? 'คนขับแท็กซี่' : 'คุณ'}
+            trunk={trunk}
           />
         </div>
       </div>

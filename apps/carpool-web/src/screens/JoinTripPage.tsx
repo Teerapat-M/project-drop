@@ -224,6 +224,8 @@ export function JoinTripPage() {
         onToggleOpen={ownerMode ? toggleOpen : undefined}
         ownPosition={selected}
         driverLabel={taxi ? 'คนขับแท็กซี่' : preview.owner_display_name}
+        trunk={{ w: preview.trunk_w_cm, h: preview.trunk_h_cm, l: preview.trunk_l_cm }}
+        luggage={noBags ? [] : luggage}
       />
 
       <section className="stack" data-testid="own-booking">
