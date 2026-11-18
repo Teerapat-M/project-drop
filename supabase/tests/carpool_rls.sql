@@ -121,6 +121,20 @@ begin
   if not has_function_privilege('authenticated', 'public.carpool_cancel_booking(uuid)', 'EXECUTE') then
     raise exception 'authenticated must EXECUTE public.carpool_cancel_booking';
   end if;
+  if not has_function_privilege(
+       'authenticated',
+       'public.carpool_set_booking_dest(uuid, text, double precision, double precision)',
+       'EXECUTE'
+     ) then
+    raise exception 'authenticated must EXECUTE public.carpool_set_booking_dest';
+  end if;
+  if has_function_privilege(
+       'authenticated',
+       'private.carpool_apply_booking_dest(uuid, uuid, text, double precision, double precision)',
+       'EXECUTE'
+     ) then
+    raise exception 'authenticated must not EXECUTE private.carpool_apply_booking_dest';
+  end if;
   if not has_function_privilege('authenticated', set_sig, 'EXECUTE') then
     raise exception 'authenticated must EXECUTE public.carpool_set_seat_open';
   end if;
@@ -128,6 +142,11 @@ begin
      or has_function_privilege(
           'anon',
           discover_sig,
+          'EXECUTE'
+        )
+     or has_function_privilege(
+          'anon',
+          'public.carpool_set_booking_dest(uuid, text, double precision, double precision)',
           'EXECUTE'
         ) then
     raise exception 'anon must not EXECUTE carpool RPCs';
@@ -214,10 +233,14 @@ begin
      or has_table_privilege('authenticated', 'private.carpool_trip_offset', 'SELECT') then
     raise exception 'authenticated must not SELECT true trip coords, labels, or offset bearings';
   end if;
-  if not has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_lat', 'UPDATE')
-     or not has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_lng', 'UPDATE')
-     or not has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_label', 'UPDATE') then
-    raise exception 'authenticated must still UPDATE dest_* on carpool_bookings';
+  if has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_lat', 'UPDATE')
+     or has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_lng', 'UPDATE')
+     or has_column_privilege('authenticated', 'public.carpool_bookings', 'dest_label', 'UPDATE') then
+    raise exception 'authenticated must not UPDATE dest_* on carpool_bookings';
+  end if;
+  if not has_column_privilege('authenticated', 'public.carpool_bookings', 'luggage_h_cm', 'UPDATE')
+     or not has_column_privilege('authenticated', 'public.carpool_bookings', 'updated_at', 'UPDATE') then
+    raise exception 'authenticated must still UPDATE luggage/updated_at on carpool_bookings';
   end if;
   if has_function_privilege('authenticated', 'private.carpool_taxi_trunk()', 'EXECUTE')
      or has_function_privilege('anon', 'private.carpool_taxi_trunk()', 'EXECUTE') then
@@ -329,7 +352,7 @@ begin
   end if;
 end $$;
 
--- M2: cancel / claim / set_seat / refresh lock trip before seat.
+-- M2/M3: cancel / claim / set_seat / refresh / dest lock trip first.
 do $$
 declare
   cancel text := pg_get_functiondef('public.carpool_cancel_booking(uuid)'::regprocedure);
@@ -340,13 +363,23 @@ declare
     'public.carpool_set_seat_open(uuid, public.carpool_seat_position, boolean)'::regprocedure
   );
   refresh text := pg_get_functiondef('private.carpool_refresh_status(uuid)'::regprocedure);
+  dest_fn text := pg_get_functiondef(
+    'private.carpool_apply_booking_dest(uuid, uuid, text, double precision, double precision)'::regprocedure
+  );
+  book text := pg_get_functiondef(
+    'public.carpool_book_seat(uuid, public.carpool_seat_position, text, double precision, double precision, numeric, numeric, numeric, numeric)'::regprocedure
+  );
 begin
-  if (select count(*) from regexp_matches(cancel, 'for update', 'g')) < 2 then
-    raise exception 'carpool_cancel_booking must lock trip then seat FOR UPDATE: %', cancel;
+  if (select count(*) from regexp_matches(cancel, 'for update', 'g')) < 3 then
+    raise exception 'carpool_cancel_booking must lock trip then seat then booking FOR UPDATE: %', cancel;
   end if;
   if position('from public.carpool_trips t' in cancel)
        > position('from public.carpool_seats s' in cancel) then
     raise exception 'carpool_cancel_booking must lock the trip before the seat';
+  end if;
+  if position('from public.carpool_seats s' in cancel)
+       > position('from public.carpool_bookings b where b.id' in cancel) then
+    raise exception 'carpool_cancel_booking must lock the seat before the booking';
   end if;
   if position('from public.carpool_trips t' in claim)
        > position('from public.carpool_seats s' in claim) then
@@ -358,6 +391,21 @@ begin
   end if;
   if refresh !~ 'for update' then
     raise exception 'carpool_refresh_status must SELECT the trip FOR UPDATE';
+  end if;
+  if position('from public.carpool_trips t' in dest_fn)
+       > position('from public.carpool_bookings b' in dest_fn) then
+    raise exception 'carpool_apply_booking_dest must lock the trip before the booking';
+  end if;
+  if dest_fn ~ 'from public.carpool_seats' then
+    raise exception 'carpool_apply_booking_dest must not lock a seat';
+  end if;
+  if position('from public.carpool_trips t' in book)
+       > position('from public.carpool_seats s' in book) then
+    raise exception 'carpool_book_seat must lock the trip before the seat';
+  end if;
+  if position('from public.carpool_seats s' in book)
+       > position('insert into public.carpool_bookings' in book) then
+    raise exception 'carpool_book_seat must lock the seat before inserting the booking';
   end if;
 end $$;
 
@@ -530,6 +578,50 @@ exception
     return sqlstate || ':' || sqlerrm;
 end;
 $$;
+
+create or replace function tests.try_set_booking_dest(p_uid uuid, p_trip uuid)
+returns text
+language plpgsql
+security definer
+set search_path = public, tests, pg_catalog
+as $$
+begin
+  perform tests.login(p_uid);
+  perform public.carpool_set_booking_dest(p_trip, 'จุดใหม่แข่ง', 13.77, 100.52);
+  return 'ok';
+exception
+  when others then
+    return sqlstate || ':' || sqlerrm;
+end;
+$$;
+
+create or replace function tests.assert_coarse_safe(p_shown text, p_true text)
+returns void
+language plpgsql
+set search_path = public, tests, pg_catalog
+as $$
+declare
+  tok text;
+begin
+  if p_shown is null then
+    raise exception 'coarse label is null for %', p_true;
+  end if;
+  for tok in select (regexp_matches(p_true, '\d+', 'g'))[1]
+  loop
+    if p_shown like '%' || tok || '%' then
+      raise exception 'non-owner label % leaked digit sequence % from %', p_shown, tok, p_true;
+    end if;
+  end loop;
+  if p_shown ~ 'ซอย' or p_shown ~* '\ysoi\y' then
+    raise exception 'non-owner label % leaked soi from %', p_shown, p_true;
+  end if;
+  if p_shown ~ 'บ้านเลขที่' or p_shown ~ '\d+\s*/\s*\d+' then
+    raise exception 'non-owner label % leaked house number from %', p_shown, p_true;
+  end if;
+end;
+$$;
+
+grant execute on function tests.assert_coarse_safe(text, text) to authenticated;
 
 do $$
 declare
@@ -1030,12 +1122,35 @@ select tests.login(id) from tests.ids where k = 'rider2';
 set local role authenticated;
 do $$
 declare
+  trip uuid;
+begin
+  select id into trip from tests.ids where k = 'trip2';
+  perform public.carpool_set_booking_dest(trip, 'ไกลกว่า', 18.650, 99.800);
+end $$;
+commit;
+
+-- Direct UPDATE dest_* is permission denied (column grant revoked).
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+do $$
+declare
   bid uuid;
+  denied boolean := false;
 begin
   select id into bid from tests.ids where k = 'booking2';
-  update public.carpool_bookings b
-     set dest_label = 'ไกลกว่า', dest_lat = 18.650, dest_lng = 99.800
-   where b.id = bid;
+  begin
+    update public.carpool_bookings b
+       set dest_label = 'ห้ามตรง', dest_lat = 18.1, dest_lng = 99.1
+     where b.id = bid;
+  exception
+    when insufficient_privilege then
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'direct UPDATE dest_* should be permission denied';
+  end if;
+  perform tests.ok('direct UPDATE dest_* is permission denied');
 end $$;
 commit;
 
@@ -1427,20 +1542,17 @@ select tests.login(id) from tests.ids where k = 'rider';
 set local role authenticated;
 do $$
 declare
-  bid uuid;
+  trip uuid;
   rec public.carpool_bookings;
 begin
-  select id into bid from tests.ids where k = 'freeze_booking';
-  update public.carpool_bookings
-     set dest_label = 'จุดใหม่', dest_lat = 18.600, dest_lng = 99.050
-   where id = bid
-  returning * into rec;
+  select id into trip from tests.ids where k = 'freeze_trip';
+  rec := public.carpool_set_booking_dest(trip, 'จุดใหม่', 18.600, 99.050);
   if rec.dest_label is distinct from 'จุดใหม่' then
     raise exception 'open trip should allow dest_* edits, got %', rec.dest_label;
   end if;
   update public.carpool_bookings
      set luggage_h_cm = 45, luggage_w_cm = 35, luggage_d_cm = 25
-   where id = bid
+   where id = rec.id
   returning * into rec;
   if rec.luggage_h_cm is distinct from 45
      or rec.luggage_w_cm is distinct from 35
@@ -1465,14 +1577,12 @@ select tests.login(id) from tests.ids where k = 'rider';
 set local role authenticated;
 do $$
 declare
-  bid uuid;
+  trip uuid;
   denied boolean := false;
 begin
-  select id into bid from tests.ids where k = 'freeze_booking';
+  select id into trip from tests.ids where k = 'freeze_trip';
   begin
-    update public.carpool_bookings
-       set dest_label = 'ห้าม', dest_lat = 18.1, dest_lng = 99.1
-     where id = bid;
+    perform public.carpool_set_booking_dest(trip, 'ห้าม', 18.1, 99.1);
   exception
     when raise_exception then
       if sqlerrm is distinct from 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว' then
@@ -1527,14 +1637,12 @@ select tests.login(id) from tests.ids where k = 'rider';
 set local role authenticated;
 do $$
 declare
-  bid uuid;
+  trip uuid;
   denied boolean := false;
 begin
-  select id into bid from tests.ids where k = 'freeze_booking';
+  select id into trip from tests.ids where k = 'freeze_trip';
   begin
-    update public.carpool_bookings
-       set dest_label = 'ห้ามหลังจบ', dest_lat = 18.2, dest_lng = 99.2
-     where id = bid;
+    perform public.carpool_set_booking_dest(trip, 'ห้ามหลังจบ', 18.2, 99.2);
   exception
     when raise_exception then
       if sqlerrm is distinct from 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว' then
@@ -1630,14 +1738,12 @@ select tests.login(id) from tests.ids where k = 'rider';
 set local role authenticated;
 do $$
 declare
-  bid uuid;
+  trip uuid;
   denied boolean := false;
 begin
-  select id into bid from tests.ids where k = 'freeze_cancel_booking';
+  select id into trip from tests.ids where k = 'freeze_cancel_trip';
   begin
-    update public.carpool_bookings
-       set dest_label = 'ห้ามยกเลิก', dest_lat = 18.3, dest_lng = 99.3
-     where id = bid;
+    perform public.carpool_set_booking_dest(trip, 'ห้ามยกเลิก', 18.3, 99.3);
   exception
     when raise_exception then
       if sqlerrm is distinct from 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว' then
@@ -1943,14 +2049,12 @@ declare
   bid uuid;
   denied boolean := false;
 begin
-  select b.id into bid
+  select b.trip_id into bid
     from public.carpool_bookings b
    where b.trip_id = (select id from tests.ids where k = 'taxi_trip')
      and b.rider_id = (select id from tests.ids where k = 'rider2');
   begin
-    update public.carpool_bookings
-       set dest_label = 'เชียงใหม่', dest_lat = 18.788, dest_lng = 98.985
-     where id = bid;
+    perform public.carpool_set_booking_dest(bid, 'เชียงใหม่', 18.788, 98.985);
   exception
     when raise_exception then
       if sqlerrm not like 'จุดลงนี้ออกนอกเส้นทาง%' then
@@ -3192,12 +3296,258 @@ begin
 end $$;
 commit;
 
+-- M3: dest change vs cancel on the same booking, 15 overlapping rounds, no 40P01.
+do $$
+declare
+  trip uuid;
+  rider uuid;
+  rider2 uuid;
+  conn text := format('dbname=%s', current_database());
+  i int;
+  res_c text;
+  res_d text;
+  setup text;
+begin
+  select id into trip from tests.ids where k = 'deadlock_trip';
+  select id into rider from tests.ids where k = 'rider';
+  select id into rider2 from tests.ids where k = 'rider2';
+
+  for i in 1..15 loop
+    perform t.res
+      from dblink(
+        conn,
+        format('select tests.try_cancel_booking(%L::uuid, %L::uuid)', rider, trip)
+      ) as t(res text);
+    perform t.res
+      from dblink(
+        conn,
+        format('select tests.try_cancel_booking(%L::uuid, %L::uuid)', rider2, trip)
+      ) as t(res text);
+    select t.res into setup
+      from dblink(
+        conn,
+        format(
+          'select tests.try_book_seat(%L::uuid, %L::uuid, %L::public.carpool_seat_position)',
+          rider, trip, 'rear_middle'
+        )
+      ) as t(res text);
+    if setup is distinct from 'ok' and setup not like '%คุณจองทริปนี้แล้ว%' then
+      raise exception 'dest/cancel setup book failed round %: %', i, setup;
+    end if;
+
+    begin
+      perform dblink_disconnect('dc');
+    exception when others then
+      null;
+    end;
+    begin
+      perform dblink_disconnect('ds');
+    exception when others then
+      null;
+    end;
+
+    perform dblink_connect('dc', conn);
+    perform dblink_connect('ds', conn);
+    perform dblink_exec('dc', 'set deadlock_timeout to ''1s''');
+    perform dblink_exec('ds', 'set deadlock_timeout to ''1s''');
+    perform dblink_exec('dc', 'set statement_timeout to ''8s''');
+    perform dblink_exec('ds', 'set statement_timeout to ''8s''');
+
+    perform dblink_send_query(
+      'dc',
+      format('select tests.try_cancel_booking(%L::uuid, %L::uuid)', rider, trip)
+    );
+    perform dblink_send_query(
+      'ds',
+      format('select tests.try_set_booking_dest(%L::uuid, %L::uuid)', rider, trip)
+    );
+
+    res_c := null;
+    res_d := null;
+    begin
+      select t.res into res_c from dblink_get_result('dc') as t(res text);
+    exception when others then
+      res_c := sqlstate || ':' || sqlerrm;
+    end;
+    begin
+      perform * from dblink_get_result('dc') as t(res text);
+    exception when others then
+      null;
+    end;
+    begin
+      select t.res into res_d from dblink_get_result('ds') as t(res text);
+    exception when others then
+      res_d := sqlstate || ':' || sqlerrm;
+    end;
+    begin
+      perform * from dblink_get_result('ds') as t(res text);
+    exception when others then
+      null;
+    end;
+
+    perform dblink_disconnect('dc');
+    perform dblink_disconnect('ds');
+
+    if coalesce(res_c, '') like '%40P01%' or coalesce(res_d, '') like '%40P01%' then
+      raise exception 'deadlock 40P01 round % cancel=% dest=%', i, res_c, res_d;
+    end if;
+  end loop;
+
+  perform tests.ok('dest vs cancel same booking 15x no 40P01');
+end $$;
+
+-- M4: non-owner discover/preview/visible_trips never leak house/soi/digits.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status, hide_dest
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 12,
+    'บ้านเลขที่ 99 ซอยลาดพร้าว 15, กรุงเทพฯ', 13.7563, 100.5018,
+    'บ้านเลขที่ 99 ซอยลาดพร้าว 15, กรุงเทพฯ', 14.35, 100.57,
+    now() + interval '20 day', 'open', true
+  ) returning id into trip;
+  insert into tests.ids (k, id) values ('coarse_leak_trip', trip);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+begin
+  select id into trip from tests.ids where k = 'coarse_leak_trip';
+  perform public.carpool_book_seat(
+    trip, 'rear_middle', 'จุดลงเอ', 13.76, 100.51, 0, null, null, null
+  );
+end $$;
+commit;
+
+do $$
+declare
+  trip uuid;
+  addr text;
+  rec jsonb;
+  vis_pick text;
+  vis_dest text;
+  disc_pick text;
+  disc_dest text;
+  addrs text[] := array[
+    'บ้านเลขที่ 99 ซอยลาดพร้าว 15, กรุงเทพฯ',
+    '123 ซอยสุขุมวิท, คลองเตย, กรุงเทพมหานคร 10110',
+    '99/1 Sukhumvit Soi 15, Khlong Toei, Bangkok 10110',
+    '12 หมู่ 4 ถนนพหลโยธิน, เชียงใหม่',
+    '42/3 Silom Road, Bang Rak, Bangkok',
+    'บ้านเลขที่ 9 แขวงลุมพินี เขตปทุมวัน กรุงเทพมหานคร'
+  ];
+begin
+  select id into trip from tests.ids where k = 'coarse_leak_trip';
+  foreach addr in array addrs loop
+    reset role;
+    update public.carpool_trips
+       set pickup_label = addr, dest_label = addr
+     where id = trip;
+
+    perform tests.login((select id from tests.ids where k = 'stranger'));
+    set local role authenticated;
+    rec := public.carpool_trip_preview(trip);
+    select d.pickup_label, d.dest_label into disc_pick, disc_dest
+      from public.carpool_discover_trips() d
+     where d.id = trip;
+    reset role;
+    perform tests.assert_coarse_safe(rec->>'pickup_label', addr);
+    perform tests.assert_coarse_safe(rec->>'dest_label', addr);
+    perform tests.assert_coarse_safe(disc_pick, addr);
+    perform tests.assert_coarse_safe(disc_dest, addr);
+
+    perform tests.login((select id from tests.ids where k = 'rider2'));
+    set local role authenticated;
+    select v.pickup_label, v.dest_label into vis_pick, vis_dest
+      from public.carpool_visible_trips() v
+     where v.id = trip;
+    reset role;
+    perform tests.assert_coarse_safe(vis_pick, addr);
+    perform tests.assert_coarse_safe(vis_dest, addr);
+  end loop;
+  perform tests.ok('non-owner payloads never leak house/soi/digits');
+end $$;
+
+-- L5: stored offset regenerates only when the true point moves > ~200 m.
+do $$
+declare
+  uid uuid;
+  trip uuid;
+  br1 double precision;
+  br2 double precision;
+  br3 double precision;
+  src1 double precision;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 12,
+    'กรุงเทพฯ', 13.7500, 100.5000,
+    'อยุธยา', 14.3500, 100.5700, now() + interval '21 day', 'open'
+  ) returning id into trip;
+  select pickup_bearing_rad, pickup_src_lat into br1, src1
+    from private.carpool_trip_offset where trip_id = trip;
+  if br1 is null then
+    raise exception 'offset row missing after insert';
+  end if;
+
+  update public.carpool_trips
+     set pickup_lat = 13.7505
+   where id = trip;
+  select pickup_bearing_rad into br2
+    from private.carpool_trip_offset where trip_id = trip;
+  if br2 is distinct from br1 then
+    raise exception 'tiny pickup move (~55 m) must keep stored offset, % vs %', br1, br2;
+  end if;
+  if (select pickup_src_lat from private.carpool_trip_offset where trip_id = trip)
+       is distinct from src1 then
+    raise exception 'tiny pickup move must not rewrite offset src';
+  end if;
+  perform tests.ok('offset bearing kept when true point moves under 200 m');
+
+  update public.carpool_trips
+     set pickup_lat = 13.7530
+   where id = trip;
+  select pickup_bearing_rad into br3
+    from private.carpool_trip_offset where trip_id = trip;
+  if br3 is not distinct from br1 then
+    raise exception 'pickup move >200 m must regenerate stored offset';
+  end if;
+  if (select pickup_src_lat from private.carpool_trip_offset where trip_id = trip)
+       is distinct from 13.7530 then
+    raise exception 'regen must store the new true pickup src';
+  end if;
+  perform tests.ok('offset bearing regenerates when true point moves over 200 m');
+end $$;
+
 do $$
 declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 78 then
+  if n < 83 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

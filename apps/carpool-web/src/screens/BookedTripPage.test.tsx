@@ -34,6 +34,25 @@ describe('BookedTripPage', () => {
     expect(screen.getByTestId('pickup-approx')).toHaveTextContent('จุดขึ้นโดยประมาณ');
     expect(screen.getByTestId('own-detour')).toHaveTextContent('ออกนอกเส้นทาง 1.2 กม.');
     expect(screen.getByTestId('own-booking')).toHaveTextContent('สัมภาระของคุณ ไม่มีข้อมูล');
+    expect(screen.getByTestId('save-dropoff')).toBeInTheDocument();
+  });
+
+  it('saves a demo drop-off locally via the dest RPC helper path', () => {
+    mockMatchMedia(390);
+    render(
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/trips/demo-mine-booked/booked']}>
+          <Routes>
+            <Route path="/trips/:id/booked" element={<BookedTripPage />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthProvider>,
+    );
+    fireEvent.change(screen.getByTestId('place-booked-dropoff'), {
+      target: { value: 'หนองจ๊อม' },
+    });
+    fireEvent.click(screen.getByTestId('save-dropoff'));
+    expect(screen.getByTestId('own-dropoff')).toHaveTextContent('จุดลงของคุณ · หนองจ๊อม');
   });
 
   it('draws the rider drop-off pin on the mini map and modal without an extra Routes call', async () => {

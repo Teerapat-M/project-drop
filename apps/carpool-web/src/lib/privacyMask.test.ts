@@ -42,13 +42,13 @@ describe('maskTripForViewer', () => {
     expect(km).toBeGreaterThanOrEqual(0.8);
     expect(km).toBeLessThanOrEqual(1.2);
     expect(shown.pickup_approx).toBe(true);
-    expect(shown.pickup_label).toBe('คลองเตย, กรุงเทพมหานคร');
+    expect(shown.pickup_label).toBe('คลองเตย');
     expect(shown.dest_lat).toBe(trip.dest_lat);
   });
 
   it('offsets dest only when hide_dest is on', () => {
     const shown = maskTripForViewer(
-      { ...trip, hide_dest: true },
+      { ...trip, hide_dest: true, dest_label: 'บ้านเลขที่ 99 ซอยลาดพร้าว 15, กรุงเทพฯ' },
       { isOwner: false, isBookedRider: false },
     );
     const km = offsetKmFromTrue(
@@ -57,5 +57,8 @@ describe('maskTripForViewer', () => {
     );
     expect(km).toBeGreaterThanOrEqual(0.8);
     expect(km).toBeLessThanOrEqual(1.2);
+    expect(shown.dest_label).toBe('กรุงเทพฯ');
+    expect(shown.dest_label).not.toMatch(/\d/);
+    expect(shown.dest_label).not.toMatch(/ซอย|soi/i);
   });
 });

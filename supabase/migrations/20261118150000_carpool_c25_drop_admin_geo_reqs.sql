@@ -37,18 +37,26 @@
 -- Privacy offset: true coords stay on carpool_trips. Non-owners read via
 -- DEFINER RPCs (discover/preview/visible_trips) that apply a ~1 km offset
 -- (bearing+km stored once in private.carpool_trip_offset; regen only when
--- that true point changes). Pickup/origin always offset for non-owners.
--- Dest offset only when hide_dest. Fare / detour floor / book_seat keep
--- the true route. Discover proximity uses the offset vertices, then 3-dec
--- + 0.5 km. Residual: listed pickup can be ~1 km from the true origin
--- book_seat does not check; taxi dest-floor exclude still uses the true
--- floor so common book_seat rejections are not listed.
+-- that true point moves more than ~200 m haversine). Pickup/origin always
+-- offset for non-owners. Dest offset only when hide_dest. Fare / detour
+-- floor / book_seat keep the true route. Discover proximity uses the
+-- offset vertices, then 3-dec + 0.5 km. Residual: listed pickup can be
+-- ~1 km from the true origin book_seat does not check; taxi dest-floor
+-- exclude still uses the true floor so common book_seat rejections are
+-- not listed.
 -- Reveal: in_progress exists in the enum/guards but carpool-web never
 -- sets it. Booked riders get the true pickup 30 min before depart_at or
 -- once status is in_progress/completed.
--- Coarse labels: truncate stored formatted address (last two comma parts
--- or from the first แขวง/เขต/อำเภอ/ตำบล/จังหวัด). No thai-admin dataset,
--- no extra reverse-geocode.
+-- Coarse labels (non-owners): one safe area part — a แขวง/เขต/อำเภอ/
+-- ตำบล/จังหวัด/district token or the city. Drop any part with digits,
+-- บ้านเลขที่, ซอย, หมู่, ถนน, soi, or a house-number pattern. Fallback
+-- พื้นที่ใกล้เคียง. No thai-admin dataset, no extra reverse-geocode.
+--
+-- M3 dest change: riders call public.carpool_set_booking_dest (helper in
+-- private). Lock trip FOR UPDATE, then the booking. Direct UPDATE of
+-- dest_* is revoked so PostgREST cannot lock booking then trip (that
+-- deadlocked with cancel_booking: trip → seat → DELETE booking).
+-- Lock order for trip+seat+booking: trip, then seat, then booking.
 
 -- ---------------------------------------------------------------------------
 -- Geo columns: already nullable from 20261118130000. Drop pairing CHECKs.
@@ -134,7 +142,7 @@ create table if not exists private.carpool_trip_offset (
 revoke all on table private.carpool_trip_offset from public, anon, authenticated;
 alter table private.carpool_trip_offset enable row level security;
 comment on table private.carpool_trip_offset is
-  'Per-trip random bearing+km (0.9–1.1). Regenerated only when that true point changes. Never granted to clients.';
+  'Per-trip random bearing+km (0.9–1.1). Regenerated only when that true point moves more than ~200 m. Never granted to clients.';
 
 create or replace function private.carpool_offset_point(
   p_lat double precision,
@@ -172,6 +180,54 @@ revoke all on function private.carpool_offset_point(
   double precision, double precision, double precision, numeric
 ) from public, anon, authenticated;
 
+-- One comma-part → area/city, or null if it still has house-level text.
+create or replace function private.carpool_coarse_area_part(p_part text)
+returns text
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare
+  sliced text := btrim(regexp_replace(coalesce(p_part, ''), '\s+[0-9]{5}\s*$', ''));
+  idx int := 0;
+  pos int;
+  kw text;
+begin
+  if sliced = '' then
+    return null;
+  end if;
+  foreach kw in array array['แขวง', 'เขต', 'อำเภอ', 'ตำบล', 'จังหวัด']::text[]
+  loop
+    pos := pg_catalog.strpos(sliced, kw);
+    if pos > 0 and (idx = 0 or pos < idx) then
+      idx := pos;
+    end if;
+  end loop;
+  pos := pg_catalog.strpos(pg_catalog.lower(sliced), 'district');
+  if pos > 0 and (idx = 0 or pos < idx) then
+    idx := pos;
+  end if;
+  if idx > 0 then
+    sliced := btrim(pg_catalog.substr(sliced, idx));
+  end if;
+  if sliced = ''
+     or sliced ~ '[0-9]'
+     or sliced ~ 'บ้านเลขที่'
+     or sliced ~ 'ซอย'
+     or sliced ~ 'หมู่'
+     or sliced ~ 'ถนน'
+     or sliced ~* '\ysoi\y'
+     or sliced ~* '\ystreet\y'
+     or sliced ~* '\yroad\y'
+     or sliced ~* '\yrd\y' then
+    return null;
+  end if;
+  return sliced;
+end;
+$$;
+
+revoke all on function private.carpool_coarse_area_part(text) from public, anon, authenticated;
+
 create or replace function private.carpool_coarse_label(p_address text)
 returns text
 language plpgsql
@@ -181,29 +237,56 @@ as $$
 declare
   raw text := btrim(coalesce(p_address, ''));
   parts text[];
-  n int;
+  part text;
+  sliced text;
+  first_safe text;
+  admin_safe text;
   idx int;
   pos int;
   kw text;
+  kws text[] := array['แขวง', 'เขต', 'อำเภอ', 'ตำบล', 'จังหวัด']::text[];
 begin
   if raw = '' then
     return 'พื้นที่ใกล้เคียง';
   end if;
   parts := regexp_split_to_array(raw, '\s*,\s*');
-  n := coalesce(cardinality(parts), 0);
-  if n >= 2 then
-    return btrim(parts[n - 1] || ', ' || parts[n]);
+  foreach part in array parts loop
+    sliced := private.carpool_coarse_area_part(part);
+    if sliced is not null then
+      if first_safe is null then
+        first_safe := sliced;
+      end if;
+      if admin_safe is null and (
+           sliced ~ 'แขวง|เขต|อำเภอ|ตำบล|จังหวัด'
+           or pg_catalog.lower(sliced) ~ 'district'
+         ) then
+        admin_safe := sliced;
+      end if;
+    end if;
+  end loop;
+  if admin_safe is not null then
+    return admin_safe;
+  end if;
+  -- Google "house, city": keep the remaining city. A lone nickname is not.
+  if coalesce(cardinality(parts), 0) >= 2 and first_safe is not null then
+    return first_safe;
   end if;
   idx := 0;
-  foreach kw in array array['แขวง', 'เขต', 'อำเภอ', 'ตำบล', 'จังหวัด']::text[]
-  loop
+  foreach kw in array kws loop
     pos := pg_catalog.strpos(raw, kw);
     if pos > 0 and (idx = 0 or pos < idx) then
       idx := pos;
     end if;
   end loop;
+  pos := pg_catalog.strpos(pg_catalog.lower(raw), 'district');
+  if pos > 0 and (idx = 0 or pos < idx) then
+    idx := pos;
+  end if;
   if idx > 0 then
-    return btrim(pg_catalog.substr(raw, idx));
+    sliced := private.carpool_coarse_area_part(pg_catalog.substr(raw, idx));
+    if sliced is not null then
+      return sliced;
+    end if;
   end if;
   return 'พื้นที่ใกล้เคียง';
 end;
@@ -244,8 +327,9 @@ begin
     );
     return;
   end if;
-  if o.pickup_src_lat is distinct from t.pickup_lat
-     or o.pickup_src_lng is distinct from t.pickup_lng then
+  if private.carpool_haversine_km(
+       o.pickup_src_lat, o.pickup_src_lng, t.pickup_lat, t.pickup_lng
+     ) > 0.2 then
     update private.carpool_trip_offset
        set pickup_bearing_rad = p_br,
            pickup_km = p_km,
@@ -253,8 +337,9 @@ begin
            pickup_src_lng = t.pickup_lng
      where trip_id = p_trip_id;
   end if;
-  if o.dest_src_lat is distinct from t.dest_lat
-     or o.dest_src_lng is distinct from t.dest_lng then
+  if private.carpool_haversine_km(
+       o.dest_src_lat, o.dest_src_lng, t.dest_lat, t.dest_lng
+     ) > 0.2 then
     update private.carpool_trip_offset
        set dest_bearing_rad = d_br,
            dest_km = d_km,
@@ -1016,7 +1101,8 @@ grant execute on function public.carpool_book_seat(
 ) to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
--- M2 deadlock: every path that touches trip + seat locks trip then seat.
+-- M2/M3 deadlock: every path that touches trip + seat + booking locks
+-- trip, then seat, then booking. Dest change has no seat: trip then booking.
 -- cancel_booking previously UPDATEd the seat then refresh_status UPDATEd
 -- the trip (opposite of book_seat). claim_owner_seat and set_seat_open
 -- locked the seat (or updated it) before refresh_status took the trip.
@@ -1092,6 +1178,7 @@ begin
   end if;
 
   perform 1 from public.carpool_seats s where s.id = rec.seat_id for update;
+  perform 1 from public.carpool_bookings b where b.id = rec.id for update;
 
   delete from public.carpool_bookings b where b.id = rec.id;
   update public.carpool_seats s
@@ -1102,10 +1189,107 @@ end;
 $$;
 
 comment on function public.carpool_cancel_booking(uuid) is
-  'Cancel own booking. Locks trip then seat FOR UPDATE, then DELETE + unbook. Trigger-only bookings_guard on DELETE.';
+  'Cancel own booking. Locks trip then seat then booking FOR UPDATE, then DELETE + unbook. Trigger-only bookings_guard on DELETE.';
 
 revoke all on function public.carpool_cancel_booking(uuid) from public, anon;
 grant execute on function public.carpool_cancel_booking(uuid) to authenticated, service_role;
+
+-- M3: rider dest change. Helper in private; public RPC is the only dest_*
+-- write path for authenticated. Lock trip then booking (never the reverse).
+create or replace function private.carpool_apply_booking_dest(
+  p_trip_id uuid,
+  p_rider_id uuid,
+  p_dest_label text,
+  p_dest_lat double precision,
+  p_dest_lng double precision
+)
+returns public.carpool_bookings
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  trip public.carpool_trips%rowtype;
+  rec public.carpool_bookings%rowtype;
+begin
+  if p_rider_id is null then
+    raise exception 'not authenticated';
+  end if;
+  select * into trip
+    from public.carpool_trips t
+   where t.id = p_trip_id
+   for update;
+  if not found then
+    raise exception 'trip not found';
+  end if;
+
+  select * into rec
+    from public.carpool_bookings b
+   where b.trip_id = p_trip_id
+     and b.rider_id = p_rider_id
+   for update;
+  if not found then
+    raise exception 'booking not found';
+  end if;
+  if rec.rider_id is distinct from p_rider_id then
+    raise exception 'เฉพาะผู้โดยสารที่แก้ไขการจองได้';
+  end if;
+  if trip.status in ('in_progress', 'completed', 'cancelled') then
+    raise exception 'ไม่สามารถเปลี่ยนจุดลงหรือสัมภาระหลังจากทริปเริ่มแล้ว';
+  end if;
+
+  -- bookings_guard (already holding this trip lock) recomputes detour_km
+  -- via carpool_enforce_max_detour — same floor / max_detour as today.
+  update public.carpool_bookings b
+     set dest_label = p_dest_label,
+         dest_lat = p_dest_lat,
+         dest_lng = p_dest_lng
+   where b.id = rec.id
+  returning * into rec;
+  return rec;
+end;
+$$;
+
+revoke all on function private.carpool_apply_booking_dest(
+  uuid, uuid, text, double precision, double precision
+) from public, anon, authenticated;
+
+create or replace function public.carpool_set_booking_dest(
+  p_trip_id uuid,
+  p_dest_label text,
+  p_dest_lat double precision,
+  p_dest_lng double precision
+)
+returns public.carpool_bookings
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+  rec public.carpool_bookings;
+begin
+  if uid is null then
+    raise exception 'not authenticated';
+  end if;
+  rec := private.carpool_apply_booking_dest(
+    p_trip_id, uid, p_dest_label, p_dest_lat, p_dest_lng
+  );
+  return rec;
+end;
+$$;
+
+comment on function public.carpool_set_booking_dest(
+  uuid, text, double precision, double precision
+) is
+  'Rider changes own drop-off. Locks trip then booking FOR UPDATE; max_detour/floor via bookings_guard. Direct dest_* UPDATE is revoked.';
+
+revoke all on function public.carpool_set_booking_dest(
+  uuid, text, double precision, double precision
+) from public, anon;
+grant execute on function public.carpool_set_booking_dest(
+  uuid, text, double precision, double precision
+) to authenticated, service_role;
 
 create or replace function public.carpool_claim_owner_seat(
   p_trip_id uuid,
@@ -1446,14 +1630,14 @@ revoke all on function public.carpool_visible_trips() from public, anon;
 grant execute on function public.carpool_visible_trips() to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
--- C2.5 rider drop-off privacy audit. No policy/RPC change: the existing
--- carpool_bookings_select (20261118100000) already allows SELECT only when
--- rider_id = auth.uid() OR trip owner OR admin. A rider cannot read another
--- passenger's dest_label/dest_lat/dest_lng. carpool_trip_preview luggage is
--- anonymized dims only (no dest). carpool_discover_trips does not return
--- booking dest. carpool_trip_stops are owner waypoints (seq/lat/lng/address),
--- not derived from other passengers' drop-offs; booked riders may SELECT
--- those route stops. No pickup column on bookings. No new SECURITY DEFINER
--- RPC: the booked-trip page reads carpool_bookings with rider_id = auth.uid()
--- and RLS already hides everyone else.
+-- C2.5 rider drop-off. SELECT stays rider-own/owner/admin
+-- (carpool_bookings_select from 20261118100000). dest_* writes go through
+-- carpool_set_booking_dest (trip then booking). Luggage/updated_at remain
+-- column-granted. Preview luggage is anonymized dims only (no dest).
+-- Discover does not return booking dest.
 -- ---------------------------------------------------------------------------
+revoke update (dest_label, dest_lat, dest_lng)
+  on table public.carpool_bookings from public, anon, authenticated;
+grant update (
+  luggage_h_cm, luggage_w_cm, luggage_d_cm, updated_at
+) on table public.carpool_bookings to authenticated;

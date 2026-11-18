@@ -13,6 +13,9 @@ export const PRIVACY_OFFSET_KM = 1;
  */
 export const PICKUP_REVEAL_BEFORE_MS = 30 * 60 * 1000;
 
+/** Stored bearing regenerates only when the true point moves farther than this. */
+export const OFFSET_REGEN_KM = 0.2;
+
 const EARTH_KM = 6371;
 
 export function offsetPoint(origin: GeoPoint, bearingRad: number, km: number): GeoPoint {
@@ -48,21 +51,59 @@ export function stableOffset(seed: string): { bearingRad: number; km: number } {
   };
 }
 
+const AREA_TOKEN = /แขวง|เขต|อำเภอ|ตำบล|จังหวัด|\bdistrict\b/i;
+const HOUSE_TOKEN = /บ้านเลขที่|ซอย|หมู่|ถนน|\bsoi\b|\bstreet\b|\broad\b|\brd\b/i;
+const HOUSE_NUM = /\d+\s*\/\s*\d+/;
+const DIGITS = /\d/;
+
+function stripPostal(part: string): string {
+  return part.replace(/\s+\d{5}\s*$/, '').trim();
+}
+
+function isUnsafeArea(part: string): boolean {
+  const t = stripPostal(part);
+  if (!t) return true;
+  return HOUSE_NUM.test(t) || DIGITS.test(t) || HOUSE_TOKEN.test(t);
+}
+
+function areaFromPart(part: string): string | null {
+  const trimmed = stripPostal(part.trim());
+  if (!trimmed) return null;
+  const idx = trimmed.search(AREA_TOKEN);
+  const sliced = idx >= 0 ? trimmed.slice(idx).trim() : trimmed;
+  if (!sliced || isUnsafeArea(sliced)) return null;
+  return sliced;
+}
+
 /**
- * Area-level label from a stored formatted address. Last two comma parts
- * (Google "…, district, city") or from the first แขวง/เขต/อำเภอ/ตำบล/จังหวัด
- * token. Never returns the house-level original. No thai-admin dataset.
+ * Area-only label for non-owners. Keeps a แขวง/เขต/อำเภอ/ตำบล/จังหวัด/
+ * district token or the city. Drops house numbers, ซอย/หมู่/ถนน/soi, and
+ * any part with digits. No thai-admin dataset.
  */
 export function coarseAddress(address: string | null | undefined): string {
   const raw = (address ?? '').trim();
   if (!raw) return 'พื้นที่ใกล้เคียง';
   const parts = raw.split(/\s*,\s*/).filter(Boolean);
-  if (parts.length >= 2) {
-    return `${parts[parts.length - 2]}, ${parts[parts.length - 1]}`;
+  const safe: string[] = [];
+  for (const part of parts) {
+    const area = areaFromPart(part);
+    if (area) safe.push(area);
   }
-  const idx = raw.search(/แขวง|เขต|อำเภอ|ตำบล|จังหวัด/);
-  if (idx >= 0) return raw.slice(idx).trim();
+  const admin = safe.find((s) => AREA_TOKEN.test(s));
+  if (admin) return admin;
+  // Google "house, city" / "house, district, city": keep the first remaining
+  // area or city part. A lone nickname with no comma is not a city.
+  if (parts.length >= 2 && safe[0]) return safe[0];
+  const idx = raw.search(AREA_TOKEN);
+  if (idx >= 0) {
+    const area = areaFromPart(raw.slice(idx));
+    if (area) return area;
+  }
   return 'พื้นที่ใกล้เคียง';
+}
+
+export function shouldRegenOffset(prev: GeoPoint, next: GeoPoint): boolean {
+  return offsetKmFromTrue(prev, next) > OFFSET_REGEN_KM;
 }
 
 export function offsetKmFromTrue(truePoint: GeoPoint, shown: GeoPoint): number {

@@ -62,11 +62,13 @@ export {
   PRIVACY_OFFSET_KM_MAX,
   PRIVACY_OFFSET_KM,
   PICKUP_REVEAL_BEFORE_MS,
+  OFFSET_REGEN_KM,
   offsetPoint,
   stableOffset,
   coarseAddress,
   offsetKmFromTrue,
   shouldRevealPickup,
+  shouldRegenOffset,
 } from './privacy';
 
 export {

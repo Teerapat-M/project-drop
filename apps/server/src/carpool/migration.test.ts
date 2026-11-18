@@ -497,6 +497,9 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
     expect(runner.indexOf('20261118140000_carpool_c24_lows.sql')).toBeLessThan(
       runner.indexOf('20261118150000_carpool_c25_drop_admin_geo_reqs.sql'),
     );
+    expect(runner).toMatch(/PGHOST="\$\{PGHOST:-localhost\}"/);
+    expect(runner).toMatch(/PGPORT="\$\{PGPORT:-5432\}"/);
+    expect(runner).toMatch(/psql -h "\$PGHOST" -p "\$PGPORT"/);
   });
 
   it('drops pairing CHECKs, keeps format CHECKs, never drops geo columns', () => {
@@ -552,7 +555,7 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
     );
   });
 
-  it('locks trip then seat on cancel, claim, set_seat_open, and refresh_status', () => {
+  it('locks trip then seat then booking on cancel, claim, set_seat_open, refresh, dest', () => {
     const cancel =
       c25Sql.match(/create or replace function public\.carpool_cancel_booking[\s\S]*?end;\n\$\$;/)?.[0] ?? '';
     const claim =
@@ -561,10 +564,17 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
       c25Sql.match(/create or replace function public\.carpool_set_seat_open[\s\S]*?end;\n\$\$;/)?.[0] ?? '';
     const refresh =
       c25Sql.match(/create or replace function private\.carpool_refresh_status[\s\S]*?end;\n\$\$;/)?.[0] ?? '';
+    const dest =
+      c25Sql.match(/create or replace function private\.carpool_apply_booking_dest[\s\S]*?end;\n\$\$;/)?.[0] ?? '';
+    const book =
+      c25Sql.match(/create or replace function public\.carpool_book_seat[\s\S]*?end;\n\$\$;/)?.[0] ?? '';
     expect(cancel).toMatch(/from public\.carpool_trips t/);
     expect(cancel).toMatch(/for update/);
     expect(cancel.indexOf('from public.carpool_trips t')).toBeLessThan(
       cancel.indexOf('from public.carpool_seats s'),
+    );
+    expect(cancel.indexOf('from public.carpool_seats s')).toBeLessThan(
+      cancel.indexOf('from public.carpool_bookings b where b.id'),
     );
     expect(claim).toMatch(/from public\.carpool_trips t/);
     expect(claim.indexOf('from public.carpool_trips t')).toBeLessThan(
@@ -575,15 +585,33 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
       setOpen.indexOf('update public.carpool_seats s'),
     );
     expect(refresh).toMatch(/for update/);
+    expect(dest).toMatch(/from public\.carpool_trips t/);
+    expect(dest.indexOf('from public.carpool_trips t')).toBeLessThan(
+      dest.indexOf('from public.carpool_bookings b'),
+    );
+    expect(book.indexOf('from public.carpool_trips t')).toBeLessThan(
+      book.indexOf('from public.carpool_seats s'),
+    );
+    expect(book.indexOf('from public.carpool_seats s')).toBeLessThan(
+      book.indexOf('insert into public.carpool_bookings'),
+    );
     expect(c25Sql).toMatch(/seats_guard only READs trip\.owner_id/);
   });
 
-  it('keeps bookings SELECT as rider-own/owner/admin and does not add a dest RPC', () => {
+  it('adds carpool_set_booking_dest and revokes dest_* UPDATE', () => {
+    expect(c25Sql).toMatch(/create or replace function private\.carpool_apply_booking_dest/);
+    expect(c25Sql).toMatch(/create or replace function public\.carpool_set_booking_dest/);
+    expect(c25Sql).toMatch(/revoke update \(dest_label, dest_lat, dest_lng\)/);
+    expect(c25Sql).toMatch(
+      /grant execute on function public\.carpool_set_booking_dest\(\s*uuid, text, double precision, double precision\s*\) to authenticated, service_role;/,
+    );
+    expect(c25Sql).toMatch(
+      /revoke all on function private\.carpool_apply_booking_dest\(\s*uuid, uuid, text, double precision, double precision\s*\) from public, anon, authenticated;/,
+    );
     expect(sql).toMatch(/create policy "carpool_bookings_select"/);
     expect(sql).toMatch(/rider_id = \(select auth\.uid\(\)\)/);
     expect(c25Sql).not.toMatch(/drop policy.*carpool_bookings_select/);
     expect(c25Sql).not.toMatch(/create policy "carpool_bookings_select"/);
-    expect(c25Sql).not.toMatch(/create or replace function public\.carpool_own_booking/);
     expect(stopsSql).toMatch(/Driver waypoints/);
     expect(testSql).toMatch(/rider A reads own dest, not rider B/);
     expect(testSql).toMatch(/stranger reads no booking dest/);
@@ -592,6 +620,11 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
     expect(testSql).toMatch(/discover rejects NaN\/out-of-range lat lng in Thai/);
     expect(testSql).toMatch(/discover excludes taxi when floor exceeds max_detour_km/);
     expect(testSql).toMatch(/book vs cancel same seat 15x no 40P01/);
+    expect(testSql).toMatch(/dest vs cancel same booking 15x no 40P01/);
+    expect(testSql).toMatch(/direct UPDATE dest_\* is permission denied/);
+    expect(testSql).toMatch(/non-owner payloads never leak house\/soi\/digits/);
+    expect(testSql).toMatch(/offset bearing kept when true point moves under 200 m/);
+    expect(testSql).toMatch(/offset bearing regenerates when true point moves over 200 m/);
   });
 
   it('stores a per-trip privacy offset in private schema and masks non-owner geo', () => {
@@ -608,6 +641,8 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
     expect(c25Sql).toMatch(/create or replace function public\.carpool_visible_trips\(\)/);
     expect(c25Sql).toMatch(/grant execute on function public\.carpool_visible_trips\(\) to authenticated, service_role;/);
     expect(c25Sql).toMatch(/carpool-web never sets in_progress/);
+    expect(c25Sql).toMatch(/moves more than ~200 m/);
+    expect(c25Sql).toMatch(/private\.carpool_coarse_area_part/);
     expect(testSql).toMatch(/stranger preview pickup must be ~1 km from true/);
     expect(testSql).toMatch(/authenticated cannot SELECT true pickup_lat/);
     expect(testSql).toMatch(/dest offset only when hide_dest is on/);

@@ -15,5 +15,6 @@ export function thaiRpcError(message: string, fallback = 'ดำเนินก�
   if (message.includes('not authenticated')) return 'ต้องเข้าสู่ระบบ';
   if (message.includes('seat not found')) return 'ไม่พบที่นั่ง';
   if (message.includes('trip not found')) return 'ไม่พบทริป';
+  if (message.includes('booking not found')) return 'ไม่พบการจอง';
   return fallback;
 }
