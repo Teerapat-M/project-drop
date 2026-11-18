@@ -20,7 +20,7 @@ describe('BookedTripPage', () => {
     expect(screen.getByTestId('booked-trip')).toBeInTheDocument();
     expect(screen.getByTestId('role-badge')).toHaveTextContent('ฉันจอง');
     expect(screen.getByTestId('own-booking')).toHaveTextContent('ที่นั่งของคุณ');
-    expect(screen.getByText('แชท')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'แชทกับเพื่อนร่วมทาง' })).toBeInTheDocument();
     expect(screen.getByTestId('route-mini-map')).toBeInTheDocument();
     expect(screen.queryByTestId('join-submit')).toBeNull();
   });

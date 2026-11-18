@@ -311,6 +311,9 @@ describe('carpool taxi trunk migration', () => {
     expect(taxiTrunkSql).toMatch(
       /grant execute on function public\.carpool_discover_trips\(\s*public\.carpool_trip_kind, text, text, text, text\s*\) to authenticated, service_role;/,
     );
+    expect(taxiTrunkSql).toMatch(/carpool_trips_origin_district_matches_province/);
+    expect(taxiTrunkSql).toMatch(/left\(origin_district_code, 2\) = origin_province_code/);
+    expect(taxiTrunkSql).toMatch(/left\(dest_district_code, 2\) = dest_province_code/);
   });
 
   it('adds NaN detour CHECK and freezes dest/luggage after the trip starts', () => {
@@ -323,6 +326,8 @@ describe('carpool taxi trunk migration', () => {
     expect(enableAt).toBeGreaterThan(nanAt);
     expect(checkAt).toBeGreaterThan(enableAt);
     expect(taxiTrunkSql).not.toMatch(/session_replication_role/);
+    expect(taxiTrunkSql).not.toMatch(/^\s*begin\s*;/im);
+    expect(taxiTrunkSql).not.toMatch(/^\s*commit\s*;/im);
     expect(taxiTrunkSql).toMatch(/check \(detour_km <> 'NaN'\)/);
     expect(stopsSql).not.toMatch(/carpool_bookings_detour_not_nan/);
     expect(stopsSql).not.toMatch(/cannot change drop-off or luggage after the trip has started/);
@@ -330,7 +335,7 @@ describe('carpool taxi trunk migration', () => {
       taxiTrunkSql.match(
         /create or replace function public\.carpool_bookings_guard[\s\S]*?end;\n\$\$;/,
       )?.[0] ?? '';
-    expect(guard).toMatch(/in_progress', 'completed'/);
+    expect(guard).toMatch(/in_progress', 'completed', 'cancelled'/);
     expect(guard).toMatch(/cannot change drop-off or luggage after the trip has started/);
     expect(guard).toMatch(/new\.detour_km := old\.detour_km/);
     expect(guard).toMatch(/private\.carpool_detour_floor_km/);

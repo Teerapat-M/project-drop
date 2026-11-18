@@ -136,7 +136,12 @@ export function ManageTripPage() {
           ←
         </Link>
         <h1 className="page-title">จัดการทริป</h1>
-        <button type="button" className="nav-link tap-target" onClick={() => openChat(id)}>
+        <button
+          type="button"
+          className="nav-link tap-target"
+          aria-label="แชทกับเพื่อนร่วมทาง"
+          onClick={() => openChat(id)}
+        >
           แชท
         </button>
       </div>

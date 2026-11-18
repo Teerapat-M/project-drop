@@ -1339,6 +1339,166 @@ begin
 end $$;
 commit;
 
+-- L1 cancelled: dest_* / luggage frozen the same way.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 12,
+    'เชียงใหม่', 18.7888, 98.9861,
+    'ลำพูน', 18.574, 99.008, now() + interval '6 day', 'open'
+  ) returning id into trip;
+  insert into tests.ids (k, id) values ('freeze_cancel_trip', trip);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_bookings;
+begin
+  select id into trip from tests.ids where k = 'freeze_cancel_trip';
+  rec := public.carpool_book_seat(
+    trip, 'rear_middle', 'ลำพูน', 18.574, 99.008, 0, 40, 30, 20
+  );
+  insert into tests.ids (k, id) values ('freeze_cancel_booking', rec.id);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+update public.carpool_trips
+   set status = 'cancelled'
+ where id = (select id from tests.ids where k = 'freeze_cancel_trip');
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+  denied boolean := false;
+begin
+  select id into bid from tests.ids where k = 'freeze_cancel_booking';
+  begin
+    update public.carpool_bookings
+       set dest_label = 'ห้ามยกเลิก', dest_lat = 18.3, dest_lng = 99.3
+     where id = bid;
+  exception
+    when raise_exception then
+      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+        raise;
+      end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'dest_* update should be rejected when cancelled';
+  end if;
+  perform tests.ok('dest_* change rejected when cancelled');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  bid uuid;
+  denied boolean := false;
+begin
+  select id into bid from tests.ids where k = 'freeze_cancel_booking';
+  begin
+    update public.carpool_bookings
+       set luggage_h_cm = 12, luggage_w_cm = 12, luggage_d_cm = 12
+     where id = bid;
+  exception
+    when raise_exception then
+      if sqlerrm is distinct from 'cannot change drop-off or luggage after the trip has started' then
+        raise;
+      end if;
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'luggage update should be rejected when cancelled';
+  end if;
+  perform tests.ok('luggage change rejected when cancelled');
+end $$;
+commit;
+
+-- Province/district pairing: matching TIS 1099 accepted; mismatch and
+-- district-without-province rejected.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+  denied boolean := false;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status,
+    origin_province_code, origin_district_code,
+    dest_province_code, dest_district_code
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 12,
+    'กรุงเทพฯ', 13.7563, 100.5018,
+    'อยุธยา', 14.35, 100.57, now() + interval '7 day', 'open',
+    '10', '1001', '14', '1401'
+  ) returning id into trip;
+  perform tests.ok('matching province/district pair accepted');
+
+  begin
+    update public.carpool_trips
+       set origin_district_code = '5001'
+     where id = trip;
+  exception
+    when check_violation then
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'mismatched origin district/province should fail CHECK';
+  end if;
+  perform tests.ok('mismatched district/province pair rejected');
+
+  denied := false;
+  begin
+    update public.carpool_trips
+       set dest_province_code = null, dest_district_code = '1401'
+     where id = trip;
+  exception
+    when check_violation then
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'district without province should fail CHECK';
+  end if;
+  perform tests.ok('district without province rejected');
+end $$;
+commit;
+
 -- My Trips: RLS lets a user see owned + booked rows only.
 begin;
 select tests.login(id) from tests.ids where k = 'owner';
@@ -1482,7 +1642,7 @@ declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 37 then
+  if n < 42 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

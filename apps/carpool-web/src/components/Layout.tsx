@@ -71,7 +71,7 @@ export function Layout() {
         <button
           type="button"
           className="icon-btn tap-target"
-          aria-label="แชท"
+          aria-label="แชทกับเพื่อนร่วมทาง"
           onClick={() => setSheet(true)}
         >
           💬
@@ -96,6 +96,22 @@ export function Layout() {
       ) : null}
 
       <Outlet />
+
+      <p className="muted geo-credit" data-testid="geo-credit">
+        ข้อมูลจังหวัด/อำเภอ:{' '}
+        <a
+          href="https://github.com/DevelopedbyWill/thailand-canonical-admin-names"
+          target="_blank"
+          rel="noreferrer"
+        >
+          thailand-canonical-admin-names
+        </a>{' '}
+        (
+        <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">
+          CC BY 4.0
+        </a>
+        )
+      </p>
 
       <nav className="bottom-nav" data-testid="bottom-nav" aria-label="นำทางมือถือ">
         <NavLink to="/" className="nav-link tap-target" end>

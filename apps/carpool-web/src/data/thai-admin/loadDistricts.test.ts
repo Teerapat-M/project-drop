@@ -27,6 +27,14 @@ describe('Thai district dataset', () => {
     expect(new Set(all.map((d) => d.code)).size).toBe(928);
   });
 
+  it('uses TIS 1099 district codes whose first two digits are the province code', () => {
+    expect(all.length).toBe(928);
+    for (const row of all) {
+      expect(row.code.slice(0, 2)).toBe(row.provinceCode);
+      expect(row.code).toMatch(/^[0-9]{4}$/);
+    }
+  });
+
   it('lazy-loads one province chunk (Bangkok เขต)', async () => {
     expect(districtKindLabel('10')).toBe('เขต');
     expect(districtKindLabel('50')).toBe('อำเภอ');

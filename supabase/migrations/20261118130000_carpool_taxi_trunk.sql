@@ -111,6 +111,31 @@ alter table public.carpool_trips
   add constraint carpool_trips_dest_district_code
   check (dest_district_code is null or dest_district_code ~ '^[0-9]{4}$');
 
+-- TIS 1099: district code is province code + 2 digits. Reject a district
+-- without its province. Legacy rows with both-null stay valid.
+alter table public.carpool_trips
+  drop constraint if exists carpool_trips_origin_district_matches_province;
+alter table public.carpool_trips
+  add constraint carpool_trips_origin_district_matches_province
+  check (
+    origin_district_code is null
+    or (
+      origin_province_code is not null
+      and left(origin_district_code, 2) = origin_province_code
+    )
+  );
+alter table public.carpool_trips
+  drop constraint if exists carpool_trips_dest_district_matches_province;
+alter table public.carpool_trips
+  add constraint carpool_trips_dest_district_matches_province
+  check (
+    dest_district_code is null
+    or (
+      dest_province_code is not null
+      and left(dest_district_code, 2) = dest_province_code
+    )
+  );
+
 -- Join preview: anonymized booked luggage (no rider ids, no owner flag).
 -- Neutral order: volume desc, then H/W/D — not owner-first / created_at.
 create or replace function public.carpool_trip_preview(p_trip_id uuid)
@@ -214,15 +239,14 @@ grant execute on function public.carpool_trip_preview(uuid) to authenticated, se
 -- Backfill first so existing rows cannot violate the new CHECK.
 -- carpool_bookings_guard restores OLD.detour_km when dest_* is unchanged,
 -- so a plain UPDATE would leave NaN in place. Disable only that trigger
--- so FK and other triggers still fire.
+-- so FK and other triggers still fire. No inner BEGIN/COMMIT — the guard
+-- is BEFORE, so ENABLE TRIGGER in the same migration transaction is safe.
 -- ---------------------------------------------------------------------------
-begin;
 alter table public.carpool_bookings disable trigger carpool_bookings_guard;
 update public.carpool_bookings
    set detour_km = 0
  where detour_km = 'NaN';
 alter table public.carpool_bookings enable trigger carpool_bookings_guard;
-commit;
 
 alter table public.carpool_bookings
   drop constraint if exists carpool_bookings_detour_not_nan;
@@ -232,8 +256,8 @@ alter table public.carpool_bookings
   check (detour_km <> 'NaN');
 
 -- ---------------------------------------------------------------------------
--- Javis PR #10 L1: reject dest_* / luggage edits once the trip is in_progress
--- or completed. Keep #10: dest_* change recomputes the haversine floor;
+-- Javis PR #10 L1: reject dest_* / luggage edits once the trip is in_progress,
+-- completed, or cancelled. Keep #10: dest_* change recomputes the haversine floor;
 -- otherwise NEW.detour_km = OLD.detour_km. Trigger-only (no EXECUTE grant).
 -- Helpers stay in private with search_path ''. Nothing added to Realtime.
 -- ---------------------------------------------------------------------------
@@ -277,7 +301,7 @@ begin
     end if;
   end if;
   select t.status into st from public.carpool_trips t where t.id = new.trip_id;
-  if st in ('in_progress', 'completed')
+  if st in ('in_progress', 'completed', 'cancelled')
      and (
        new.dest_label is distinct from old.dest_label
        or new.dest_lat is distinct from old.dest_lat
@@ -305,7 +329,7 @@ end;
 $$;
 
 comment on function public.carpool_bookings_guard() is
-  'Freeze identity columns; dest_*/luggage frozen in_progress/completed; dest_* recomputes detour floor; otherwise detour_km = OLD. Trigger-only.';
+  'Freeze identity columns; dest_*/luggage frozen in_progress/completed/cancelled; dest_* recomputes detour floor; otherwise detour_km = OLD. Trigger-only.';
 
 revoke execute on function public.carpool_bookings_guard() from public, anon, authenticated;
 
