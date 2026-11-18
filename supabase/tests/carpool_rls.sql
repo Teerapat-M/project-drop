@@ -1,6 +1,7 @@
 -- Catalog + behavioral RLS for 20261118100000_carpool.sql,
 -- 20261118120000_carpool_trip_stops.sql, 20261118130000_carpool_taxi_trunk.sql,
--- and 20261118140000_carpool_c24_lows.sql.
+-- 20261118140000_carpool_c24_lows.sql, and
+-- 20261118150000_carpool_c25_drop_admin_geo_reqs.sql.
 -- Taxi-trunk backfill (legacy 100×50×50) runs in run-carpool-rls.sh around
 -- that migration, via carpool_taxi_trunk_seed.sql / carpool_taxi_trunk_backfill.sql.
 -- CI: supabase/tests/run-carpool-rls.sh (shim + profiles + carpool on ephemeral Postgres).
@@ -88,10 +89,11 @@ declare
   book_sig text := 'public.carpool_book_seat(uuid, public.carpool_seat_position, text, double precision, double precision, numeric, numeric, numeric, numeric)';
   claim_sig text := 'public.carpool_claim_owner_seat(uuid, public.carpool_seat_position, numeric, numeric, numeric)';
   set_sig text := 'public.carpool_set_seat_open(uuid, public.carpool_seat_position, boolean)';
+  discover_sig text := 'public.carpool_discover_trips(public.carpool_trip_kind, text, text, text, text, double precision, double precision, double precision, double precision, numeric)';
 begin
   if not has_function_privilege(
        'authenticated',
-       'public.carpool_discover_trips(public.carpool_trip_kind, text, text, text, text)',
+       discover_sig,
        'EXECUTE'
      ) then
     raise exception 'authenticated must EXECUTE public.carpool_discover_trips';
@@ -114,7 +116,7 @@ begin
   if has_function_privilege('anon', book_sig, 'EXECUTE')
      or has_function_privilege(
           'anon',
-          'public.carpool_discover_trips(public.carpool_trip_kind, text, text, text, text)',
+          discover_sig,
           'EXECUTE'
         ) then
     raise exception 'anon must not EXECUTE carpool RPCs';
@@ -156,6 +158,16 @@ begin
        'authenticated',
        'private.carpool_enforce_max_detour(uuid, double precision, double precision, numeric)',
        'EXECUTE'
+     )
+     or has_function_privilege(
+       'authenticated',
+       'private.carpool_route_vertices(uuid)',
+       'EXECUTE'
+     )
+     or has_function_privilege(
+       'authenticated',
+       'private.carpool_search_distances(uuid, public.carpool_trip_kind, numeric, double precision, double precision, double precision, double precision, numeric)',
+       'EXECUTE'
      ) then
     raise exception 'authenticated must not EXECUTE detour floor helpers';
   end if;
@@ -187,8 +199,11 @@ declare
     'private.carpool_enforce_max_detour(uuid, double precision, double precision, numeric)'::regprocedure
   );
 begin
-  if def !~ 'for update' then
-    raise exception 'carpool_book_seat must lock the seat row FOR UPDATE: %', def;
+  if (select count(*) from regexp_matches(def, 'for update', 'g')) < 2 then
+    raise exception 'carpool_book_seat must lock the trip row and the seat row FOR UPDATE: %', def;
+  end if;
+  if def !~ 'from public.carpool_trips t' then
+    raise exception 'carpool_book_seat must SELECT the trip row FOR UPDATE';
   end if;
   if def !~ 'ที่นั่งนี้เพิ่งถูกจอง' then
     raise exception 'carpool_book_seat must raise exactly ที่นั่งนี้เพิ่งถูกจอง';
@@ -225,7 +240,7 @@ declare
   guard text := pg_get_functiondef('public.carpool_bookings_guard()'::regprocedure);
   trips_guard text := pg_get_functiondef('public.carpool_trips_guard()'::regprocedure);
   discover text := pg_get_functiondef(
-    'public.carpool_discover_trips(public.carpool_trip_kind, text, text, text, text)'::regprocedure
+    'public.carpool_discover_trips(public.carpool_trip_kind, text, text, text, text, double precision, double precision, double precision, double precision, numeric)'::regprocedure
   );
 begin
   if guard ~ 'cannot change drop-off or luggage after the trip has started'
@@ -256,13 +271,22 @@ begin
     raise exception 'carpool_discover_trips must keep is_mine';
   end if;
   if discover !~ 'p_origin_province_code' then
-    raise exception 'carpool_discover_trips must keep geo filters';
+    raise exception 'carpool_discover_trips must keep geo params for old clients';
+  end if;
+  if discover !~ 'p_pickup_lat' or discover !~ 'pickup_distance_km' or discover !~ 'extra_km' then
+    raise exception 'carpool_discover_trips must return nearby-point distances';
   end if;
   if trips_guard !~ 'ลดระยะออกนอกเส้นทางสูงสุดไม่ได้' then
     raise exception 'carpool_trips_guard must block lowering max_detour_km in Thai';
   end if;
   if trips_guard !~ 'carpool_detour_floor_km' then
     raise exception 'carpool_trips_guard L3 must compare the haversine floor';
+  end if;
+  if trips_guard !~ 'cancelled' or trips_guard !~ 'completed' then
+    raise exception 'carpool_trips_guard must skip cap-lowering on cancelled/completed trips';
+  end if;
+  if guard !~ 'for update' then
+    raise exception 'carpool_bookings_guard must lock the trip row FOR UPDATE';
   end if;
 end $$;
 
@@ -1501,8 +1525,9 @@ begin
 end $$;
 commit;
 
--- Province/district pairing: matching TIS 1099 accepted; mismatch and
--- district-without-province rejected.
+-- Province/district: NULL insert ok; mismatch and district-without-province
+-- accepted (L2 pairing CHECKs dropped). Format CHECKs still reject junk.
+-- Legacy coded rows still work.
 begin;
 select tests.login(id) from tests.ids where k = 'owner';
 set local role authenticated;
@@ -1517,44 +1542,45 @@ begin
     owner_id, kind, vehicle_type, car_icon,
     trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
     pickup_label, pickup_lat, pickup_lng,
-    dest_label, dest_lat, dest_lng, depart_at, status,
-    origin_province_code, origin_district_code,
-    dest_province_code, dest_district_code
+    dest_label, dest_lat, dest_lng, depart_at, status
   ) values (
     uid, 'private', 'sedan', 'sedan',
     100, 50, 50, 12,
     'กรุงเทพฯ', 13.7563, 100.5018,
-    'อยุธยา', 14.35, 100.57, now() + interval '7 day', 'open',
-    '10', '1001', '14', '1401'
+    'อยุธยา', 14.35, 100.57, now() + interval '7 day', 'open'
   ) returning id into trip;
-  perform tests.ok('matching province/district pair accepted');
+  insert into tests.ids (k, id) values ('geo_null_trip', trip);
+  perform tests.ok('trip with NULL province/district inserts');
+
+  update public.carpool_trips
+     set origin_province_code = '10',
+         origin_district_code = '5001',
+         dest_province_code = null,
+         dest_district_code = '1401'
+   where id = trip;
+  perform tests.ok('mismatched district/province pair accepted');
+  perform tests.ok('district without province accepted');
+
+  update public.carpool_trips
+     set origin_province_code = '10',
+         origin_district_code = '1001',
+         dest_province_code = '14',
+         dest_district_code = '1401'
+   where id = trip;
+  perform tests.ok('legacy row with codes still works');
 
   begin
     update public.carpool_trips
-       set origin_district_code = '5001'
+       set origin_province_code = 'xx'
      where id = trip;
   exception
     when check_violation then
       denied := true;
   end;
   if not denied then
-    raise exception 'mismatched origin district/province should fail CHECK';
+    raise exception 'format CHECK on province code should still reject xx';
   end if;
-  perform tests.ok('mismatched district/province pair rejected');
-
-  denied := false;
-  begin
-    update public.carpool_trips
-       set dest_province_code = null, dest_district_code = '1401'
-     where id = trip;
-  exception
-    when check_violation then
-      denied := true;
-  end;
-  if not denied then
-    raise exception 'district without province should fail CHECK';
-  end if;
-  perform tests.ok('district without province rejected');
+  perform tests.ok('format CHECK on non-null province code kept');
 end $$;
 commit;
 
@@ -1823,8 +1849,11 @@ begin
       null
     ) d
    where d.id = trip;
-  if filtered <> 0 then
-    raise exception 'discover geo filter should hide taxi_trip with null origin province';
+  if filtered <> 1 then
+    raise exception 'discover geo params are ignored; taxi_trip should still return, got %', filtered;
+  end if;
+  if not disc ? 'pickup_distance_km' or not disc ? 'extra_km' then
+    raise exception 'discover must return nearby distance columns';
   end if;
   perform tests.ok('discover returns max_detour_km and no owner_id');
 end $$;
@@ -2024,12 +2053,465 @@ begin
 end $$;
 commit;
 
+-- C2.5: cap-lowering on cancelled/completed trips is allowed even with a
+-- leftover booking whose floor is above the new cap; still blocked on open.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status,
+    max_detour_km
+  ) values (
+    uid, 'taxi', 'sedan', 'taxi',
+    100, 40, 50, 12,
+    'กรุงเทพฯ', 13.75, 100.5,
+    'อยุธยา', 14.35, 100.57, now() + interval '9 day', 'open',
+    10
+  ) returning id into trip;
+  insert into tests.ids (k, id) values ('c25_cap_trip', trip);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  rec public.carpool_bookings;
+begin
+  select id into trip from tests.ids where k = 'c25_cap_trip';
+  rec := public.carpool_book_seat(
+    trip, 'rear_middle', 'จุดอ้อม', 13.75, 100.54, 0, null, null, null
+  );
+  insert into tests.ids (k, id) values ('c25_cap_booking', rec.id);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  denied boolean := false;
+begin
+  select id into trip from tests.ids where k = 'c25_cap_trip';
+  begin
+    update public.carpool_trips set max_detour_km = 1 where id = trip;
+  exception
+    when raise_exception then
+      denied := true;
+  end;
+  if not denied then
+    raise exception 'open trip should still block lowering below booking floor';
+  end if;
+  perform tests.ok('cap-lowering still blocked on an open trip');
+
+  update public.carpool_trips set status = 'cancelled' where id = trip;
+  update public.carpool_trips set max_detour_km = 1 where id = trip;
+  perform tests.ok('cap-lowering allowed on cancelled trip with leftover booking');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+  rec public.carpool_bookings;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status,
+    max_detour_km
+  ) values (
+    uid, 'taxi', 'sedan', 'taxi',
+    100, 40, 50, 12,
+    'กรุงเทพฯ', 13.75, 100.5,
+    'อยุธยา', 14.35, 100.57, now() + interval '10 day', 'open',
+    10
+  ) returning id into trip;
+  insert into tests.ids (k, id) values ('c25_done_trip', trip);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+begin
+  select id into trip from tests.ids where k = 'c25_done_trip';
+  perform public.carpool_book_seat(
+    trip, 'rear_left', 'จุดอ้อม', 13.75, 100.54, 0, null, null, null
+  );
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+begin
+  select id into trip from tests.ids where k = 'c25_done_trip';
+  update public.carpool_trips set status = 'in_progress' where id = trip;
+  update public.carpool_trips set status = 'completed' where id = trip;
+  update public.carpool_trips set max_detour_km = 1 where id = trip;
+  perform tests.ok('cap-lowering allowed on completed trip with leftover booking');
+end $$;
+commit;
+
+-- Nearby-point discover: pickup only / dest only / both, radius, order,
+-- pickup-after-dest excluded, intermediate stop, taxi dest radius tighten.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  t_bkk uuid;
+  t_stop uuid;
+  t_north uuid;
+  t_taxi uuid;
+  t_near uuid;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 80,
+    'กรุงเทพฯ', 13.75, 100.5,
+    'อยุธยา', 14.35, 100.57, now() + interval '11 day', 'open'
+  ) returning id into t_bkk;
+  insert into tests.ids (k, id) values ('search_bkk', t_bkk);
+
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 80,
+    'กรุงเทพฯ', 13.75, 100.5,
+    'อยุธยา', 14.35, 100.57, now() + interval '12 day', 'open'
+  ) returning id into t_stop;
+  insert into public.carpool_trip_stops (trip_id, seq, lat, lng, address)
+  values (t_stop, 1, 14.00, 100.53, 'แวะ');
+  insert into tests.ids (k, id) values ('search_stop', t_stop);
+
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 32,
+    'เชียงใหม่', 18.788, 98.985,
+    'ลำพูน', 18.574, 99.009, now() + interval '13 day', 'open'
+  ) returning id into t_north;
+  insert into tests.ids (k, id) values ('search_north', t_north);
+
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status,
+    max_detour_km
+  ) values (
+    uid, 'taxi', 'sedan', 'taxi',
+    100, 40, 50, 12,
+    'กรุงเทพฯ', 13.75, 100.5,
+    'อยุธยา', 14.35, 100.57, now() + interval '14 day', 'open',
+    1
+  ) returning id into t_taxi;
+  insert into tests.ids (k, id) values ('search_taxi', t_taxi);
+
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 12,
+    'ใกล้', 13.751, 100.501,
+    'อยุธยา', 14.35, 100.57, now() + interval '15 day', 'open'
+  ) returning id into t_near;
+  insert into tests.ids (k, id) values ('search_near', t_near);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  bkk uuid;
+  north uuid;
+  stop_id uuid;
+  taxi uuid;
+  near_id uuid;
+  n int;
+  rec record;
+  prev_extra numeric := -1;
+begin
+  select id into bkk from tests.ids where k = 'search_bkk';
+  select id into north from tests.ids where k = 'search_north';
+  select id into stop_id from tests.ids where k = 'search_stop';
+  select id into taxi from tests.ids where k = 'search_taxi';
+  select id into near_id from tests.ids where k = 'search_near';
+
+  select count(*) into n from public.carpool_discover_trips(
+    'private', null, null, null, null, 13.75, 100.5, null, null, 5
+  ) d where d.id in (bkk, north);
+  if n <> 1 then
+    raise exception 'pickup-only should match bkk not north, got %', n;
+  end if;
+  select count(*) into n from public.carpool_discover_trips(
+    'private', null, null, null, null, 13.75, 100.5, null, null, 5
+  ) d where d.id = bkk;
+  if n <> 1 then
+    raise exception 'pickup-only missed bkk';
+  end if;
+  perform tests.ok('discover pickup-only');
+
+  select count(*) into n from public.carpool_discover_trips(
+    'private', null, null, null, null, null, null, 14.35, 100.57, 5
+  ) d where d.id = bkk;
+  if n <> 1 then
+    raise exception 'dest-only missed bkk';
+  end if;
+  perform tests.ok('discover dest-only');
+
+  select count(*) into n from public.carpool_discover_trips(
+    'private', null, null, null, null, 13.75, 100.5, 14.35, 100.57, 5
+  ) d where d.id = bkk;
+  if n <> 1 then
+    raise exception 'both-points missed bkk';
+  end if;
+  perform tests.ok('discover both pickup and dest');
+
+  -- ~4.4 km north of origin is inside 5; ~6.7 km is outside.
+  select count(*) into n from public.carpool_discover_trips(
+    'private', null, null, null, null, 13.79, 100.5, null, null, 5
+  ) d where d.id = bkk;
+  if n <> 1 then
+    raise exception 'radius inside should match bkk';
+  end if;
+  select count(*) into n from public.carpool_discover_trips(
+    'private', null, null, null, null, 13.81, 100.5, null, null, 5
+  ) d where d.id = bkk;
+  if n <> 0 then
+    raise exception 'radius outside should miss bkk';
+  end if;
+  perform tests.ok('discover radius inside vs outside');
+
+  select count(*) into n from public.carpool_discover_trips(
+    'private', null, null, null, null, 14.35, 100.57, 13.75, 100.5, 5
+  ) d where d.id = bkk;
+  if n <> 0 then
+    raise exception 'pickup after dest along the route should be excluded';
+  end if;
+  perform tests.ok('discover pickup after dest excluded');
+
+  select count(*) into n from public.carpool_discover_trips(
+    'private', null, null, null, null, 14.00, 100.53, 14.35, 100.57, 5
+  ) d where d.id = stop_id;
+  if n <> 1 then
+    raise exception 'match via intermediate stop missed';
+  end if;
+  perform tests.ok('discover match via intermediate stop');
+
+  -- dest ~4 km east of Ayutthaya: private radius 5 matches; taxi cap 1 does not.
+  select count(*) into n from public.carpool_discover_trips(
+    'private', null, null, null, null, null, null, 14.35, 100.61, 5
+  ) d where d.id = bkk;
+  if n <> 1 then
+    raise exception 'private dest 4km off should match at radius 5';
+  end if;
+  select count(*) into n from public.carpool_discover_trips(
+    'taxi', null, null, null, null, null, null, 14.35, 100.61, 5
+  ) d where d.id = taxi;
+  if n <> 0 then
+    raise exception 'taxi dest radius should tighten to max_detour_km=1';
+  end if;
+  perform tests.ok('discover taxi max_detour_km tightens dest radius');
+
+  prev_extra := -1;
+  for rec in
+    select d.id, d.extra_km, d.is_mine, d.pickup_distance_km, d.dest_distance_km
+      from public.carpool_discover_trips(
+        'private', null, null, null, null, 13.75, 100.5, null, null, 5
+      ) d
+     where d.id in (bkk, near_id)
+     order by d.extra_km nulls last, d.depart_at
+  loop
+    if rec.extra_km is null then
+      raise exception 'matching trip should have extra_km';
+    end if;
+    if rec.extra_km < prev_extra then
+      raise exception 'discover must order by extra_km';
+    end if;
+    if rec.is_mine is not distinct from true then
+      raise exception 'stranger is_mine must be false';
+    end if;
+    prev_extra := rec.extra_km;
+  end loop;
+  perform tests.ok('discover orders by extra_km and keeps is_mine');
+end $$;
+commit;
+
+-- Rider dest privacy: rider A sees own dest, not rider B; owner sees all;
+-- stranger sees none. Table SELECT only — no dest leak in preview.
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  trip uuid;
+begin
+  select id into uid from tests.ids where k = 'owner';
+  insert into public.carpool_trips (
+    owner_id, kind, vehicle_type, car_icon,
+    trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+    pickup_label, pickup_lat, pickup_lng,
+    dest_label, dest_lat, dest_lng, depart_at, status
+  ) values (
+    uid, 'private', 'sedan', 'sedan',
+    100, 50, 50, 12,
+    'กรุงเทพฯ', 13.75, 100.5,
+    'อยุธยา', 14.35, 100.57, now() + interval '16 day', 'open'
+  ) returning id into trip;
+  insert into tests.ids (k, id) values ('privacy_trip', trip);
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+begin
+  select id into trip from tests.ids where k = 'privacy_trip';
+  perform public.carpool_book_seat(
+    trip, 'rear_middle', 'จุดลงเอ', 13.76, 100.51, 0, null, null, null
+  );
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider2';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+begin
+  select id into trip from tests.ids where k = 'privacy_trip';
+  perform public.carpool_book_seat(
+    trip, 'rear_left', 'จุดลงบี', 13.77, 100.52, 0, null, null, null
+  );
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'rider';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  n int;
+  labels text;
+  preview jsonb;
+begin
+  select id into trip from tests.ids where k = 'privacy_trip';
+  select count(*), string_agg(dest_label, ',' order by dest_label)
+    into n, labels
+    from public.carpool_bookings
+   where trip_id = trip;
+  if n <> 1 or labels is distinct from 'จุดลงเอ' then
+    raise exception 'rider A must only read own dest, got % %', n, labels;
+  end if;
+  select count(*) into n
+    from public.carpool_bookings
+   where trip_id = trip
+     and (dest_label = 'จุดลงบี' or dest_lat = 13.77 or dest_lng = 100.52);
+  if n <> 0 then
+    raise exception 'rider A must not read rider B dest_* columns';
+  end if;
+  preview := public.carpool_trip_preview(trip);
+  if preview::text like '%จุดลงบี%' or preview::text like '%13.77%' then
+    raise exception 'preview must not leak rider B dest';
+  end if;
+  perform tests.ok('rider A reads own dest, not rider B');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  n int;
+begin
+  select id into trip from tests.ids where k = 'privacy_trip';
+  select count(*) into n from public.carpool_bookings where trip_id = trip;
+  if n <> 2 then
+    raise exception 'owner must read all bookings, got %', n;
+  end if;
+  perform tests.ok('owner reads every passenger dest');
+end $$;
+commit;
+
+begin;
+select tests.login(id) from tests.ids where k = 'stranger';
+set local role authenticated;
+do $$
+declare
+  trip uuid;
+  n int;
+begin
+  select id into trip from tests.ids where k = 'privacy_trip';
+  select count(*) into n from public.carpool_bookings where trip_id = trip;
+  if n <> 0 then
+    raise exception 'stranger must read no bookings, got %', n;
+  end if;
+  perform tests.ok('stranger reads no booking dest');
+end $$;
+commit;
+
 do $$
 declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 51 then
+  if n < 65 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

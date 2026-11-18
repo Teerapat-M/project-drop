@@ -7,6 +7,10 @@ const sql = readFileSync(join(root, 'migrations/20261118100000_carpool.sql'), 'u
 const stopsSql = readFileSync(join(root, 'migrations/20261118120000_carpool_trip_stops.sql'), 'utf8');
 const taxiTrunkSql = readFileSync(join(root, 'migrations/20261118130000_carpool_taxi_trunk.sql'), 'utf8');
 const c24LowsSql = readFileSync(join(root, 'migrations/20261118140000_carpool_c24_lows.sql'), 'utf8');
+const c25Sql = readFileSync(
+  join(root, 'migrations/20261118150000_carpool_c25_drop_admin_geo_reqs.sql'),
+  'utf8',
+);
 const testSql = readFileSync(join(root, 'tests/carpool_rls.sql'), 'utf8');
 const ridesSql = readFileSync(join(root, 'migrations/20261110180000_rides.sql'), 'utf8');
 const revokeSql = readFileSync(
@@ -474,5 +478,85 @@ describe('carpool C2.4 lows migration', () => {
     expect(c24LowsSql).toMatch(
       /revoke execute on function public\.carpool_bookings_guard\(\) from public, anon, authenticated;/,
     );
+  });
+});
+
+describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
+  const runner = readFileSync(join(root, 'tests/run-carpool-rls.sh'), 'utf8');
+
+  it('is a new file after C2.4 and does not edit earlier carpool SQL', () => {
+    expect(sql).not.toMatch(/carpool_c25_drop_admin_geo/);
+    expect(stopsSql).not.toMatch(/carpool_search_distances/);
+    expect(taxiTrunkSql).not.toMatch(/p_pickup_lat/);
+    expect(c24LowsSql).not.toMatch(/carpool_c25_drop_admin_geo/);
+    expect(c25Sql).toMatch(/alter column origin_province_code drop not null/);
+    expect(c25Sql).not.toMatch(/^\s*begin\s*;/im);
+    expect(c25Sql).not.toMatch(/^\s*commit\s*;/im);
+    expect(c25Sql).not.toMatch(/add table public\.carpool_/);
+    expect(runner).toMatch(/20261118150000_carpool_c25_drop_admin_geo_reqs\.sql/);
+    expect(runner.indexOf('20261118140000_carpool_c24_lows.sql')).toBeLessThan(
+      runner.indexOf('20261118150000_carpool_c25_drop_admin_geo_reqs.sql'),
+    );
+  });
+
+  it('drops pairing CHECKs, keeps format CHECKs, never drops geo columns', () => {
+    expect(c25Sql).toMatch(/drop constraint if exists carpool_trips_origin_district_matches_province/);
+    expect(c25Sql).toMatch(/drop constraint if exists carpool_trips_dest_district_matches_province/);
+    expect(c25Sql).not.toMatch(/drop column.*origin_province_code/);
+    expect(c25Sql).not.toMatch(/drop constraint if exists carpool_trips_origin_province_code/);
+    expect(taxiTrunkSql).toMatch(/origin_province_code ~ '\^\[0-9\]\{2\}\$'/);
+    expect(taxiTrunkSql).toMatch(/origin_district_code ~ '\^\[0-9\]\{4\}\$'/);
+  });
+
+  it('redefines discover with ignored geo params, nearby points, extra_km, no owner_id', () => {
+    expect(c25Sql).toMatch(/drop function if exists public\.carpool_discover_trips/);
+    expect(c25Sql).toMatch(/p_pickup_lat double precision default null/);
+    expect(c25Sql).toMatch(/p_radius_km numeric default null/);
+    expect(c25Sql).toMatch(/pickup_distance_km numeric/);
+    expect(c25Sql).toMatch(/extra_km numeric/);
+    expect(c25Sql).toMatch(/order by m\.extra_km nulls last, t\.depart_at/);
+    expect(c25Sql).toMatch(/\(t\.owner_id = uid\) as is_mine/);
+    expect(c25Sql).not.toMatch(/t\.owner_id as/);
+    expect(c25Sql).toMatch(
+      /grant execute on function public\.carpool_discover_trips\(\s*public\.carpool_trip_kind, text, text, text, text,\s*double precision, double precision, double precision, double precision, numeric\s*\) to authenticated, service_role;/,
+    );
+    expect(c25Sql).toMatch(/set search_path = ''/);
+    expect(c25Sql).toMatch(/private\.carpool_route_vertices/);
+    expect(c25Sql).toMatch(/least\(v_radius, p_max_detour_km\)/);
+  });
+
+  it('skips cap-lowering on cancelled/completed and locks the trip FOR UPDATE', () => {
+    const tripsGuard =
+      c25Sql.match(/create or replace function public\.carpool_trips_guard[\s\S]*?end;\n\$\$;/)?.[0] ?? '';
+    expect(tripsGuard).toMatch(/old\.status not in \('cancelled', 'completed'\)/);
+    expect(tripsGuard).toMatch(/private\.carpool_detour_floor_km/);
+    expect(tripsGuard).toMatch(/ลดระยะออกนอกเส้นทางสูงสุดไม่ได้/);
+    expect(tripsGuard).toMatch(/set search_path = ''/);
+    const book =
+      c25Sql.match(/create or replace function public\.carpool_book_seat[\s\S]*?end;\n\$\$;/)?.[0] ?? '';
+    expect(book).toMatch(/from public\.carpool_trips t/);
+    expect(book).toMatch(/for update/);
+    expect((book.match(/for update/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    const bookingsGuard =
+      c25Sql.match(/create or replace function public\.carpool_bookings_guard[\s\S]*?end;\n\$\$;/)?.[0] ?? '';
+    expect(bookingsGuard).toMatch(/for update/);
+    expect(bookingsGuard).toMatch(/private\.carpool_enforce_max_detour/);
+    expect(c25Sql).toMatch(
+      /revoke execute on function public\.carpool_trips_guard\(\) from public, anon, authenticated;/,
+    );
+    expect(c25Sql).toMatch(
+      /revoke execute on function public\.carpool_bookings_guard\(\) from public, anon, authenticated;/,
+    );
+  });
+
+  it('keeps bookings SELECT as rider-own/owner/admin and does not add a dest RPC', () => {
+    expect(sql).toMatch(/create policy "carpool_bookings_select"/);
+    expect(sql).toMatch(/rider_id = \(select auth\.uid\(\)\)/);
+    expect(c25Sql).not.toMatch(/drop policy.*carpool_bookings_select/);
+    expect(c25Sql).not.toMatch(/create policy "carpool_bookings_select"/);
+    expect(c25Sql).not.toMatch(/create or replace function public\.carpool_own_booking/);
+    expect(stopsSql).toMatch(/Driver waypoints/);
+    expect(testSql).toMatch(/rider A reads own dest, not rider B/);
+    expect(testSql).toMatch(/stranger reads no booking dest/);
   });
 });

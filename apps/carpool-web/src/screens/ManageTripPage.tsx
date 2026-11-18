@@ -124,10 +124,7 @@ export function ManageTripPage() {
     },
     bookedLuggage,
   ).overflow;
-  const route = formatRouteLine(preview.pickup_label, preview.dest_label, {
-    originProvince: preview.origin_province_code,
-    destProvince: preview.dest_province_code,
-  });
+  const route = formatRouteLine(preview.pickup_label, preview.dest_label);
 
   return (
     <main className="page" data-testid="manage-trip">

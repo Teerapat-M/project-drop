@@ -43,10 +43,7 @@ export function PlacePicker({
   const provider = useMapProvider();
   const desktop = useIsDesktop();
   const routePoints = routeOverlay?.points ?? [];
-  const mapCenter = defaultMapCenter({
-    routePoints,
-    centroid: centroid ?? bias ?? null,
-  });
+  const mapCenter = defaultMapCenter({ routePoints });
   const [query, setQuery] = useState(initial?.address ?? '');
   const [hits, setHits] = useState<AutocompletePrediction[]>([]);
   const [pin, setPin] = useState<LatLng>(initial ?? mapCenter);

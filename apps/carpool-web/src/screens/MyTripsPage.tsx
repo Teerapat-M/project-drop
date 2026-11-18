@@ -32,7 +32,7 @@ export function MyTripsPage() {
       const { data: tripRows } = await supabase
         .from('carpool_trips')
         .select(
-          'id, kind, vehicle_type, car_icon, route_km, depart_at, status, pickup_label, dest_label, pickup_lat, pickup_lng, dest_lat, dest_lng, trunk_w_cm, trunk_h_cm, trunk_l_cm, owner_id, origin_province_code, dest_province_code, origin_district_code, dest_district_code',
+          'id, kind, vehicle_type, car_icon, route_km, depart_at, status, pickup_label, dest_label, pickup_lat, pickup_lng, dest_lat, dest_lng, trunk_w_cm, trunk_h_cm, trunk_l_cm, owner_id',
         )
         .order('depart_at', { ascending: true });
       const rows = (tripRows ?? []) as Array<TripCard & { owner_id?: string }>;
@@ -152,10 +152,7 @@ export function MyTripsPage() {
 
 function MyTripCardView({ trip }: { trip: MyTrip | MyTripDemo }) {
   const href = trip.role === 'created' ? `/trips/${trip.id}/manage` : `/trips/${trip.id}/booked`;
-  const route = formatRouteLine(trip.pickup_label, trip.dest_label, {
-    originProvince: trip.origin_province_code,
-    destProvince: trip.dest_province_code,
-  });
+  const route = formatRouteLine(trip.pickup_label, trip.dest_label);
   const kindLabel = trip.kind === 'taxi' ? 'แท็กซี่' : 'รถส่วนตัว';
   const detail =
     trip.role === 'created'

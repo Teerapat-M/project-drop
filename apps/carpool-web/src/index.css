@@ -150,16 +150,6 @@ a {
   flex: 1;
 }
 
-.geo-credit {
-  margin: auto 16px 12px;
-  font-size: 12px;
-  text-align: center;
-}
-
-.geo-credit a {
-  color: inherit;
-}
-
 .page-title {
   margin: 0 0 4px;
   font-size: 18px;
@@ -202,7 +192,6 @@ a {
   display: none;
 }
 
-.search-card,
 .ad-slot {
   display: none;
 }
@@ -245,6 +234,11 @@ a {
 
 .km-suffix-row input {
   flex: 1;
+}
+
+.km-suffix-row input[type='range'] {
+  min-height: var(--tap);
+  accent-color: #222;
 }
 
 .km-suffix {
@@ -996,13 +990,8 @@ a {
   }
 
   .btn.home-create-inline,
-  .search-card,
   .ad-slot {
     display: flex;
-  }
-
-  .search-card {
-    display: grid;
   }
 
   .desktop-nav {

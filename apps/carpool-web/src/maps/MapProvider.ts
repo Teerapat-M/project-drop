@@ -40,10 +40,13 @@ export type MapRenderOptions = {
   onClick?: (coord: LatLng) => void;
 };
 
+export type MarkerKind = 'route' | 'dropoff';
+
 export type MarkerRenderOptions = {
   position: LatLng;
   draggable?: boolean;
   label?: string;
+  kind?: MarkerKind;
   onDragEnd?: (coord: LatLng) => void;
 };
 

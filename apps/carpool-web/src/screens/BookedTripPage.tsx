@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { formatKm } from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { LuggageBlock } from '../components/LuggageBlock';
 import { TaxiBadge } from '../components/TaxiBadge';
-import { DEMO_MY_TRIPS, demoPreview } from '../fixtures';
+import { DEMO_MY_BOOKING, DEMO_MY_TRIPS, demoPreview } from '../fixtures';
 import { VEHICLE_LABEL } from '../lib/carIcons';
 import { bindChat, openChat } from '../lib/chatEvents';
 import { fareForTrip } from '../lib/fareFromTrip';
@@ -29,6 +30,7 @@ export function BookedTripPage() {
     if (demo) {
       const card = DEMO_MY_TRIPS.find((t) => t.id === id);
       setPreview(demoPreview(id) ?? (card ? { ...card, seats: [], luggage: [] } : null));
+      setBooking(DEMO_MY_BOOKING[id] ?? null);
       return;
     }
     const supabase = getSupabase();
@@ -82,10 +84,7 @@ export function BookedTripPage() {
     booking?.luggage_w_cm && booking.luggage_h_cm && booking.luggage_d_cm
       ? liters(booking.luggage_w_cm, booking.luggage_h_cm, booking.luggage_d_cm)
       : 0;
-  const route = formatRouteLine(preview.pickup_label, preview.dest_label, {
-    originProvince: preview.origin_province_code,
-    destProvince: preview.dest_province_code,
-  });
+  const route = formatRouteLine(preview.pickup_label, preview.dest_label);
   const seatLabel = ownSeat ? SEAT_LABELS[ownSeat.position] : '—';
 
   return (
@@ -124,6 +123,16 @@ export function BookedTripPage() {
         <p>
           <strong>ที่นั่งของคุณ</strong> · {seatLabel}
         </p>
+        {booking?.dest_label ? (
+          <p data-testid="own-dropoff">
+            จุดลงของคุณ · {booking.dest_label}
+          </p>
+        ) : null}
+        {booking && booking.detour_km > 0 ? (
+          <p className="muted" data-testid="own-detour">
+            ออกนอกเส้นทาง {formatKm(booking.detour_km)} กม.
+          </p>
+        ) : null}
         <p className="muted">ส่วนของคุณ {thb(share)} ฿</p>
         <p className="muted">
           สัมภาระของคุณ{' '}
@@ -151,6 +160,18 @@ export function BookedTripPage() {
             lng: preview.dest_lng,
             address: preview.dest_label,
           }}
+          highlights={
+            booking
+              ? [
+                  {
+                    id: 'own-dropoff',
+                    position: { lat: booking.dest_lat, lng: booking.dest_lng },
+                    label: 'จุดลงของคุณ',
+                    kind: 'dropoff',
+                  },
+                ]
+              : []
+          }
         />
       </div>
 

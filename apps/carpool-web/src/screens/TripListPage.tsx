@@ -1,17 +1,68 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { BANGKOK_PROVINCE_CODE, RATE_THB_PER_KM, formatKm } from '@drop/carpool-core';
+import {
+  RATE_THB_PER_KM,
+  SEARCH_RADIUS_KM_DEFAULT,
+  SEARCH_RADIUS_KM_MAX,
+  SEARCH_RADIUS_KM_MIN,
+  clampSearchRadiusKm,
+  formatKm,
+  matchSearchRoute,
+} from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
-import { GeoPlaceFields, type GeoPlaceValue } from '../components/GeoPlaceFields';
 import { TaxiBadge } from '../components/TaxiBadge';
 import { DEMO_TRIPS } from '../fixtures';
 import { VEHICLE_LABEL } from '../lib/carIcons';
 import { estimateViewerFare } from '../lib/estimateFare';
 import { formatDepart, thb } from '../lib/format';
 import { formatRouteLine } from '../lib/placeLabel';
+import type { PickedPlace } from '../maps/MapProvider';
+import { PlaceField } from '../maps/PlaceField';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
 import type { TripCard, TripKind } from '../types';
+
+type AppliedSearch = {
+  pickup: PickedPlace | null;
+  dest: PickedPlace | null;
+  radiusKm: number;
+};
+
+function dropoffQuery(place: PickedPlace | null): string {
+  if (!place) return '';
+  const q = new URLSearchParams({
+    drop_lat: String(place.lat),
+    drop_lng: String(place.lng),
+    drop_label: place.address,
+  });
+  return `?${q.toString()}`;
+}
+
+function withDemoDistances(trips: TripCard[], applied: AppliedSearch): TripCard[] {
+  const hasPoint = applied.pickup != null || applied.dest != null;
+  if (!hasPoint) return trips;
+  const scored: TripCard[] = [];
+  for (const trip of trips) {
+    const match = matchSearchRoute({
+      route: [
+        { lat: trip.pickup_lat, lng: trip.pickup_lng },
+        { lat: trip.dest_lat, lng: trip.dest_lng },
+      ],
+      pickup: applied.pickup,
+      dest: applied.dest,
+      radiusKm: applied.radiusKm,
+      taxiMaxDetourKm: trip.kind === 'taxi' ? trip.max_detour_km : null,
+    });
+    if (!match) continue;
+    scored.push({
+      ...trip,
+      pickup_distance_km: match.pickupDistanceKm,
+      dest_distance_km: match.destDistanceKm,
+      extra_km: match.extraKm,
+    });
+  }
+  return scored.sort((a, b) => (a.extra_km ?? 1e9) - (b.extra_km ?? 1e9));
+}
 
 export function TripListPage() {
   const { demo } = useAuth();
@@ -19,26 +70,18 @@ export function TripListPage() {
   const kind = (params.get('kind') === 'taxi' ? 'taxi' : 'private') as TripKind;
   const [trips, setTrips] = useState<TripCard[]>(demo ? DEMO_TRIPS : []);
   const [emptyForced] = useState(params.get('empty') === '1');
-  const [originGeo, setOriginGeo] = useState<GeoPlaceValue>({
-    provinceCode: BANGKOK_PROVINCE_CODE,
-    districtCode: '',
-    place: null,
-  });
-  const [destGeo, setDestGeo] = useState<GeoPlaceValue>({
-    provinceCode: '',
-    districtCode: '',
-    place: null,
-  });
-  const [applied, setApplied] = useState({
-    originProvince: '',
-    originDistrict: '',
-    destProvince: '',
-    destDistrict: '',
+  const [pickup, setPickup] = useState<PickedPlace | null>(null);
+  const [dest, setDest] = useState<PickedPlace | null>(null);
+  const [radiusKm, setRadiusKm] = useState(SEARCH_RADIUS_KM_DEFAULT);
+  const [applied, setApplied] = useState<AppliedSearch>({
+    pickup: null,
+    dest: null,
+    radiusKm: SEARCH_RADIUS_KM_DEFAULT,
   });
 
   useEffect(() => {
     if (demo) {
-      setTrips(DEMO_TRIPS);
+      setTrips(withDemoDistances(DEMO_TRIPS, applied));
       return;
     }
     const supabase = getSupabase();
@@ -46,10 +89,11 @@ export function TripListPage() {
     void supabase
       .rpc('carpool_discover_trips', {
         p_kind: kind,
-        p_origin_province_code: applied.originProvince || null,
-        p_origin_district_code: applied.originDistrict || null,
-        p_dest_province_code: applied.destProvince || null,
-        p_dest_district_code: applied.destDistrict || null,
+        p_pickup_lat: applied.pickup?.lat ?? null,
+        p_pickup_lng: applied.pickup?.lng ?? null,
+        p_dest_lat: applied.dest?.lat ?? null,
+        p_dest_lng: applied.dest?.lng ?? null,
+        p_radius_km: applied.pickup || applied.dest ? applied.radiusKm : null,
       })
       .then(({ data, error }) => {
         if (error) setTrips([]);
@@ -59,15 +103,8 @@ export function TripListPage() {
 
   const shown = useMemo(() => {
     if (emptyForced) return [];
-    return trips.filter((t) => {
-      if (t.kind !== kind) return false;
-      if (applied.originProvince && t.origin_province_code !== applied.originProvince) return false;
-      if (applied.originDistrict && t.origin_district_code !== applied.originDistrict) return false;
-      if (applied.destProvince && t.dest_province_code !== applied.destProvince) return false;
-      if (applied.destDistrict && t.dest_district_code !== applied.destDistrict) return false;
-      return true;
-    });
-  }, [trips, kind, emptyForced, applied]);
+    return trips.filter((t) => t.kind === kind);
+  }, [trips, kind, emptyForced]);
 
   return (
     <main className="page">
@@ -78,28 +115,41 @@ export function TripListPage() {
         className="search-card stack"
         onSubmit={(e) => {
           e.preventDefault();
-          setApplied({
-            originProvince: originGeo.provinceCode,
-            originDistrict: originGeo.districtCode,
-            destProvince: destGeo.provinceCode,
-            destDistrict: destGeo.districtCode,
-          });
+          setApplied({ pickup, dest, radiusKm });
         }}
       >
-        <GeoPlaceFields
-          placeLabel="ต้นทาง"
-          testIdPrefix="search-origin"
-          placePlaceholder="เลือกต้นทาง"
-          value={originGeo}
-          onChange={setOriginGeo}
+        <PlaceField
+          label="จุดขึ้นของคุณ"
+          testId="place-search-pickup"
+          value={pickup}
+          placeholder="เลือกจุดขึ้น (ไม่บังคับ)"
+          onChange={setPickup}
         />
-        <GeoPlaceFields
-          placeLabel="ปลายทาง"
-          testIdPrefix="search-dest"
-          placePlaceholder="เลือกปลายทาง"
-          value={destGeo}
-          onChange={setDestGeo}
+        <PlaceField
+          label="จุดลงของคุณ"
+          testId="place-search-dest"
+          value={dest}
+          placeholder="เลือกจุดลง (ไม่บังคับ)"
+          onChange={setDest}
         />
+        <label className="field">
+          รัศมีค้นหา
+          <span className="km-suffix-row">
+            <input
+              data-testid="search-radius"
+              className="tap-target"
+              type="range"
+              min={SEARCH_RADIUS_KM_MIN}
+              max={SEARCH_RADIUS_KM_MAX}
+              step={1}
+              value={radiusKm}
+              onChange={(e) => setRadiusKm(clampSearchRadiusKm(Number(e.target.value)))}
+            />
+            <span className="km-suffix" data-testid="search-radius-label">
+              {formatKm(radiusKm)} กม.
+            </span>
+          </span>
+        </label>
         <button className="btn tap-target" type="submit">
           ค้นหา
         </button>
@@ -150,7 +200,7 @@ export function TripListPage() {
       ) : (
         <div className="stack">
           {shown.map((t) => (
-            <TripCardView key={t.id} trip={t} />
+            <TripCardView key={t.id} trip={t} dropoff={applied.dest} />
           ))}
         </div>
       )}
@@ -167,7 +217,18 @@ export function TripListPage() {
   );
 }
 
-function TripCardView({ trip }: { trip: TripCard }) {
+function distanceLine(trip: TripCard): string | null {
+  const bits: string[] = [];
+  if (trip.pickup_distance_km != null) {
+    bits.push(`จุดขึ้นห่างเส้นทาง ${formatKm(trip.pickup_distance_km)} กม.`);
+  }
+  if (trip.dest_distance_km != null) {
+    bits.push(`จุดลงห่าง ${formatKm(trip.dest_distance_km)} กม.`);
+  }
+  return bits.length ? bits.join(' · ') : null;
+}
+
+function TripCardView({ trip, dropoff }: { trip: TripCard; dropoff: PickedPlace | null }) {
   const full = trip.open_seats === 0 || trip.status === 'full';
   const bookedPassengers = Math.max(0, trip.bookable_seats - trip.open_seats);
   const est = estimateViewerFare({
@@ -176,11 +237,9 @@ function TripCardView({ trip }: { trip: TripCard }) {
     bookedPassengerCount: bookedPassengers,
   });
   const mine = trip.is_mine === true;
-  const href = mine ? `/trips/${trip.id}/manage` : `/trips/${trip.id}`;
-  const route = formatRouteLine(trip.pickup_label, trip.dest_label, {
-    originProvince: trip.origin_province_code,
-    destProvince: trip.dest_province_code,
-  });
+  const href = mine ? `/trips/${trip.id}/manage` : `/trips/${trip.id}${dropoffQuery(dropoff)}`;
+  const route = formatRouteLine(trip.pickup_label, trip.dest_label);
+  const distances = distanceLine(trip);
   return (
     <article className={`card trip-card ${full ? 'dimmed' : ''}`} data-testid={`trip-${trip.id}`}>
       <CarPhoto car_icon={trip.car_icon} vehicle_type={trip.vehicle_type} kind={trip.kind} />
@@ -207,12 +266,22 @@ function TripCardView({ trip }: { trip: TripCard }) {
             ออกนอกเส้นทางได้สูงสุด {formatKm(trip.max_detour_km)} กม.
           </p>
         ) : null}
+        {distances ? (
+          <p className="muted" style={{ margin: 0 }} data-testid="search-distance">
+            {distances}
+          </p>
+        ) : null}
         <p>
           ประมาณ {thb(est.amountThb)} ฿ เมื่อมี {est.payerCount} คน · ตัวอย่าง
         </p>
         <p className="muted">{formatDepart(trip.depart_at)} · ว่าง {trip.open_seats}/{trip.bookable_seats}</p>
       </div>
-      <Link to={href} className="btn tap-target" data-testid={mine ? `manage-${trip.id}` : `join-${trip.id}`}>
+      <Link
+        to={href}
+        state={dropoff ? { dropoff } : undefined}
+        className="btn tap-target"
+        data-testid={mine ? `manage-${trip.id}` : `join-${trip.id}`}
+      >
         {mine ? 'จัดการทริป' : full ? 'ดูทริป' : 'ดูทริปนี้'}
       </Link>
     </article>
