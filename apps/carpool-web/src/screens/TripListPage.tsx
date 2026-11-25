@@ -82,14 +82,23 @@ export function TripListPage() {
     dest: null,
     radiusKm: SEARCH_RADIUS_KM_DEFAULT,
   });
+  const [listStatus, setListStatus] = useState<'loading' | 'ready' | 'error'>(demo ? 'ready' : 'loading');
 
   useEffect(() => {
     if (demo) {
       setTrips(withDemoDistances(DEMO_TRIPS, applied));
+      setListStatus('ready');
       return;
     }
     const supabase = getSupabase();
-    if (!supabase) return;
+    if (!supabase) {
+      setListStatus('error');
+      return;
+    }
+    setListStatus('loading');
+    // TODO: add a spatial index (or grid prefilter) if discover volume needs it.
+    // SQL discover is bbox + vertex scan only; PostGIS is not enabled
+    // (see 20261118150000 / 20261125120000).
     void supabase
       .rpc('carpool_discover_trips', {
         p_kind: kind,
@@ -100,8 +109,13 @@ export function TripListPage() {
         p_radius_km: applied.pickup || applied.dest ? applied.radiusKm : null,
       })
       .then(({ data, error }) => {
-        if (error) setTrips([]);
-        else setTrips((data as TripCard[]) ?? []);
+        if (error) {
+          setTrips([]);
+          setListStatus('error');
+        } else {
+          setTrips((data as TripCard[]) ?? []);
+          setListStatus('ready');
+        }
       });
   }, [demo, kind, applied]);
 
@@ -116,6 +130,7 @@ export function TripListPage() {
       <p className="lede">แชร์ที่นั่งไปด้วยกัน · {RATE_THB_PER_KM} ฿/กม. หารเท่ากันตามจำนวนคนที่นั่ง</p>
 
       <form
+        id="trip-search"
         className="search-card stack"
         onSubmit={(e) => {
           e.preventDefault();
@@ -191,14 +206,28 @@ export function TripListPage() {
         {kind === 'taxi' ? 'ทริปแท็กซี่ใกล้คุณ' : 'ทริปรถส่วนตัวใกล้คุณ'} · ตัวอย่าง
       </p>
 
-      {shown.length === 0 ? (
+      {listStatus === 'loading' ? (
+        <p data-testid="list-loading">กำลังโหลดทริป…</p>
+      ) : listStatus === 'error' ? (
+        <p className="field-error" data-testid="list-error">
+          โหลดทริปไม่สำเร็จ
+        </p>
+      ) : shown.length === 0 ? (
         <div className="empty" data-testid="empty-state">
           <h2>ไม่มีทริปใกล้จุดนี้</h2>
           <p className="muted">ลองขยายรัศมี หรือเลือกจุดอื่น</p>
           <div className="row" style={{ justifyContent: 'center' }}>
-            <Link to="/map" className="btn tap-target">
+            <button
+              type="button"
+              className="btn tap-target"
+              data-testid="change-search-point"
+              onClick={() => {
+                document.getElementById('trip-search')?.scrollIntoView({ behavior: 'smooth' });
+                document.querySelector<HTMLElement>('[data-testid="place-search-pickup"]')?.focus();
+              }}
+            >
               เปลี่ยนจุด
-            </Link>
+            </button>
             <button type="button" className="btn ghost tap-target" onClick={() => setParams({ kind })}>
               ล้างตัวกรอง
             </button>

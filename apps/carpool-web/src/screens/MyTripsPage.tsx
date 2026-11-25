@@ -20,16 +20,27 @@ export function MyTripsPage() {
   const tab = params.get('tab') === 'past' ? 'past' : 'upcoming';
   const emptyForced = params.get('empty') === '1';
   const [trips, setTrips] = useState<MyTrip[]>(demo ? DEMO_MY_TRIPS : []);
+  const [listStatus, setListStatus] = useState<'loading' | 'ready' | 'error'>(demo ? 'ready' : 'loading');
 
   useEffect(() => {
     if (demo) {
       setTrips(DEMO_MY_TRIPS);
+      setListStatus('ready');
       return;
     }
     const supabase = getSupabase();
-    if (!supabase || !user) return;
+    if (!supabase || !user) {
+      if (!demo) setListStatus(user ? 'error' : 'ready');
+      return;
+    }
     void (async () => {
-      const { data: tripRows } = await supabase.rpc('carpool_visible_trips');
+      setListStatus('loading');
+      const { data: tripRows, error: tripError } = await supabase.rpc('carpool_visible_trips');
+      if (tripError) {
+        setListStatus('error');
+        setTrips([]);
+        return;
+      }
       const rows = ((tripRows ?? []) as TripCard[]).sort(
         (a, b) => new Date(a.depart_at).getTime() - new Date(b.depart_at).getTime(),
       );
@@ -89,6 +100,7 @@ export function MyTripsPage() {
           };
         }),
       );
+      setListStatus('ready');
     })();
   }, [demo, user]);
 
@@ -128,7 +140,13 @@ export function MyTripsPage() {
         </button>
       </div>
 
-      {shown.length === 0 ? (
+      {listStatus === 'loading' ? (
+        <p data-testid="my-trips-loading">กำลังโหลดทริป…</p>
+      ) : listStatus === 'error' ? (
+        <p className="field-error" data-testid="my-trips-error">
+          โหลดทริปไม่สำเร็จ
+        </p>
+      ) : shown.length === 0 ? (
         <div className="empty" data-testid="my-trips-empty">
           <h2>{tab === 'past' ? 'ยังไม่มีทริปที่ผ่านมา' : 'ยังไม่มีทริปที่จะไป'}</h2>
           <p className="muted">สร้างทริปใหม่เพื่อชวนเพื่อนเดินทางด้วยกัน</p>

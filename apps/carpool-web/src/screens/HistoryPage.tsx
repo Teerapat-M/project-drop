@@ -46,17 +46,27 @@ export function HistoryPage() {
   const { demo } = useAuth();
   const [trips, setTrips] = useState<TripCard[]>(demo ? DEMO_HISTORY : []);
   const [bookingMap, setBookingMap] = useState<Record<string, BookingRow[]>>({});
+  const [listStatus, setListStatus] = useState<'loading' | 'ready' | 'error'>(demo ? 'ready' : 'loading');
 
   useEffect(() => {
     if (demo) {
       setTrips(DEMO_HISTORY);
+      setListStatus('ready');
       return;
     }
     const supabase = getSupabase();
-    if (!supabase) return;
+    if (!supabase) {
+      setListStatus('error');
+      return;
+    }
     void supabase
       .rpc('carpool_visible_trips')
-      .then(async ({ data }) => {
+      .then(async ({ data, error }) => {
+        if (error) {
+          setListStatus('error');
+          setTrips([]);
+          return;
+        }
         const rows = ((data ?? []) as TripCard[])
           .filter((t) => t.status === 'completed' || t.status === 'cancelled')
           .sort((a, b) => new Date(b.depart_at).getTime() - new Date(a.depart_at).getTime());
@@ -69,7 +79,10 @@ export function HistoryPage() {
           })),
         );
         const ids = rows.map((t) => t.id);
-        if (!ids.length) return;
+        if (!ids.length) {
+          setListStatus('ready');
+          return;
+        }
         const { data: books } = await supabase
           .from('carpool_bookings')
           .select(
@@ -81,6 +94,7 @@ export function HistoryPage() {
           (map[b.trip_id] ??= []).push(b);
         }
         setBookingMap(map);
+        setListStatus('ready');
       });
   }, [demo]);
 
@@ -94,8 +108,16 @@ export function HistoryPage() {
         <span className="page-head-spacer" />
       </div>
       <p className="lede">ทริปที่คุณเคยร่วม · จ่ายผ่านพร้อมเพย์ · โอนกันเอง ไม่ผ่านแอป</p>
-      {trips.length === 0 ? (
-        <p className="empty muted">ยังไม่มีประวัติทริป</p>
+      {listStatus === 'loading' ? (
+        <p data-testid="history-loading">กำลังโหลดทริป…</p>
+      ) : listStatus === 'error' ? (
+        <p className="field-error" data-testid="history-error">
+          โหลดประวัติไม่สำเร็จ
+        </p>
+      ) : trips.length === 0 ? (
+        <p className="empty muted" data-testid="history-empty">
+          ยังไม่มีประวัติทริป
+        </p>
       ) : (
         <div className="stack">
           {trips.map((trip) => {

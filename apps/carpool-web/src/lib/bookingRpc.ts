@@ -1,3 +1,5 @@
+import { capStoredLabel } from '@drop/carpool-core';
+
 export type BookingDestArgs = {
   tripId: string;
   destLabel: string;
@@ -8,7 +10,7 @@ export type BookingDestArgs = {
 export function bookingDestRpcArgs(args: BookingDestArgs) {
   return {
     p_trip_id: args.tripId,
-    p_dest_label: args.destLabel,
+    p_dest_label: capStoredLabel(args.destLabel),
     p_dest_lat: args.destLat,
     p_dest_lng: args.destLng,
   };

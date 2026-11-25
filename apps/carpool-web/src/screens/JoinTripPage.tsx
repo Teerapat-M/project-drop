@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { LuggagePiece } from '@drop/carpool-core';
 import {
+  capStoredLabel,
   detourFloorKm,
   formatKm,
   maxDetourExceeded,
@@ -16,6 +17,7 @@ import { VEHICLE_LABEL } from '../lib/carIcons';
 import { estimateViewerFareFromSeats } from '../lib/estimateFare';
 import { liters, thb } from '../lib/format';
 import { firstJoinBlocker, type JoinRouteStatus } from '../lib/joinRequirements';
+import { thaiRpcError } from '../lib/seatRpc';
 import { SEAT_LABELS } from '../lib/seats';
 import { SeatPicker } from '../components/SeatPicker';
 import { LuggageBlock } from '../components/LuggageBlock';
@@ -72,6 +74,8 @@ export function JoinTripPage() {
   const [agree, setAgree] = useState(false);
   const [error, setError] = useState<string | null>(params.get('conflict') === '1' ? BOOKING_CONFLICT : null);
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(demo);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const ownerQuery = params.get('owner') === '1';
 
   useEffect(() => {
@@ -86,12 +90,24 @@ export function JoinTripPage() {
           ? maskTripForViewer(raw, { isOwner: raw.is_mine === true, isBookedRider: false })
           : raw,
       );
+      setLoaded(true);
       return;
     }
     const supabase = getSupabase();
-    if (!supabase) return;
-    void supabase.rpc('carpool_trip_preview', { p_trip_id: id }).then(({ data }) => {
-      setPreview(data as TripPreview);
+    if (!supabase) {
+      setLoaded(true);
+      setLoadError('ยังไม่ได้ตั้งค่า Supabase');
+      return;
+    }
+    void supabase.rpc('carpool_trip_preview', { p_trip_id: id }).then(({ data, error: previewError }) => {
+      if (previewError) {
+        setLoadError(thaiRpcError(previewError.message, 'โหลดทริปไม่สำเร็จ'));
+        setPreview(null);
+      } else {
+        setPreview((data as TripPreview) ?? null);
+        setLoadError(null);
+      }
+      setLoaded(true);
     });
     const channel = supabase
       .channel(`seats:${id}`)
@@ -149,10 +165,27 @@ export function JoinTripPage() {
       ).overflow
     : false;
 
+  if (!loaded) {
+    return (
+      <main className="page">
+        <p data-testid="trip-loading">กำลังโหลดทริป…</p>
+      </main>
+    );
+  }
+  if (loadError) {
+    return (
+      <main className="page">
+        <p className="field-error" data-testid="trip-load-error">
+          {loadError}
+        </p>
+        <Link to="/">กลับหน้าแรก</Link>
+      </main>
+    );
+  }
   if (!preview) {
     return (
       <main className="page">
-        <p>ไม่พบทริป</p>
+        <p data-testid="trip-missing">ไม่พบทริป</p>
         <Link to="/">กลับหน้าแรก</Link>
       </main>
     );
@@ -241,7 +274,7 @@ export function JoinTripPage() {
     const { error: bookError } = await supabase.rpc('carpool_book_seat', {
       p_trip_id: id,
       p_position: selected,
-      p_dest_label: destPlace?.address ?? dest,
+      p_dest_label: capStoredLabel(destPlace?.address ?? dest),
       p_dest_lat: destPlace?.lat ?? preview.dest_lat,
       p_dest_lng: destPlace?.lng ?? preview.dest_lng,
       p_detour_km: detour,

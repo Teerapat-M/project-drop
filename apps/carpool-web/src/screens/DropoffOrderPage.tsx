@@ -20,7 +20,7 @@ const RIDERS = [
 export function DropoffOrderPage() {
   const { id = '' } = useParams();
   const [params] = useSearchParams();
-  const { demo } = useAuth();
+  const { demo, user } = useAuth();
   const driverView = params.get('view') === 'driver';
   const [preview, setPreview] = useState<TripPreview | null>(demo ? demoPreview(id) : null);
   const [bookings, setBookings] = useState<BookingRow[]>([]);
@@ -79,6 +79,14 @@ export function DropoffOrderPage() {
     }).then(setOrder);
   }, [bookings, canonicalDemo, demo, preview]);
 
+  if (!demo && !preview) {
+    return (
+      <main className="page">
+        <p data-testid="order-loading">กำลังโหลดลำดับลงรถ…</p>
+      </main>
+    );
+  }
+
   const fare =
     canonicalDemo || demo
       ? computeFare({
@@ -99,6 +107,12 @@ export function DropoffOrderPage() {
             seats: taxi ? FARE_TAXI_SEATS : FARE_PRIVATE_SEATS,
           });
 
+  const youBooking = bookings.find((b) => b.rider_id === user?.id);
+  const youId = canonicalDemo || demo ? 'B' : youBooking?.id ?? null;
+  const youAmount =
+    fare.persons.find((p) => p.id === (youId ?? ''))?.amountThb ??
+    fare.persons[0]?.amountThb ??
+    0;
   const stops = canonicalDemo || demo
     ? RIDERS.map((r) => ({ id: r.id, label: r.label }))
     : bookings.map((b) => ({ id: b.id, label: b.dest_label }));
@@ -120,7 +134,7 @@ export function DropoffOrderPage() {
             waypoints={(preview?.stops ?? []).map((s) => ({ id: `w${s.seq}`, label: s.address }))}
             stops={stops}
             driverView={driverView}
-            youId={canonicalDemo || demo ? 'B' : null}
+            youId={youId}
           />
         ) : (
           <p>กำลังจัดลำดับลงรถ…</p>
@@ -133,14 +147,15 @@ export function DropoffOrderPage() {
             <p style={{ fontSize: 32, margin: 0 }}>
               <strong>{thb(fare.totalThb)} ฿</strong>
             </p>
-            <p className="muted">ตัวอย่าง · ยังไม่แยกยอดรายคน</p>
+            <p className="muted">ยอดจากสูตรค่าโดยสาร · กระเป๋าไม่คิดเงิน</p>
           </>
         ) : (
           <>
             <p>
-              ส่วนของคุณ (บี) <strong>{thb(fare.persons.find((p) => p.id === 'B')?.amountThb ?? 0)} ฿</strong>
+              ส่วนของคุณ{canonicalDemo || demo ? ' (บี)' : ''}{' '}
+              <strong>{thb(youAmount)} ฿</strong>
             </p>
-            <p className="muted">เส้นทางหลักรวมระยะอ้อม · ตัวอย่าง</p>
+            <p className="muted">เส้นทางหลักรวมระยะอ้อม · กระเป๋าไม่คิดเงิน</p>
           </>
         )}
         <div className="sticky-bar">

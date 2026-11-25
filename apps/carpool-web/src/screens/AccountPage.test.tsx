@@ -16,10 +16,12 @@ describe('account page', () => {
       </AuthProvider>,
     );
     expect(screen.getByTestId('account-car').querySelector('[data-src="/assets/sedan_opt3.png"]')).toBeTruthy();
+    expect(screen.getByTestId('account-profile')).toHaveTextContent('โหมดตัวอย่าง');
+    expect(screen.getByTestId('account-profile')).not.toHaveTextContent('ยืนยันตัวตน');
     expect(screen.getByTestId('address-home')).toHaveTextContent('บ้าน');
     fireEvent.click(screen.getByTestId('address-home'));
     expect(screen.getByTestId('address-editor')).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('ค้นหาชื่อสถานที่'), {
+    fireEvent.change(screen.getByTestId('address-place'), {
       target: { value: 'เชียงใหม่ เลขที่ 1' },
     });
     fireEvent.click(screen.getByText('บันทึก'));

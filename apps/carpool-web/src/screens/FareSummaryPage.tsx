@@ -14,7 +14,7 @@ const LABELS = { A: 'เอ', B: 'บี', C: 'ซี', driver: 'ส่วนข
 export function FareSummaryPage() {
   const { id = '' } = useParams();
   const [params] = useSearchParams();
-  const { demo } = useAuth();
+  const { demo, user } = useAuth();
   const [preview, setPreview] = useState<TripPreview | null>(demo ? demoPreview(id) : null);
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const confirmed = params.get('confirmed') === '1';
@@ -67,6 +67,26 @@ export function FareSummaryPage() {
     });
   }, [bookings, canonicalDemo, preview, taxi]);
 
+  const labels = useMemo(() => {
+    if (canonicalDemo || demo) return LABELS;
+    const out: Record<string, string> = {};
+    let n = 1;
+    for (const p of result.persons) {
+      if (p.ownerDriverCostSharing) continue;
+      const booking = bookings.find((b) => b.id === p.id);
+      out[p.id] = booking?.rider_id === user?.id ? 'คุณ' : `ผู้ร่วมทริป ${n++}`;
+    }
+    return out;
+  }, [bookings, canonicalDemo, demo, result.persons, user?.id]);
+
+  if (!demo && !preview) {
+    return (
+      <main className="page">
+        <p data-testid="fare-loading">กำลังโหลดค่าโดยสาร…</p>
+      </main>
+    );
+  }
+
   const waiting = !confirmed && isWaitingStatus(preview?.status);
 
   return (
@@ -85,7 +105,7 @@ export function FareSummaryPage() {
           </span>
         </p>
       ) : null}
-      <FareSummary result={result} labels={LABELS} kind={taxi ? 'taxi' : 'private'} />
+      <FareSummary result={result} labels={labels} kind={taxi ? 'taxi' : 'private'} />
       <div className="sticky-bar">
         <Link to={`/trips/${id}/order`} className="btn tap-target">
           {taxi ? 'ดูสรุปทริป' : 'ดูแบบคนขับ'}

@@ -11,6 +11,10 @@ const c25Sql = readFileSync(
   join(root, 'migrations/20261118150000_carpool_c25_drop_admin_geo_reqs.sql'),
   'utf8',
 );
+const c26Sql = readFileSync(
+  join(root, 'migrations/20261125120000_carpool_web_finish.sql'),
+  'utf8',
+);
 const testSql = readFileSync(join(root, 'tests/carpool_rls.sql'), 'utf8');
 const ridesSql = readFileSync(join(root, 'migrations/20261110180000_rides.sql'), 'utf8');
 const revokeSql = readFileSync(
@@ -498,6 +502,10 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
     expect(runner.indexOf('20261118140000_carpool_c24_lows.sql')).toBeLessThan(
       runner.indexOf('20261118150000_carpool_c25_drop_admin_geo_reqs.sql'),
     );
+    expect(runner).toMatch(/20261125120000_carpool_web_finish\.sql/);
+    expect(runner.indexOf('20261118150000_carpool_c25_drop_admin_geo_reqs.sql')).toBeLessThan(
+      runner.indexOf('20261125120000_carpool_web_finish.sql'),
+    );
     expect(runner).toMatch(/PGHOST="\$\{PGHOST:-localhost\}"/);
     expect(runner).toMatch(/PGPORT="\$\{PGPORT:-5432\}"/);
     expect(runner).toMatch(/psql -h "\$PGHOST" -p "\$PGPORT"/);
@@ -667,5 +675,28 @@ describe('carpool C2.5 drop admin geo + nearby search + LOWs', () => {
     expect(testSql).toMatch(/booked rider before reveal gets offset pickup/);
     expect(testSql).toMatch(/booked rider after reveal gets true pickup/);
     expect(testSql).toMatch(/probe discover cannot recover true point better than offset/);
+  });
+
+  it('L10/L11/L3: empty comma parts, 200-char cap, spatial-index TODO, no PostGIS', () => {
+    expect(c26Sql).toMatch(/create or replace function private\.carpool_coarse_label/);
+    expect(c26Sql).toMatch(/from pg_catalog\.unnest\(parts\)/);
+    expect(c26Sql).toMatch(/pg_catalog\.btrim\(p\) <> ''/);
+    expect(c26Sql).toMatch(/pg_catalog\.right\(raw, 200\)/);
+    expect(c26Sql).toMatch(/carpool_trips_pickup_label_len/);
+    expect(c26Sql).toMatch(/carpool_bookings_dest_label_len/);
+    expect(c26Sql).toMatch(/char_length\(pickup_label\) <= 200/);
+    expect(c26Sql).toMatch(/TODO: add a spatial index/);
+    expect(c26Sql).not.toMatch(/^\s*create extension/im);
+    expect(c26Sql).toMatch(/set search_path = ''/);
+    expect(c26Sql).toMatch(
+      /revoke all on function private\.carpool_coarse_label\(text\) from public, anon, authenticated;/,
+    );
+    expect(c26Sql).not.toMatch(/begin;/i);
+    expect(c26Sql).not.toMatch(/commit;/i);
+    expect(c26Sql).not.toMatch(/supabase_realtime/);
+    expect(testSql).toMatch(/coarse label drops empty comma parts/);
+    expect(testSql).toMatch(/coarse label caps input\/output at 200 chars/);
+    expect(testSql).toMatch(/stored pickup_label longer than 200 rejected by CHECK/);
+    expect(testSql).toMatch(/20261125120000_carpool_web_finish\.sql/);
   });
 });

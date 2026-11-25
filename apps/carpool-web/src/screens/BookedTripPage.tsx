@@ -29,6 +29,8 @@ export function BookedTripPage() {
   const [destPlace, setDestPlace] = useState<PickedPlace | null>(null);
   const [destError, setDestError] = useState<string | null>(null);
   const [destBusy, setDestBusy] = useState(false);
+  const [loaded, setLoaded] = useState(demo);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     bindChat(id);
@@ -52,12 +54,24 @@ export function BookedTripPage() {
           address: demoBooking.dest_label,
         });
       }
+      setLoaded(true);
       return;
     }
     const supabase = getSupabase();
-    if (!supabase) return;
-    void supabase.rpc('carpool_trip_preview', { p_trip_id: id }).then(({ data }) => {
-      setPreview(data as TripPreview);
+    if (!supabase) {
+      setLoaded(true);
+      setLoadError('ยังไม่ได้ตั้งค่า Supabase');
+      return;
+    }
+    void supabase.rpc('carpool_trip_preview', { p_trip_id: id }).then(({ data, error: previewError }) => {
+      if (previewError) {
+        setLoadError(thaiRpcError(previewError.message, 'โหลดทริปไม่สำเร็จ'));
+        setPreview(null);
+      } else {
+        setPreview((data as TripPreview) ?? null);
+        setLoadError(null);
+      }
+      setLoaded(true);
     });
     void supabase
       .from('carpool_bookings')
@@ -113,10 +127,27 @@ export function BookedTripPage() {
     return preview.seats.find((s) => s.is_booked);
   }, [preview, booking]);
 
+  if (!loaded) {
+    return (
+      <main className="page">
+        <p data-testid="trip-loading">กำลังโหลดทริป…</p>
+      </main>
+    );
+  }
+  if (loadError) {
+    return (
+      <main className="page">
+        <p className="field-error" data-testid="trip-load-error">
+          {loadError}
+        </p>
+        <Link to="/my-trips">กลับทริปของคุณ</Link>
+      </main>
+    );
+  }
   if (!preview) {
     return (
       <main className="page">
-        <p>ไม่พบทริป</p>
+        <p data-testid="trip-missing">ไม่พบทริป</p>
         <Link to="/my-trips">กลับทริปของคุณ</Link>
       </main>
     );

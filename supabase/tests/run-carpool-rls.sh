@@ -25,4 +25,5 @@ PSQL=(psql -h "$PGHOST" -p "$PGPORT" -v ON_ERROR_STOP=1 \
 "${PSQL[@]}" -f "$ROOT/supabase/tests/carpool_taxi_trunk_backfill.sql"
 "${PSQL[@]}" -f "$ROOT/supabase/migrations/20261118140000_carpool_c24_lows.sql"
 "${PSQL[@]}" -f "$ROOT/supabase/migrations/20261118150000_carpool_c25_drop_admin_geo_reqs.sql"
+"${PSQL[@]}" -f "$ROOT/supabase/migrations/20261125120000_carpool_web_finish.sql"
 "${PSQL[@]}" -f "$ROOT/supabase/tests/carpool_rls.sql"
