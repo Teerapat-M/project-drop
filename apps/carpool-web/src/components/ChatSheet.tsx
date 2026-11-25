@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { demoMessagesFor, demoPreview } from '../fixtures';
 import { carPhotoSrc } from '../lib/carIcons';
 import { formatDepart } from '../lib/format';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
-import type { ChatMessage } from '../types';
+import type { ChatMessage, TripPreview } from '../types';
 
 type Props = {
   open: boolean;
@@ -18,7 +19,21 @@ export function ChatSheet({ open, tripId, onClose, onMinimize }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
-  const preview = tripId ? demoPreview(tripId) : null;
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [livePreview, setLivePreview] = useState<TripPreview | null>(null);
+  const preview = demo ? (tripId ? demoPreview(tripId) : null) : livePreview;
+
+  useEffect(() => {
+    if (!open || !tripId || demo) {
+      if (demo && tripId) setLivePreview(null);
+      return;
+    }
+    const supabase = getSupabase();
+    if (!supabase) return;
+    void supabase.rpc('carpool_trip_preview', { p_trip_id: tripId }).then(({ data }) => {
+      setLivePreview((data as TripPreview) ?? null);
+    });
+  }, [demo, open, tripId]);
 
   useEffect(() => {
     if (!open || !tripId) return;
@@ -76,6 +91,7 @@ export function ChatSheet({ open, tripId, onClose, onMinimize }: Props) {
   const send = async () => {
     const text = body.trim();
     if (!text || !tripId) return;
+    setSendError(null);
     if (demo) {
       setMessages((prev) => [
         ...prev,
@@ -102,7 +118,8 @@ export function ChatSheet({ open, tripId, onClose, onMinimize }: Props) {
       body: text,
     });
     setBusy(false);
-    if (!error) setBody('');
+    if (error) setSendError('ส่งข้อความไม่สำเร็จ');
+    else setBody('');
   };
 
   return (
@@ -132,7 +149,11 @@ export function ChatSheet({ open, tripId, onClose, onMinimize }: Props) {
         </button>
       </div>
       <div className="chat-sheet-body" data-testid="chat-messages">
-        {messages.length === 0 ? (
+        {!tripId ? (
+          <p className="muted" data-testid="chat-no-trip">
+            เปิดแชทจากทริปที่คุณร่วม · <Link to="/my-trips">ทริปของคุณ</Link>
+          </p>
+        ) : messages.length === 0 ? (
           <p className="muted" data-testid="chat-empty">
             ยังไม่มีข้อความกับเพื่อนร่วมทาง
           </p>
@@ -166,10 +187,15 @@ export function ChatSheet({ open, tripId, onClose, onMinimize }: Props) {
           onChange={(e) => setBody(e.target.value)}
           maxLength={1000}
         />
-        <button className="btn tap-target" type="submit" disabled={busy || !body.trim()}>
+        <button className="btn tap-target" type="submit" disabled={busy || !body.trim() || !tripId}>
           ส่ง
         </button>
       </form>
+      {sendError ? (
+        <p className="field-error" data-testid="chat-send-error">
+          {sendError}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BANGKOK_CENTER } from '@drop/carpool-core';
+import { BANGKOK_CENTER, capStoredLabel } from '@drop/carpool-core';
 import { CarPhoto } from '../components/CarPhoto';
 import { DEMO_ADDRESSES } from '../fixtures';
 import { liters } from '../lib/format';
 import { VEHICLE_LABEL } from '../lib/carIcons';
+import { PlaceField } from '../maps/PlaceField';
 import { getSupabase } from '../supabase';
 import { useAuth } from '../auth/AuthProvider';
 import type { AddressKind, SavedAddress, VehicleType } from '../types';
@@ -19,6 +20,9 @@ export function AccountPage() {
   const { demo, user } = useAuth();
   const [addresses, setAddresses] = useState<SavedAddress[]>(demo ? DEMO_ADDRESSES : []);
   const [editing, setEditing] = useState<SavedAddress | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(!demo);
   const [car] = useState<{ icon: string; type: VehicleType; trunk: { w: number; h: number; l: number } }>({
     icon: 'sedan',
     type: 'sedan',
@@ -28,55 +32,83 @@ export function AccountPage() {
   useEffect(() => {
     if (demo) {
       setAddresses(DEMO_ADDRESSES);
+      setLoading(false);
       return;
     }
     const supabase = getSupabase();
-    if (!supabase) return;
+    if (!supabase) {
+      setLoading(false);
+      setLoadError('ยังไม่ได้ตั้งค่า Supabase');
+      return;
+    }
     void supabase
       .from('carpool_saved_addresses')
       .select('id, owner_id, kind, label, address_text, lat, lng')
       .order('created_at')
-      .then(({ data }) => setAddresses((data as SavedAddress[]) ?? []));
+      .then(({ data, error }) => {
+        setLoading(false);
+        if (error) {
+          setLoadError('โหลดที่อยู่ไม่สำเร็จ');
+          setAddresses([]);
+          return;
+        }
+        setLoadError(null);
+        setAddresses((data as SavedAddress[]) ?? []);
+      });
   }, [demo]);
 
   const save = async (row: SavedAddress) => {
+    const capped: SavedAddress = {
+      ...row,
+      label: capStoredLabel(row.label),
+      address_text: capStoredLabel(row.address_text),
+    };
+    setSaveError(null);
     if (demo) {
       setAddresses((prev) => {
-        const i = prev.findIndex((a) => a.id === row.id);
-        if (i === -1) return [...prev, row];
-        return prev.map((a) => (a.id === row.id ? row : a));
+        const i = prev.findIndex((a) => a.id === capped.id);
+        if (i === -1) return [...prev, capped];
+        return prev.map((a) => (a.id === capped.id ? capped : a));
       });
       setEditing(null);
       return;
     }
     const supabase = getSupabase();
     if (!supabase || !user) return;
-    if (row.id.startsWith('new-')) {
-      const { data } = await supabase
+    if (capped.id.startsWith('new-')) {
+      const { data, error } = await supabase
         .from('carpool_saved_addresses')
         .insert({
           owner_id: user.id,
-          kind: row.kind,
-          label: row.label,
-          address_text: row.address_text,
-          lat: row.lat,
-          lng: row.lng,
+          kind: capped.kind,
+          label: capped.label,
+          address_text: capped.address_text,
+          lat: capped.lat,
+          lng: capped.lng,
         })
         .select('id, owner_id, kind, label, address_text, lat, lng')
         .single();
-      if (data) setAddresses((prev) => [...prev, data as SavedAddress]);
+      if (error || !data) {
+        setSaveError('บันทึกที่อยู่ไม่สำเร็จ');
+        return;
+      }
+      setAddresses((prev) => [...prev, data as SavedAddress]);
     } else {
-      await supabase
+      const { error } = await supabase
         .from('carpool_saved_addresses')
         .update({
-          kind: row.kind,
-          label: row.label,
-          address_text: row.address_text,
-          lat: row.lat,
-          lng: row.lng,
+          kind: capped.kind,
+          label: capped.label,
+          address_text: capped.address_text,
+          lat: capped.lat,
+          lng: capped.lng,
         })
-        .eq('id', row.id);
-      setAddresses((prev) => prev.map((a) => (a.id === row.id ? row : a)));
+        .eq('id', capped.id);
+      if (error) {
+        setSaveError('บันทึกที่อยู่ไม่สำเร็จ');
+        return;
+      }
+      setAddresses((prev) => prev.map((a) => (a.id === capped.id ? capped : a)));
     }
     setEditing(null);
   };
@@ -100,7 +132,7 @@ export function AccountPage() {
         <div>
           <h2 style={{ margin: 0, fontSize: 18 }}>{name}</h2>
           <p className="muted" style={{ margin: 0 }}>
-            ✓ ยืนยันตัวตนแล้ว · ตรวจเมื่อ พ.ย. 2569
+            {user?.email ?? (demo ? 'โหมดตัวอย่าง' : 'บัญชี Drop')}
           </p>
         </div>
       </section>
@@ -130,6 +162,22 @@ export function AccountPage() {
       </section>
 
       <h2 style={{ fontSize: 16 }}>ที่อยู่ของฉัน</h2>
+      {loading ? <p data-testid="address-loading">กำลังโหลดที่อยู่…</p> : null}
+      {loadError ? (
+        <p className="field-error" data-testid="address-load-error">
+          {loadError}
+        </p>
+      ) : null}
+      {saveError ? (
+        <p className="field-error" data-testid="address-save-error">
+          {saveError}
+        </p>
+      ) : null}
+      {!loading && !loadError && addresses.length === 0 ? (
+        <p className="empty muted" data-testid="address-empty">
+          ยังไม่มีที่อยู่ที่บันทึกไว้
+        </p>
+      ) : null}
       <div className="stack">
         {addresses.map((a) => (
           <button
@@ -214,21 +262,29 @@ function AddressEditor({
           </button>
         ))}
       </div>
-      <label className="field">
-        ค้นหาชื่อสถานที่
-        <input
-          value={row.address_text}
-          onChange={(e) => setRow((r) => ({ ...r, address_text: e.target.value }))}
-        />
-      </label>
+      <PlaceField
+        label="ค้นหาชื่อสถานที่"
+        testId="address-place"
+        value={
+          row.address_text
+            ? { lat: row.lat, lng: row.lng, address: row.address_text }
+            : null
+        }
+        fallback={{ lat: row.lat, lng: row.lng, address: row.address_text }}
+        placeholder="ชื่อสถานที่ หรือที่อยู่"
+        onChange={(place) =>
+          setRow((r) => ({
+            ...r,
+            address_text: place.address,
+            lat: place.lat,
+            lng: place.lng,
+          }))
+        }
+      />
       <label className="field">
         บ้านเลขที่ / หมายเหตุ
         <input value={row.label} onChange={(e) => setRow((r) => ({ ...r, label: e.target.value }))} />
       </label>
-      <div className="map-placeholder" data-testid="address-map">
-        ปักหมุดบนแผนที่
-        <p className="muted">แตะแผนที่เพื่อปักหมุดตำแหน่งที่เลือก · ไม่ใช้ตำแหน่งปัจจุบันของเครื่อง</p>
-      </div>
       <div className="row">
         <button className="btn tap-target" type="submit">
           บันทึก

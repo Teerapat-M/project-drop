@@ -21,4 +21,14 @@ describe('bookingRpc', () => {
     );
     expect(rpc.mock.calls[0][0]).not.toMatch(/update/i);
   });
+
+  it('caps dest labels at 200 characters', () => {
+    const destLabel = 'ก'.repeat(201);
+    expect(bookingDestRpcArgs({
+      tripId: 't1',
+      destLabel,
+      destLat: 13.72,
+      destLng: 100.57,
+    }).p_dest_label).toHaveLength(200);
+  });
 });

@@ -1,7 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  COARSE_LABEL_MAX_CHARS,
   PRIVACY_OFFSET_KM_MAX,
   PRIVACY_OFFSET_KM_MIN,
+  capStoredLabel,
   coarseAddress,
   offsetKmFromTrue,
   offsetPoint,
@@ -93,6 +95,22 @@ describe('coarseAddress', () => {
     expect(coarseAddress('บ้านเลขที่ 9 แขวงลุมพินี เขตปทุมวัน กรุงเทพมหานคร')).toBe(nearby);
     expect(coarseAddress('กรุงเทพมหานคร')).toBe(nearby);
     expect(coarseAddress('Bangkok')).toBe(nearby);
+  });
+
+  it('drops empty comma parts so trailing and double commas still match', () => {
+    expect(coarseAddress('X,,กรุงเทพมหานคร,')).toBe(bkk);
+    expect(coarseAddress('ซอยลาดพร้าว,,กรุงเทพฯ,')).toBe(bkk);
+    expect(coarseAddress('Main St, , Bangkok, ')).toBe(bkk);
+    expect(coarseAddress('บ้าน, กรุงเทพมหานคร,')).toBe(bkk);
+  });
+
+  it('caps lookup input and output at 200 characters', () => {
+    const padded = `${'ก'.repeat(250)},กรุงเทพมหานคร`;
+    expect(padded.length).toBeGreaterThan(COARSE_LABEL_MAX_CHARS);
+    expect(coarseAddress(padded)).toBe(bkk);
+    expect(coarseAddress(padded).length).toBeLessThanOrEqual(COARSE_LABEL_MAX_CHARS);
+    expect(coarseAddress('x'.repeat(201))).toBe(nearby);
+    expect(capStoredLabel('ก'.repeat(201))).toHaveLength(COARSE_LABEL_MAX_CHARS);
   });
 
   it('treats circled, superscript, and roman numbers as digits', () => {

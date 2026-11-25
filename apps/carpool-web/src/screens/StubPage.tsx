@@ -1,8 +1,13 @@
 import { Link } from 'react-router-dom';
 
-const COPY: Record<string, { title: string; body: string }> = {
-  map: { title: 'แผนที่', body: 'แผนที่จุดรับ–ส่ง (กำลังพัฒนา) — ยังไม่ติดตามตำแหน่งแบบเรียลไทม์' },
-  chat: { title: 'แชทกับเพื่อนร่วมทาง', body: 'แชทกับเพื่อนร่วมทางของทริปนี้ (กำลังพัฒนา)' },
+const COPY: Record<string, { title: string; body: string; href?: string; cta?: string }> = {
+  map: { title: 'แผนที่', body: 'ค้นหาทริปจากจุดขึ้น–ลงที่หน้าแรก' },
+  chat: {
+    title: 'แชทกับเพื่อนร่วมทาง',
+    body: 'เปิดแชทจากหน้ารายละเอียดทริปที่คุณสร้างหรือจอง',
+    href: '/my-trips',
+    cta: 'ทริปของคุณ',
+  },
   history: {
     title: 'ประวัติทริป',
     body: 'ทริปที่คุณเคยร่วม · จ่ายผ่านพร้อมเพย์ · โอนกันเอง ไม่ผ่านแอป (กำลังพัฒนา)',
@@ -27,6 +32,13 @@ export function StubPage({ name }: { name: keyof typeof COPY }) {
       <p className="lede" data-testid="stub">
         {c.body}
       </p>
+      {c.href && c.cta ? (
+        <p>
+          <Link to={c.href} className="btn tap-target">
+            {c.cta}
+          </Link>
+        </p>
+      ) : null}
     </main>
   );
 }

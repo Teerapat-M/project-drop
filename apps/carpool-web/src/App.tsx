@@ -44,7 +44,7 @@ export function App() {
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/history/:id" element={<DropoffOrderPage />} />
         <Route path="/account" element={<AccountPage />} />
-        <Route path="/map" element={<StubPage name="map" />} />
+        <Route path="/map" element={<Navigate to="/" replace />} />
         <Route path="/chat" element={<StubPage name="chat" />} />
         <Route path="/parcels" element={<StubPage name="parcels" />} />
         <Route path="/donate" element={<StubPage name="donate" />} />

@@ -101,4 +101,11 @@ describe('trip cards at 390px', () => {
     expect(mint.querySelector('[data-testid="search-distance"]')).toHaveTextContent('จุดลงห่าง');
     expect(screen.queryByTestId('trip-demo-sam')).toBeNull();
   });
+
+  it('empty-state เปลี่ยนจุด stays on search, not the map stub', () => {
+    renderList('/?empty=1');
+    expect(screen.getByTestId('empty-state')).toBeInTheDocument();
+    expect(screen.getByTestId('change-search-point')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'เปลี่ยนจุด' })).toBeNull();
+  });
 });

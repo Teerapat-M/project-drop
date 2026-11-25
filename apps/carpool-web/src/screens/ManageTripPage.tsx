@@ -24,6 +24,8 @@ export function ManageTripPage() {
   const [preview, setPreview] = useState<TripPreview | null>(demo ? demoPreview(id) : null);
   const [error, setError] = useState<string | null>(null);
   const [hideDestBusy, setHideDestBusy] = useState(false);
+  const [loaded, setLoaded] = useState(demo);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     bindChat(id);
@@ -32,12 +34,24 @@ export function ManageTripPage() {
   useEffect(() => {
     if (demo) {
       setPreview(demoPreview(id));
+      setLoaded(true);
       return;
     }
     const supabase = getSupabase();
-    if (!supabase) return;
-    void supabase.rpc('carpool_trip_preview', { p_trip_id: id }).then(({ data }) => {
-      setPreview(data as TripPreview);
+    if (!supabase) {
+      setLoaded(true);
+      setLoadError('ยังไม่ได้ตั้งค่า Supabase');
+      return;
+    }
+    void supabase.rpc('carpool_trip_preview', { p_trip_id: id }).then(({ data, error: previewError }) => {
+      if (previewError) {
+        setLoadError(thaiRpcError(previewError.message, 'โหลดทริปไม่สำเร็จ'));
+        setPreview(null);
+      } else {
+        setPreview((data as TripPreview) ?? null);
+        setLoadError(null);
+      }
+      setLoaded(true);
     });
     const channel = supabase
       .channel(`seats:${id}`)
@@ -119,10 +133,27 @@ export function ManageTripPage() {
     }
   };
 
+  if (!loaded) {
+    return (
+      <main className="page">
+        <p data-testid="trip-loading">กำลังโหลดทริป…</p>
+      </main>
+    );
+  }
+  if (loadError) {
+    return (
+      <main className="page">
+        <p className="field-error" data-testid="trip-load-error">
+          {loadError}
+        </p>
+        <Link to="/my-trips">กลับทริปของคุณ</Link>
+      </main>
+    );
+  }
   if (!preview) {
     return (
       <main className="page">
-        <p>ไม่พบทริป</p>
+        <p data-testid="trip-missing">ไม่พบทริป</p>
         <Link to="/my-trips">กลับทริปของคุณ</Link>
       </main>
     );

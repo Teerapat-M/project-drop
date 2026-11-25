@@ -11,6 +11,19 @@ import {
 
 export { NEARBY_AREA_LABEL, textHasNumber } from './thaiProvinces';
 
+/** Cap for coarse-label lookup and stored pickup/dest labels. */
+export const COARSE_LABEL_MAX_CHARS = 200;
+
+/** Keep the tail: province/country sit at the end of formatted addresses. */
+export function capCoarseLookupInput(value: string): string {
+  return value.length <= COARSE_LABEL_MAX_CHARS ? value : value.slice(-COARSE_LABEL_MAX_CHARS);
+}
+
+/** First 200 chars so a CHECK on stored columns does not reject the write. */
+export function capStoredLabel(value: string): string {
+  return value.length <= COARSE_LABEL_MAX_CHARS ? value : value.slice(0, COARSE_LABEL_MAX_CHARS);
+}
+
 /** Offset distance stored per trip (random in this range, once). */
 export const PRIVACY_OFFSET_KM_MIN = 0.9;
 export const PRIVACY_OFFSET_KM_MAX = 1.1;
@@ -73,7 +86,7 @@ export function stableOffset(seed: string): { bearingRad: number; km: number } {
  * canonical name, never input text.
  */
 export function coarseAddress(address: string | null | undefined): string {
-  const raw = stripFormatChars(address ?? '');
+  const raw = capCoarseLookupInput(stripFormatChars(address ?? ''));
   if (!raw.includes(',')) return NEARBY_AREA_LABEL;
   const parts = raw.split(/\s*,\s*/).filter((p) => p.length > 0);
   while (parts.length > 0 && isCountryOnlyPart(parts[parts.length - 1] ?? '')) {
@@ -81,7 +94,8 @@ export function coarseAddress(address: string | null | undefined): string {
   }
   const last = stripTrailingPostcode(parts[parts.length - 1] ?? '');
   if (!last || textHasNumber(last)) return NEARBY_AREA_LABEL;
-  return lookupCanonicalProvince(last) ?? NEARBY_AREA_LABEL;
+  const canon = lookupCanonicalProvince(last) ?? NEARBY_AREA_LABEL;
+  return canon.length <= COARSE_LABEL_MAX_CHARS ? canon : canon.slice(0, COARSE_LABEL_MAX_CHARS);
 }
 
 export function shouldRegenOffset(prev: GeoPoint, next: GeoPoint): boolean {

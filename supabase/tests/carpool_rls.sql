@@ -1,7 +1,8 @@
 -- Catalog + behavioral RLS for 20261118100000_carpool.sql,
 -- 20261118120000_carpool_trip_stops.sql, 20261118130000_carpool_taxi_trunk.sql,
--- 20261118140000_carpool_c24_lows.sql, and
--- 20261118150000_carpool_c25_drop_admin_geo_reqs.sql.
+-- 20261118140000_carpool_c24_lows.sql,
+-- 20261118150000_carpool_c25_drop_admin_geo_reqs.sql, and
+-- 20261125120000_carpool_web_finish.sql.
 -- Taxi-trunk backfill (legacy 100×50×50) runs in run-carpool-rls.sh around
 -- that migration, via carpool_taxi_trunk_seed.sql / carpool_taxi_trunk_backfill.sql.
 -- CI: supabase/tests/run-carpool-rls.sh (shim + profiles + carpool on ephemeral Postgres).
@@ -3635,6 +3636,37 @@ begin
     raise exception 'จ. prefix should match, got %', got;
   end if;
   perform tests.ok('google addresses yield canonical Thai province');
+
+  got := private.carpool_coarse_label('X,,กรุงเทพมหานคร,');
+  if got is distinct from bkk then
+    raise exception 'empty comma parts should match, got %', got;
+  end if;
+  got := private.carpool_coarse_label('ซอยลาดพร้าว,,กรุงเทพฯ,');
+  if got is distinct from bkk then
+    raise exception 'double comma should match, got %', got;
+  end if;
+  got := private.carpool_coarse_label('Main St, , Bangkok, ');
+  if got is distinct from bkk then
+    raise exception 'spaced empty comma parts should match, got %', got;
+  end if;
+  got := private.carpool_coarse_label('บ้าน, กรุงเทพมหานคร,');
+  if got is distinct from bkk then
+    raise exception 'trailing comma should match, got %', got;
+  end if;
+  perform tests.ok('coarse label drops empty comma parts');
+
+  got := private.carpool_coarse_label(repeat('ก', 250) || ',กรุงเทพมหานคร');
+  if got is distinct from bkk then
+    raise exception 'over-long tail should still match, got %', got;
+  end if;
+  if char_length(got) > 200 then
+    raise exception 'coarse label output must be <= 200, got %', char_length(got);
+  end if;
+  got := private.carpool_coarse_label(repeat('x', 201));
+  if got is distinct from nearby then
+    raise exception 'over-long no-comma must fall back, got %', got;
+  end if;
+  perform tests.ok('coarse label caps input/output at 200 chars');
 end $$;
 
 do $$
@@ -3775,12 +3807,52 @@ begin
   perform tests.ok('offset bearing regenerates when true point moves over 200 m');
 end $$;
 
+begin;
+select tests.login(id) from tests.ids where k = 'owner';
+set local role authenticated;
+do $$
+declare
+  uid uuid;
+  long_label text := repeat('ก', 201);
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'carpool_trips_pickup_label_len'
+  ) or not exists (
+    select 1 from pg_constraint where conname = 'carpool_trips_dest_label_len'
+  ) or not exists (
+    select 1 from pg_constraint where conname = 'carpool_bookings_dest_label_len'
+  ) then
+    raise exception 'label length CHECKs missing';
+  end if;
+
+  select id into uid from tests.ids where k = 'owner';
+  begin
+    insert into public.carpool_trips (
+      owner_id, kind, vehicle_type, car_icon,
+      trunk_w_cm, trunk_h_cm, trunk_l_cm, route_km,
+      pickup_label, pickup_lat, pickup_lng,
+      dest_label, dest_lat, dest_lng, depart_at, status
+    ) values (
+      uid, 'private', 'sedan', 'sedan',
+      100, 50, 50, 12,
+      long_label, 13.75, 100.5,
+      'ลำพูน', 18.574, 99.009, now() + interval '1 day', 'open'
+    );
+    raise exception 'expected pickup_label length CHECK';
+  exception
+    when check_violation then
+      null;
+  end;
+  perform tests.ok('stored pickup_label longer than 200 rejected by CHECK');
+end $$;
+commit;
+
 do $$
 declare
   n int;
 begin
   select count(*) into n from tests.passed;
-  if n < 90 then
+  if n < 93 then
     raise exception 'too few behavioral RLS cases: %', n;
   end if;
   raise notice 'carpool behavioral RLS cases passed: %', n;

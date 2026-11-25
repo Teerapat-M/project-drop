@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import { AuthProvider } from '../auth/AuthProvider';
-import { bindChat } from '../lib/chatEvents';
+import { bindChat, unbindChat } from '../lib/chatEvents';
 import { mockMatchMedia } from '../test/matchMedia';
 import { Layout } from './Layout';
 
@@ -46,5 +46,19 @@ describe('chat bubble and sheet', () => {
     expect(screen.getByText('แชทกับเพื่อนร่วมทาง')).toBeInTheDocument();
     expect(screen.queryByText('แชทกับคนขับ')).toBeNull();
     expect(screen.getByLabelText('ข้อความถึงเพื่อนร่วมทาง')).toBeInTheDocument();
+  });
+
+  it('prompts to open chat from a trip when none is bound', () => {
+    mockMatchMedia(390);
+    unbindChat();
+    render(
+      <AuthProvider>
+        <MemoryRouter>
+          <Layout />
+        </MemoryRouter>
+      </AuthProvider>,
+    );
+    fireEvent.click(screen.getByLabelText('แชทกับเพื่อนร่วมทาง'));
+    expect(screen.getByTestId('chat-no-trip')).toHaveTextContent('เปิดแชทจากทริปที่คุณร่วม');
   });
 });
